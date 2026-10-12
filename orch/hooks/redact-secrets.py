@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
-"""PostToolUse hook for Bash: secret-looking values are masked before the
-output reaches a transcript.
+"""PostToolUse hook for Bash, Read, Grep, Glob and Agent: secret-looking values
+are masked before the result reaches a transcript.
 
-Masks `<name>=value` / `<name>: value` where the name contains password,
-secret, token, api key, authorization, private key or credential; `Bearer`
-tokens; JWTs; PEM private keys; and the `data:` fields of a Kubernetes Secret
-(`kind: Secret`). Each value becomes `<redacted sha256:8>`, so two outputs of
-the same secret still compare equal. Rewrites `tool_response.stdout/stderr`
-via `updatedToolOutput` (Claude Code >= 2.1.287 accepts the Bash response
-shape). Blind spots: PostToolUse does not fire for a non-zero exit, and a raw
-`-o jsonpath` value has no name to match. Pure policy:
-gate_policy.redact_secrets. Any error exits 0.
+Masks every value held in the secret vault (`~/.secrets`, exact match), every
+standalone API-key-shaped token, `<name>=value` / `<name>: value` where the
+name contains password, secret, token, api key, authorization, private key or
+credential; `Bearer` tokens; JWTs; PEM private keys; and the `data:` fields of
+a Kubernetes Secret (`kind: Secret`). Each value becomes `<redacted sha256:8>`,
+so two outputs of the same secret still compare equal. Rewrites every string
+inside `tool_response` via `updatedToolOutput`, keeping the tool's own shape.
+Blind spots: PostToolUse does not fire for a non-zero exit (secretctl run/each
+therefore always exit 0), and a value the vault does not hold is only caught by
+shape. Pure policy: gate_policy.redact_secrets, vault_policy.redact_tree.
+Any error exits 0.
 
 Why: six irreversible secret exposures in the reviewed sessions, two with no
 right to rotate (retro 2026-10-12).
@@ -26,23 +28,33 @@ TOOLS_DIR = (
 sys.path.insert(0, TOOLS_DIR)
 
 import gate_policy  # noqa: E402
+import vault_files  # noqa: E402
+import vault_policy  # noqa: E402
+
+
+def _redact(value, tokens):
+    if isinstance(value, str):
+        return gate_policy.redact_secrets(value, tokens)
+    if isinstance(value, dict):
+        return {k: _redact(v, tokens) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_redact(v, tokens) for v in value]
+    return value
 
 
 def main():
     payload = json.load(sys.stdin)
     response = payload.get("tool_response")
-    if not isinstance(response, dict):
+    if response is None:
         return 0
-    stdout = response.get("stdout") or ""
-    stderr = response.get("stderr") or ""
-    new_out = gate_policy.redact_secrets(stdout)
-    new_err = gate_policy.redact_secrets(stderr)
-    if new_out == stdout and new_err == stderr:
+    texts, _protected = vault_files.load_vault()
+    tokens = vault_policy.vault_tokens(texts)
+    updated = _redact(response, tokens)
+    if updated == response:
         return 0
-    # Without dropping the persisted-output keys the harness shows its own unmasked preview.
-    updated = {k: v for k, v in response.items() if not k.startswith("persistedOutput")}
-    updated["stdout"] = new_out
-    updated["stderr"] = new_err
+    if isinstance(updated, dict):
+        # Without dropping the persisted-output keys the harness shows its own unmasked preview.
+        updated = {k: v for k, v in updated.items() if not k.startswith("persistedOutput")}
     json.dump(
         {"hookSpecificOutput": {"hookEventName": "PostToolUse", "updatedToolOutput": updated}},
         sys.stdout,

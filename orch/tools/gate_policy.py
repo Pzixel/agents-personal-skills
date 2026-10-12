@@ -1393,12 +1393,18 @@ def _mask(value):
     return "<redacted sha256:%s>" % hashlib.sha256(value.encode("utf-8")).hexdigest()[:8]
 
 
-def redact_secrets(text):
-    """Return ``text`` with secret-looking values replaced by a masked digest.
-    Pure numbers and values shorter than six characters are left alone."""
+def redact_secrets(text, known_tokens=()):
+    """Return ``text`` with secret-looking values replaced by a masked digest:
+    every known vault value and every standalone API-key-shaped token
+    (vault_policy), then the named-field, Bearer, JWT, PEM and Kubernetes Secret
+    rules. Pure numbers and values shorter than six characters are left alone."""
     if not text:
         return text
-    out = _PEM_RE.sub(lambda m: _mask(m.group(0)), text)
+    import vault_policy
+
+    out = vault_policy.redact_known(text, known_tokens) if known_tokens else text
+    out = vault_policy.redact_shaped(out)
+    out = _PEM_RE.sub(lambda m: _mask(m.group(0)), out)
     out = _JWT_RE.sub(lambda m: _mask(m.group(0)), out)
     out = _BEARER_RE.sub(lambda m: m.group(1) + _mask(m.group(2)), out)
     out = _SECRET_ASSIGN_RE.sub(

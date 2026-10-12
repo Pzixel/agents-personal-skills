@@ -69,10 +69,12 @@ listed twice (bare and `orch:`), and the gates treat both alike.
   - `scout-bounds.py` — clamps Grep/Read output for `Explore`.
   - `offline-gate.py` — blocks production access while an offline lock is held.
   - `main-budget-gate.py` — keeps the main session from doing the work by hand.
+  - `secret-vault-gate.py` — refuses any tool call that would read `~/.secrets`, Secret payloads or a known value.
+  - `redact-secrets.py` — masks known vault values and key-shaped tokens in Bash/Read/Grep results.
   - `session-tools-link.py` — links `~/.claude/{tools,hooks}` in a fresh HOME (eval runs).
 - `tools/` — `gate_policy.py` (pure decisions for every gate), `orchestrate-params.json`
   (thresholds, spawn rights, `build.fix_rounds_max`, `build.reviewers`), `check-run`,
-  `wait-for`, `scout.py`/`scout_policy.py`, `tests/`.
+  `wait-for`, `secretctl` + `vault_policy.py`/`vault_files.py` (use secret values without printing them), `scout.py`/`scout_policy.py`, `tests/`.
 - `evals/` — the eval suite; the synthetic fixture `evals/fixtures/mini/` is tracked, results
   and `NOTES-private.md` are ignored.
 
