@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""wait-for [--every SECONDS] [--max SECONDS] -- <condition command...>
+"""wait-for [--every SECONDS] [--max SECONDS] [--fail-on CODES] -- <condition command...>
 
 Re-runs the condition command until it exits 0, then exits 0. Exits 124 if
 --max seconds elapse first (macOS has no timeout(1); this replaces it).
@@ -34,6 +34,13 @@ its stderr reads like a usage, syntax or not-found error, wait-for prints that
 output and exits 2 at once. Seven false timeouts on green CI in one session
 came from a wrong flag or regex that looked like "still pending" for the whole
 --max (retro 2026-10-12). Exit 2 is distinct from 124 (deadline).
+
+--fail-on CODES (comma-separated exit codes) names terminal failure states:
+when any attempt's condition exits with one of them, wait-for prints that
+attempt's output tail and exits 3 at once. Exit 3 is distinct from 2 (broken
+command) and 124 (deadline). On 2026-10-12 `wait-for -- gh pr checks 4` waited
+529 s on a CI that had already failed, because `gh pr checks` exits 1 on a
+failed check and 8 while pending; use `--fail-on 1` with it.
 """
 
 import re
@@ -45,6 +52,7 @@ import time
 TAIL_LINES = 15
 TIMEOUT_EXIT = 124
 BROKEN_EXIT = 2
+FAILED_EXIT = 3
 BROKEN_RE = re.compile(
     r"unknown (?:flag|command|option|shorthand)|command not found|not found|No such file"
     r"|usage:|invalid (?:argument|option|flag)|syntax error|unexpected (?:EOF|token|argument)"
@@ -61,11 +69,12 @@ def condition_broken(rc, stderr):
 def parse_args(argv):
     every = 30.0
     maximum = 1800.0
+    fail_on = frozenset()
     i = 0
     while i < len(argv):
         arg = argv[i]
         if arg == "--":
-            return every, maximum, argv[i + 1:]
+            return every, maximum, fail_on, argv[i + 1:]
         if arg in ("-h", "--help"):
             sys.stdout.write(__doc__)
             raise SystemExit(0)
@@ -76,6 +85,10 @@ def parse_args(argv):
         if arg.startswith("--max"):
             maximum, i = _value(argv, i, "--max")
             maximum = float(maximum)
+            continue
+        if arg.startswith("--fail-on"):
+            codes, i = _value(argv, i, "--fail-on")
+            fail_on = frozenset(int(c) for c in codes.split(","))
             continue
         raise SystemExit("wait-for: unexpected argument %r (condition goes after --)" % arg)
     raise SystemExit("wait-for: missing `--` before the condition command")
@@ -113,7 +126,7 @@ def report(output, elapsed, attempts, rc, command, state=None):
 
 
 def main(argv):
-    every, maximum, condition = parse_args(argv)
+    every, maximum, fail_on, condition = parse_args(argv)
     if not condition:
         raise SystemExit("wait-for: empty condition command")
     # A plain " ".join drops the caller's quoting: `sh -c '! a | b'` became
@@ -135,6 +148,10 @@ def main(argv):
         if rc == 0:
             report(output, elapsed, attempts, 0, command)
             return 0
+        if rc in fail_on:
+            report(output, elapsed, attempts, rc, command,
+                   state="FAILED (terminal condition exit %d)" % rc)
+            return FAILED_EXIT
         if attempts == 1 and condition_broken(rc, stderr):
             report(output, elapsed, attempts, rc, command,
                    state="CONDITION BROKEN (the command itself fails; fix it, do not wait)")

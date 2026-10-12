@@ -38,5 +38,23 @@ class WaitForBrokenCondition(unittest.TestCase):
         self.assertEqual(run("no-such-command-xyz"), 2)
 
 
+class WaitForFailOn(unittest.TestCase):
+    EXIT_7 = ("python3", "-c", "raise SystemExit(7)")
+
+    def wait(self, *options):
+        return subprocess.run(
+            [str(WAIT_FOR), *options, "--", *self.EXIT_7],
+            capture_output=True, text=True, timeout=20,
+        )
+
+    def test_listed_code_exits_3_at_once(self):
+        proc = self.wait("--every", "30", "--max", "60", "--fail-on", "1,7")
+        self.assertEqual(proc.returncode, 3)
+        self.assertIn("FAILED (terminal condition exit 7)", proc.stdout)
+
+    def test_unlisted_code_keeps_waiting(self):
+        self.assertEqual(self.wait("--every", "0.1", "--max", "0.3").returncode, 124)
+
+
 if __name__ == "__main__":
     unittest.main()
