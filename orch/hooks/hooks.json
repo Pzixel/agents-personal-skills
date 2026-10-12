@@ -1,5 +1,5 @@
 {
-  "description": "Orchestration gates: typed agents, spawn rights, brief lines, budgets, no-poll, checks-before-done, merge gate, reply lint, secret redaction",
+  "description": "Orchestration gates: typed agents, spawn rights, brief lines, budgets, no-poll, checks-before-done, merge gate, reply lint, secret redaction, deny-destructive, task-type checklists",
   "hooks": {
     "SessionStart": [
       {
@@ -19,6 +19,16 @@
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/offline-gate.py\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/deny-destructive.py\"",
             "timeout": 5
           }
         ]
@@ -142,6 +152,17 @@
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/sleeping-stop.py\""
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/task-type-checklist.py\"",
+            "timeout": 5
           }
         ]
       }
