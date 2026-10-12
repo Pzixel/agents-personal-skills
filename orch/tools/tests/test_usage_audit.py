@@ -3,12 +3,17 @@ import importlib.util
 import os
 import unittest
 
-_SPEC = importlib.util.spec_from_file_location(
-    "usage_audit", os.path.expanduser("~/.claude/usage-audit.py"))
-ua = importlib.util.module_from_spec(_SPEC)
-_SPEC.loader.exec_module(ua)
+_USAGE_AUDIT = os.path.expanduser("~/.claude/usage-audit.py")
+# The script lives outside this repository; CI has no copy.
+_PRESENT = os.path.isfile(_USAGE_AUDIT)
+_NEEDS_SCRIPT = unittest.skipUnless(_PRESENT, "usage-audit.py is not installed: %s" % _USAGE_AUDIT)
+if _PRESENT:
+    _SPEC = importlib.util.spec_from_file_location("usage_audit", _USAGE_AUDIT)
+    ua = importlib.util.module_from_spec(_SPEC)
+    _SPEC.loader.exec_module(ua)
 
 
+@_NEEDS_SCRIPT
 class CacheWritePricingTest(unittest.TestCase):
     def test_five_minute_and_one_hour_writes_are_priced_apart(self):
         cost = ua.turn_cost({"input_tokens": 0, "output_tokens": 0,
@@ -27,6 +32,7 @@ class CacheWritePricingTest(unittest.TestCase):
         self.assertAlmostEqual(cost["usd"], 10.0 + 50.0 + 0.25 + 12.5, places=6)
 
 
+@_NEEDS_SCRIPT
 class ReadLikeNarrowingTest(unittest.TestCase):
     """Read-like = observing only; gate_policy.is_read_call is the wider gate."""
 

@@ -631,6 +631,12 @@ class RedactSecretsTest(unittest.TestCase):
             self.assertNotIn(secret, out)
         self.assertIn("Bearer <redacted sha256:", out)
 
+    def test_yaml_keys_and_code_stay(self):
+        # A key on its own line and a Python assignment are not secret values
+        # (CI workflow `secrets:` job and gate_policy itself were masked, 2026-10-12).
+        text = "secrets:\n    runs-on: ubuntu-latest\n_SECRET_RE = re.compile(pattern)"
+        self.assertEqual(gate_policy.redact_secrets(text), text)
+
     def test_counts_and_short_values_stay(self):
         text = "tokens: 15000\ntoken: null\nimage: nginx:1.27\nsubagent_tokens 1234"
         self.assertEqual(gate_policy.redact_secrets(text), text)

@@ -1378,7 +1378,8 @@ def brief_decision(requested_type, prompt):
 
 _SECRET_NAME = r"(?:password|passwd|secret|token|api[_-]?key|apikey|authorization|private[_-]?key|credential)"
 _SECRET_ASSIGN_RE = re.compile(
-    r"(?i)([\w.-]*" + _SECRET_NAME + r"[\w.-]*\s*[:=]\s*[\"']?)([^\s\"',;&<>]{6,})"
+    r"(?i)([\w.-]*" + _SECRET_NAME + r"[\w.-]*[ \t]*[:=][ \t]*[\"']?)"
+    r"([^\s\"',;&<>()\[\]]{6,})(?=[\s\"',;&<>]|$)"
 )
 _BEARER_RE = re.compile(r"(?i)(\bBearer\s+)([A-Za-z0-9._+/=-]{8,})")
 _JWT_RE = re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b")

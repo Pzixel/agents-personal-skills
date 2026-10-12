@@ -32,6 +32,25 @@ jobs:
           done
       - run: git diff --check
 
+  orch-tools:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # 3.9 is /usr/bin/python3 on macOS, which runs the hooks live.
+        python-version: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Run orch tool tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          for test in orch/tools/tests/test_*.py; do
+            python "$test"
+          done
+
   secrets:
     runs-on: ubuntu-latest
     steps:

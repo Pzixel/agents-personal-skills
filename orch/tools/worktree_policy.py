@@ -8,6 +8,8 @@ checkout and the default branch are never removed. Remote branches are
 left to GitHub's delete-branch-on-merge setting.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 
 
