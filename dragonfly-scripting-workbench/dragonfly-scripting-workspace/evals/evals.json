@@ -1,0 +1,31 @@
+{
+  "skill_name": "dragonfly-scripting",
+  "evals": [
+    {
+      "id": 1,
+      "name": "optimize-claim-batch",
+      "prompt": "We run this Lua script on Dragonfly v1.34.0 via EVALSHA: dragonfly-scripting-workbench/dragonfly-scripting-workspace/evals/inputs/claim_mailbox_batch.lua (its KEYS/ARGV contract and how to seed realistic data are in dragonfly-scripting-workbench/dragonfly-scripting-workspace/evals/inputs/claim_mailbox_batch_CONTRACT.md). Production calls it with candidate_window=1024, batch_size=32 against a due zset of about 1000 mailboxes with ~2 KB records, all keys under the hashtag {inbound}; the server runs with --proactor_threads=4 --cache_mode=false --maxmemory=2048Mi and no other flags. It feels slow. Optimize it without changing its reply protocol or its recovery semantics. Deliver: the optimized .lua file, a short NOTES.md explaining every change and why it is safe, and before/after numbers measured on a local Dragonfly of the same version (docker image docker.dragonflydb.io/dragonflydb/dragonfly@sha256:366e34f415c22983dc1c4a1d575fa2d9c22b9a3998a9934bf1cc6d16c17695db is already pulled; you may start containers named eval-*; tear them down when done). Do not modify anything outside your output directory except throwaway containers.",
+      "expected_output": "Optimized script with identical replies on identical seeded state; per-candidate HGET loops replaced by chunked HMGET; whole-window protocol checks preserved; measured before/after with the execution-path counters or SCRIPT LATENCY; no Redis-only advice.",
+      "files": [
+        "dragonfly-scripting-workbench/dragonfly-scripting-workspace/evals/inputs/claim_mailbox_batch.lua",
+        "dragonfly-scripting-workbench/dragonfly-scripting-workspace/evals/inputs/claim_mailbox_batch_CONTRACT.md"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "review-apply-page",
+      "prompt": "Review dragonfly-scripting-workbench/dragonfly-scripting-workspace/evals/inputs/apply_new_mutable_mailbox_page.lua (705 lines, runs on Dragonfly v1.34.0 via EVALSHA, all keys under one hashtag, default server flags with --proactor_threads=4) for wasted server work. Write REVIEW.md: concrete findings with line numbers ordered by expected impact, what each costs and why on Dragonfly specifically, what you would measure to confirm, and what you would NOT change because it is part of the recovery contract. No code changes required.",
+      "expected_output": "Findings include the per-grant HGET loop at :453 (batch via HMGET), the cjson.encode of the plan at :673-674 on the success path, recognition that chunked_call (:134-150) is already the right idiom, the io-coordination cost of a 14-key script on default flags and the --lock_on_hashtags trade-off; no Redis-only advice (FUNCTION, #!lua flags, disable-atomicity for speed, client pipelining as the fix).",
+      "files": [
+        "dragonfly-scripting-workbench/dragonfly-scripting-workspace/evals/inputs/apply_new_mutable_mailbox_page.lua"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "design-new-op",
+      "prompt": "Design a Dragonfly (v1.34.0) Lua operation renew_leases_batch that renews up to 64 leases at once. Data: hash {t}:leases with field=mailbox_id and value 'token:deadline_ms'; zset {t}:due with member=mailbox_id score=deadline_ms. A lease renews only if the caller's token matches the stored token and the stored deadline is still in the future; on success the new deadline is now+ttl_ms (server time), both the hash and the zset are updated; the reply reports a per-item status (renewed / token_mismatch / expired / missing). Deliver renew_leases_batch.lua and DESIGN.md: KEYS/ARGV contract, reply shape, why the script is bounded and how, and exactly how you would measure its cost on Dragonfly before shipping.",
+      "expected_output": "All keys declared in KEYS (two keys, one hashtag); one HMGET for the batch, one multi-field HSET and one multi-member ZADD for the successes (or acall for discarded results); explicit 64 bound and unpack chunking awareness; flat reply with constant arity and integer/string status codes; measurement plan names the eval coordination counters or SCRIPT LATENCY, identical-seed comparison, p50 and p99; no Redis-only advice.",
+      "files": []
+    }
+  ]
+}

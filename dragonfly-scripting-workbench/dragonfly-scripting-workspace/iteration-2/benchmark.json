@@ -1,0 +1,423 @@
+{
+  "metadata": {
+    "skill_name": "dragonfly-scripting",
+    "skill_path": "<path/to/skill>",
+    "executor_model": "<model-name>",
+    "analyzer_model": "<model-name>",
+    "timestamp": "2026-09-16T06:48:15Z",
+    "evals_run": [
+      1,
+      2,
+      3
+    ],
+    "runs_per_configuration": 3
+  },
+  "runs": [
+    {
+      "eval_id": 1,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 8,
+        "failed": 0,
+        "total": 8,
+        "time_seconds": 0.0,
+        "tokens": 69809,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "reply-equality-with-original: the optimized script returns replies byte-identical to the original on the same seeded state, proven by running scripts/bench_script.py --compare (clock-bearing reply positions excluded)",
+          "passed": true,
+          "evidence": "Grader re-ran on one fresh container eval1g-70744 (df-v1.34.0, threads=4, --proactor_threads=4 --cache_mode=false --maxmemory=2048Mi, port 32827): bench_script.py --spec claim_mailbox_batch_spec.json --seed claim_mailbox_batch_seed.py --reseed --compare <original> <with_skill>. Output verbatim: 'replies identical on this seed (164 fields, ignored [1, 7, 12, ... 162])', exit 0."
+        },
+        {
+          "text": "p50-improved-on-same-seed: the measured p50 of the optimized script is lower than the original's p50 measured on the same seed and the same container",
+          "passed": true,
+          "evidence": "Grader measurement on eval1g-70744 (30 iters, 5 warmup, --reseed): original p50=99270.6us p99=153354.5us; with_skill p50=7446.3us p99=10883.2us (p50 ratio 0.075). The original-vs-original control on the same container gave p50 97735.9us vs 97756.0us (ratio 1.000), so run-to-run noise is far smaller than the 13x gap. Server SCRIPT LATENCY avg 96029us -> 5794us."
+        },
+        {
+          "text": "per-candidate-hget-loop-batched: the per-candidate HGET/HMGET-per-mailbox loop over the candidate window is replaced by batched multi-field reads",
+          "passed": true,
+          "evidence": "outputs/claim_mailbox_batch.lua contains zero 'HGET' literals (grep count 0) and reads every per-candidate field through the chunked helper at line 65 (rcall('HMGET', key, unpack(fields, i, hi))) plus the descriptor HMGET at line 261. Versions, leases, records and receipts for the whole 1024 window are fetched in chunks of 256."
+        },
+        {
+          "text": "before-after-numbers-present: the deliverables contain concrete before/after numbers measured against a Dragonfly v1.34.0 container, not estimates",
+          "passed": true,
+          "evidence": "NOTES.md 'Result' table gives original p50 101224us / p99 170109us vs optimized p50 3289us / p99 8645us, n=100, and outputs/bench_result.txt is the raw bench_script.py output from the arm's own df-v1.34.0 container (port 32826) including SCRIPT LATENCY and coordination deltas. Grader's independent re-measurement reproduced the direction and magnitude (99270.6 -> 7446.3us p50)."
+        },
+        {
+          "text": "reply-protocol-and-recovery-preserved: the whole-window protocol/version checks and the lease-receipt recovery semantics are unchanged",
+          "passed": true,
+          "evidence": "Grader cross-validated both differential harnesses against this script on eval1g-70744: with_skill's differential_paths.py (14 scenarios incl. recovery_active, recovery_expired, expired_lease_reclaim, cleanup_required, PROTOCOL record_missing, bad_lease_format, mutable_v2) -> 'FAILURES: none'; without_skill's difftest.py (35 scenarios, reply + full 14-key state dump) -> 'ALL 35 CASES MATCH'. Status-literal census matches the original exactly (17 PROTOCOL, 6 FENCED, RESOLVED/NOT_DUE/RETRY_IMMEDIATELY/CLEANUP_REQUIRED/RECEIPT_EXPIRED/UNUSED)."
+        },
+        {
+          "text": "states-execution-regime-with-evidence: the notes state that this script is io-coordinated on the given default flags because a shared hashtag does not co-locate keys on one shard without --lock_on_hashtags, and support that statement with the eval_io_coordination_total / eval_shardlocal_coordination_total deltas per invocation or an equivalent measurement taken on the v1.34.0 container",
+          "passed": true,
+          "evidence": "NOTES.md 'Why it was slow (regime first)': 'Both variants report eval_io_coordination_total +1.00 and eval_shardlocal_coordination_total +0.00 per invocation: the script is io-coordinated. The shared {inbound} hashtag does *not* co-locate the 14 keys without --lock_on_hashtags, so every synchronous redis.call costs a coordinator->shard hop.' Backed by bench_result.txt 'coordination per invocation: shardlocal=0.00 io=1.00 (of 1.00 total) -> cross-shard' on v1.34.0; grader reproduced the same deltas on eval1g-70744."
+        },
+        {
+          "text": "before-after-on-identical-seeded-state: the before/after comparison is run on identical seeded state (the seed re-applied before each timed call) with a reply-equality check between the two variants, and both p50 and p99 are reported for each arm",
+          "passed": true,
+          "evidence": "Measured with bench_script.py --reseed (seed re-applied, untimed, before every timed call) and --compare, which asserts byte-identical replies before reporting; NOTES.md reports p50 AND p99 for both arms (101224/170109 vs 3289/8645) and bench_result.txt carries the same columns. NOTES.md 'Verification' states why --reseed is required (real claim path, not the second-call path)."
+        },
+        {
+          "text": "no-unverified-redis-only-advice: every performance claim in the output cites Dragonfly-specific evidence -- a Dragonfly execution-path counter (eval_io_coordination_total / eval_shardlocal_coordination_total / lua_blocked_total), a SCRIPT LATENCY or bench measurement taken on v1.34.0, or a Dragonfly v1.34.0 doc/source citation -- and the output contains no Redis-origin performance advice presented without such Dragonfly evidence",
+          "passed": true,
+          "evidence": "Every performance claim is tied to a Dragonfly v1.34.0 measurement: the coordination counter deltas, the SCRIPT LATENCY entries, and the bench p50/p99 in bench_result.txt. The ~27us/hop figure is attributed to the measured host, and the 'Not done, on purpose' section rejects --lock_on_hashtags and --!df flags on Dragonfly-specific grounds (one hashtag vs 4 shards; allow-undeclared-keys promotes to a global transaction). No Redis-origin advice appears."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 2,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 9,
+        "failed": 0,
+        "total": 9,
+        "time_seconds": 0.0,
+        "tokens": 54975,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "finds-per-grant-hget-loop-453: a finding names the per-grant HGET loop at or around line 453 and proposes batching it (HMGET)",
+          "passed": true,
+          "evidence": "REVIEW.md:38-55 '## 1. Line 453 \u2014 HGET KEYS[7] once per old grant field (highest impact)' quotes the call and proposes 'one chunked_call('HMGET', KEYS[7], old_grant_fields)', '8192 calls -> 32 calls at the current chunk size, 9 at 1000'. It also spots the duplicate read of the same hash at line 410 and proposes one HMGET over the deduplicated union (REVIEW.md:57-62)."
+        },
+        {
+          "text": "finds-cjson-plan-encode-673: a finding names the cjson.encode of the replay plan at or around lines 673-674 on the success path",
+          "passed": true,
+          "evidence": "REVIEW.md:101-118 '## 3. Lines 673-674, 692-699 \u2014 cjson.encode(plan) and the 32 MiB plan blob' quotes both encodes and notes the plan is 'a second full copy of every grant payload, record JSON and cursor value', HSET into KEYS[4] at :692 and HDEL at :702."
+        },
+        {
+          "text": "chunked-call-recognized-correct: the chunked_call helper around lines 134-150 is recognized as the right idiom, not reported as a defect",
+          "passed": true,
+          "evidence": "chunked_call is prescribed as the fix, not flagged: REVIEW.md:54 'one chunked_call('HMGET', KEYS[7], old_grant_fields)' and REVIEW.md:307-308 'These already read the whole window via chunked HMGET; keep that shape'. The only related finding is a tuning of NATIVE_CHUNK_ITEMS (REVIEW.md:214-220), which raises the chunk size inside the helper's idiom rather than calling the helper wrong."
+        },
+        {
+          "text": "findings-have-line-numbers-and-impact-order: every finding carries a concrete line number and the list is explicitly ordered by expected impact",
+          "passed": true,
+          "evidence": "Every section heading carries lines (\u00a71 'Line 453', \u00a72 'Line 553', \u00a73 'Lines 673-674, 692-699', \u00a74 'Lines 403-415 and 612-616', \u00a75 'Lines 113-129, 255-262, 334', \u00a76 'Lines 216-227', \u00a77 'Lines 217-221', \u00a78 'Line 1', \u00a79/\u00a710). Ordering is stated explicitly at REVIEW.md:16-17 'the dominant cost term is the number of redis.call ... Everything below is ordered on that basis', backed by the per-site call-budget table at REVIEW.md:23-31."
+        },
+        {
+          "text": "names-recovery-contract-no-change: the review states what it would NOT change because it belongs to the recovery contract",
+          "passed": true,
+          "evidence": "REVIEW.md:285-319 '## What I would NOT change: the recovery contract' lists 9 items with lines: the receipt protocol (:255-264, :692-699, :702), NX on cursor writes (:220) and ZADD_NX (:223), the key-index restriction (:19-30, :687), HDEL 7 / ZREM 8 adjacency (:445-451), the hoisted TIME at :638, whole-window conflict checks (:403-415), KEYS[]-only dispatch, budget caps, and the flat reply at :704."
+        },
+        {
+          "text": "addresses-multikey-coordination-cost: the review addresses the coordination cost of this 14-key script on default flags (io vs shard-local) and the --lock_on_hashtags trade-off",
+          "passed": true,
+          "evidence": "REVIEW.md:8-17 'A shared hashtag does not co-locate keys on one shard on default flags. It is a lock/placement unit only under --lock_on_hashtags ... io-coordinated regime (a) ... 26.95 \u00b5s/call ... versus 1.01 \u00b5s on the shard-local path [lab Q5]'. The trade-off is worked through at REVIEW.md:276-281: lock_on_hashtags 'would move this script to ~1.5 \u00b5s/call' but 'serialises all unrelated work behind {inbound}'s shard', with the distinct-tags>=shard-count rule and 'Batching ... is the change that pays in both regimes; do this before touching flags.'"
+        },
+        {
+          "text": "claims-carry-dragonfly-evidence: every performance claim names Dragonfly-specific evidence (a measurement run, INFO/eval coordination counters, SCRIPT LATENCY, or a Dragonfly v1.34.0 doc/source citation)",
+          "passed": true,
+          "evidence": "Each cost claim is tied to a cited measurement: 26.95 vs 1.01 \u00b5s/call [lab Q5] (:13-14), HGET->HMGET p50 41183->7814 \u00b5s, p99 52222->17150 \u00b5s [lab Q7] and 7.6x [lab Q10] (:47-48), plan encode p50 1905 \u00b5s at 1 MiB / 15070 \u00b5s at 8 MiB and the 32 MiB OOM [lab Q4] (:114-116), replica write cost +4.3%/+41.6% [lab Q6] (:138-139), acall 28.05->2.93 \u00b5s/call [lab Q5] (:192), unpack limit 8163 [lab Q9] (:216). Verification names eval_io_coordination_total vs eval_shardlocal_coordination_total (:252), total_commands_processed deltas (:256) and scripts/script_latency.py (:273)."
+        },
+        {
+          "text": "no-unverified-redis-only-advice: no Redis Functions/FUNCTION migration, no '#!lua flags=no-writes' shebang, no disable-atomicity-for-speed, no client pipelining as the fix for in-script calls, no redis.setresp(3) -- unless backed by Dragonfly evidence",
+          "passed": true,
+          "evidence": "No FUNCTION, no setresp, no pipelining-as-fix anywhere. Shebang-style directives appear only as an explicit warning backed by evidence: REVIEW.md:201-202 'Do not reach for --lua_auto_async here ... the --!df flags= directives are not an optimisation \u2014 both real flags remove the fast path, and no-writes is parsed and ignored [lab Q5]'. The atomicity-relevant suggestion (redis.acall for discarded replies, :188-199) is Dragonfly-specific and measured, and it explicitly requires verifying ordering barriers and error surfacing."
+        },
+        {
+          "text": "flags-redundant-writes: the review flags as redundant writes both the delete-and-reinsert of unchanged grants at apply_new_mutable_mailbox_page.lua:612-616 (HDEL/ZREM of grant fields followed by HSET/ZADD of the same rows) and the rewrite at apply_new_mutable_mailbox_page.lua:403-415 of records and grants the script has already compared and proven identical, and states that these writes still cost shard mutations, journal bytes and replica bytes",
+          "passed": true,
+          "evidence": "REVIEW.md:135-150 '## 4. Lines 403-415 and 612-616 \u2014 writes the script has already proven redundant' covers both: ':403-409 existing_records proves every already-present record_field is byte-identical ... Line 618 then HSETs all of record_rows back anyway', ':410-415 identically for grants', and ':612-616 HDEL 7 + ZREM 8 ... immediately followed by HSET 7 ... and ZADD 8 ... deleted and re-inserted with the same value and the same score. Same key, same field, same bytes, two mutations plus two journal records.' The cost statement is explicit at :137-139: 'a write whose value does not change still costs a shard mutation, journal bytes and replica bytes; Q6 measured a write script at +4.3% (per-call) / +41.6% (batched) p50 with a replica attached versus standalone [lab Q6]'. Matches the input at :612-616 and :403-415."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 3,
+      "configuration": "with_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 1.0,
+        "passed": 8,
+        "failed": 0,
+        "total": 8,
+        "time_seconds": 0.0,
+        "tokens": 54536,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "both-keys-declared-in-keys: {t}:leases and {t}:due are both passed in KEYS, not constructed inside the script body",
+          "passed": true,
+          "evidence": "renew_leases_batch.lua:32-33 `local LEASES = KEYS[1]` / `local DUE = KEYS[2]`; no string concatenation of key names anywhere. DESIGN.md:10 `EVALSHA <sha> 2 {t}:leases {t}:due`. Verified live: script loaded and ran with numkeys=2 on df-v1.34.0."
+        },
+        {
+          "text": "single-hmget-for-batch: the batch of up to 64 lease fields is read with one HMGET rather than per-item HGET",
+          "passed": true,
+          "evidence": "renew_leases_batch.lua:63 `local stored = rcall('HMGET', LEASES, table.unpack(ids, 1, n))` \u2014 the only read; the decision loop (68-92) issues no calls."
+        },
+        {
+          "text": "batched-hset-and-zadd-for-successes: successful renewals are written with one multi-field HSET and one multi-member ZADD (or equivalent single batched calls)",
+          "passed": true,
+          "evidence": "renew_leases_batch.lua:94-98 `acall('HSET', LEASES, table.unpack(hset, 1, hn))` and `acall('ZADD', DUE, table.unpack(zadd, 1, zn))`, guarded by `if hn > 0`. Live run with 4 items produced the expected hash and zset state."
+        },
+        {
+          "text": "explicit-64-bound-and-chunking-awareness: the script enforces an explicit bound of 64 items and shows awareness of unpack/argument-count chunking limits",
+          "passed": true,
+          "evidence": "renew_leases_batch.lua:35,48-50 `MAX_ITEMS = 64` with hard rejection of n > 64. DESIGN.md:126-128 'No unbounded unpack. The largest splice is ZADD with 2x64 = 128 arguments, far under the measured Lua ceiling (8163 fields unpack, 8164 is a stack overflow) ... if the cap were ever raised past ~1000, chunk HMGET/HSET/ZADD at 256-1000'."
+        },
+        {
+          "text": "per-item-status-stable-protocol: the reply carries a per-item status covering renewed/token_mismatch/expired/missing with a stable constant-arity protocol",
+          "passed": true,
+          "evidence": "DESIGN.md:51-65 flat array of arity exactly 1+2n, positional, integer status codes 1/2/3/0 plus a deadline string per item; rationale for constant arity given ('a Lua array reply truncates at the first nil'). Live: `1789529624005 1 <deadline> 2 9999999999999 3 1 0 0` for renew/mismatch/expired/missing."
+        },
+        {
+          "text": "server-time-used-for-deadline: the new deadline is computed from server time obtained on the server, per the stated contract",
+          "passed": true,
+          "evidence": "renew_leases_batch.lua:55-57 `local t = rcall('TIME')` -> `now_ms` -> `new_deadline = now_ms + ttl_ms`; no caller clock in ARGV. DESIGN.md:210-212 rejects caller-supplied now_ms explicitly."
+        },
+        {
+          "text": "measurement-plan-names-script-latency-and-equal-seed: the verification note names SCRIPT LATENCY or the eval coordination counters, an identical-seed comparison, and p50 plus p99",
+          "passed": true,
+          "evidence": "DESIGN.md:163-167 eval_io_coordination_total / eval_shardlocal_coordination_total delta per invocation; :178-182 `scripts/script_latency.py --sha <sha> --watch` (SCRIPT LATENCY, with the cumulative-histogram caveat); :168-174 `--reseed --compare naive.lua renew_leases_batch.lua` on identical seeded state with byte-identical reply assertion; :173 'Report p50 and p99'."
+        },
+        {
+          "text": "no-unverified-redis-only-advice: the design contains no Redis-origin performance advice presented without Dragonfly evidence",
+          "passed": true,
+          "evidence": "Dragonfly-specific claims are each tied to evidence: DESIGN.md:93-98 'measured on df-v1.34.0 ... one invocation moves eval_io_coordination_total by +1' and the explicit correction 'A shared {hashtag} does not by itself co-locate keys on default flags - only --lock_on_hashtags'; :110-112 uses the Dragonfly `--!df flags=` syntax and notes `no-writes` is parsed and ignored; :116 no SCRIPT KILL / no BUSY (a Dragonfly-specific fact, not Redis lore); :192-205 smoke numbers labelled as server-side SCRIPT LATENCY on df-v1.34.0 and explicitly not a shipping number. No FUNCTION, `#!lua` shebang, setresp(3), disable-atomicity-for-speed, or client-pipelining-as-fix advice."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 1,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.75,
+        "passed": 6,
+        "failed": 2,
+        "total": 8,
+        "time_seconds": 0.0,
+        "tokens": 62091,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "reply-equality-with-original: the optimized script returns replies byte-identical to the original on the same seeded state, proven by running scripts/bench_script.py --compare (clock-bearing reply positions excluded)",
+          "passed": true,
+          "evidence": "Grader re-ran on the same fresh container eval1g-70744 (df-v1.34.0, port 32827): bench_script.py --spec ... --seed ... --reseed --compare <original> <without_skill>. Output verbatim: 'replies identical on this seed (164 fields, ignored [1, 7, 12, ... 162])', exit 0."
+        },
+        {
+          "text": "p50-improved-on-same-seed: the measured p50 of the optimized script is lower than the original's p50 measured on the same seed and the same container",
+          "passed": true,
+          "evidence": "Grader measurement on eval1g-70744 (30 iters, 5 warmup, --reseed): original p50=68480.6us p99=71497.2us; without_skill p50=6749.9us p99=11164.3us (p50 ratio 0.099). Original-vs-original control on the same container: p50 97735.9us vs 97756.0us (ratio 1.000). SCRIPT LATENCY avg 67381us -> 5361us."
+        },
+        {
+          "text": "per-candidate-hget-loop-batched: the per-candidate HGET/HMGET-per-mailbox loop over the candidate window is replaced by batched multi-field reads",
+          "passed": true,
+          "evidence": "outputs/claim_mailbox_batch.lua batches the candidate window: hmget_all helper (line 16, redis.call('HMGET', key, unpack(fields, index, last)), 256/chunk) covers versions, leases, records (KEYS[13]) and receipts (KEYS[8]); descriptor is one HMGET at line 179. The 3 remaining HGETs (lines 57, 129, 145) are per-claim/per-recovery-slot, not the per-candidate window loop."
+        },
+        {
+          "text": "before-after-numbers-present: the deliverables contain concrete before/after numbers measured against a Dragonfly v1.34.0 container, not estimates",
+          "passed": true,
+          "evidence": "NOTES.md 'Result' table: original p50 67.6ms, optimized p50 1.91ms, n=30, plus a second alternating pass 95.7ms vs 1.73ms, measured on the arm's own container (transcript step 8, teardown 'docker rm -f eval3-ns-df'). Concrete, not estimates; grader reproduced the direction (68480.6 -> 6749.9us p50)."
+        },
+        {
+          "text": "reply-protocol-and-recovery-preserved: the whole-window protocol/version checks and the lease-receipt recovery semantics are unchanged",
+          "passed": true,
+          "evidence": "Grader cross-validated both harnesses on eval1g-70744: with_skill's differential_paths.py (14 scenarios) -> 'FAILURES: none'; the arm's own difftest.py (35 scenarios, reply + full 14-key dump, incl. record_missing_beyond_batch, descriptor_applying, arg_* validation order) -> 'ALL 35 CASES MATCH'. Status-literal census matches the original (17 PROTOCOL, 6 FENCED, all status strings present)."
+        },
+        {
+          "text": "states-execution-regime-with-evidence: the notes state that this script is io-coordinated on the given default flags because a shared hashtag does not co-locate keys on one shard without --lock_on_hashtags, and support that statement with the eval_io_coordination_total / eval_shardlocal_coordination_total deltas per invocation or an equivalent measurement taken on the v1.34.0 container",
+          "passed": false,
+          "evidence": "FAIL. Grep of NOTES.md and transcript.md for 'coordination|io_coord|shardlocal|hashtag|lock_on' returns zero matches. The notes' root cause is a generic 'Dragonfly executes every redis.call from a script as a separately scheduled command against the shard set' with a ~25-30us/call figure; they never state the script is io-coordinated, never state that a shared hashtag fails to co-locate keys without --lock_on_hashtags, and report no eval_io_coordination_total / eval_shardlocal_coordination_total deltas or equivalent regime measurement."
+        },
+        {
+          "text": "before-after-on-identical-seeded-state: the before/after comparison is run on identical seeded state (the seed re-applied before each timed call) with a reply-equality check between the two variants, and both p50 and p99 are reported for each arm",
+          "passed": false,
+          "evidence": "FAIL. The seeded state is re-applied before each timed call (bench.py reset_round() restores the due zset and clears leases/receipts) and difftest.py provides a 35-case reply-equality check, but no p99 is reported for either arm: bench.py prints min/p50/p90/max/mean and NOTES.md's table lists p50/mean/min/max only. Grep for 'p99' across NOTES.md and transcript.md returns zero matches."
+        },
+        {
+          "text": "no-unverified-redis-only-advice: every performance claim in the output cites Dragonfly-specific evidence -- a Dragonfly execution-path counter (eval_io_coordination_total / eval_shardlocal_coordination_total / lua_blocked_total), a SCRIPT LATENCY or bench measurement taken on v1.34.0, or a Dragonfly v1.34.0 doc/source citation -- and the output contains no Redis-origin performance advice presented without such Dragonfly evidence",
+          "passed": true,
+          "evidence": "All performance claims rest on measurements from the arm's own v1.34.0 container: the ~25-30us/call figure is derived in transcript step 5 (stubbing ~968 HEXISTS calls removed ~28ms, 30.81ms -> 2.33ms p50) rather than imported from Redis, and the before/after table comes from bench.py runs on the container. No Redis-origin advice (cluster slots, pipelining lore, Redis benchmark numbers) appears in the output."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 2,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.667,
+        "passed": 6,
+        "failed": 3,
+        "total": 9,
+        "time_seconds": 0.0,
+        "tokens": 43684,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "finds-per-grant-hget-loop-453: a finding names the per-grant HGET loop at or around line 453 and proposes batching it (HMGET)",
+          "passed": true,
+          "evidence": "REVIEW.md:16-28 '### 1. Per-field HGET inside the old-grant loop \u2014 line 453' quotes redis.call('HGET', KEYS[7], field), bounds it by MAX_OLD_GRANTS = 8192, and proposes 'issue one chunked HMGET on KEYS[7] ... 8192 calls become 32', noting the reads all precede the first write so batching changes nothing observable."
+        },
+        {
+          "text": "finds-cjson-plan-encode-673: a finding names the cjson.encode of the replay plan at or around lines 673-674 on the success path",
+          "passed": true,
+          "evidence": "REVIEW.md:74-78 '### 5. The plan is a full second copy of the page, encoded, written, journalled, and deleted \u2014 lines 656-674, 693-702', naming 'cjson.encode(plan) at line 674' and the MAX_PLAN_BYTES = 32 MB vs MAX_REQUEST_BYTES = 16 MB asymmetry, plus the HSET at :693 and HDEL at :702."
+        },
+        {
+          "text": "chunked-call-recognized-correct: the chunked_call helper around lines 134-150 is recognized as the right idiom, not reported as a defect",
+          "passed": false,
+          "evidence": "The helper is itself filed as a finding in the impact-ordered list: REVIEW.md:94-104 '### 7. chunked_call / mget_dynamic copy every chunk before unpacking \u2014 lines 134-150, 152-167', asserting 'The current form allocates a 256-slot table per chunk and does 256 #chunk + 1 length operations ... plus the GC pressure' and that chunked_call 'does not' need its copy. That is precisely the lines the assertion says must not be reported as a defect; the countervailing line 26 ('The script already owns the right tool: chunked_call ... (line 134)') does not cancel finding 7. The micro-claim is also unmeasured, and the attached advice 'NATIVE_CHUNK_ITEMS = 256 is also conservative for Dragonfly, which handles wide argument vectors fine' (:104) carries no Dragonfly evidence and ignores the unpack argument-count ceiling."
+        },
+        {
+          "text": "findings-have-line-numbers-and-impact-order: every finding carries a concrete line number and the list is explicitly ordered by expected impact",
+          "passed": true,
+          "evidence": "REVIEW.md:14 '## Findings, ordered by expected impact', and every heading carries lines (#1 line 453, #2 line 553, #3 lines 403-414 vs 612-618, #4 lines 92-100/456/605, #5 lines 656-674/693-702, #6 lines 113-131/255/334, #7 lines 134-150, #8 lines 102-111, #9 minor items each with lines). REVIEW.md:123 restates 'The findings above are ordered by expected impact.'"
+        },
+        {
+          "text": "names-recovery-contract-no-change: the review states what it would NOT change because it belongs to the recovery contract",
+          "passed": true,
+          "evidence": "REVIEW.md:135-148 '## What I would NOT change, because it is part of the recovery contract' lists the receipt write/delete (:693, :702), the scope-patch/receipt/commands/commit ordering (:687-702), execute_commands as a separate pass over a materialised list, HDEL 7 / ZREM 8 adjacency (:612-613), ZADD_NX vs ZADD and SET NX cursors (:381, :630, :634, :220), deterministic table.sort (:509, :547, :587), the receipt_pending early return (:255-263), authorized() as a fence (:113-131, :306), the budget caps (:1-9), and the record_conflict comparisons (:404-414)."
+        },
+        {
+          "text": "addresses-multikey-coordination-cost: the review addresses the coordination cost of this 14-key script on default flags (io vs shard-local) and the --lock_on_hashtags trade-off",
+          "passed": false,
+          "evidence": "--lock_on_hashtags is never mentioned (grep returns nothing), so the trade-off is absent. The review's foundational claim inverts the actual default-flag behaviour: REVIEW.md:7 'One hashtag = one shard = one proactor thread. Every key this script touches hashes to the same slot, so all of its work runs on 1 of the 4 proactor threads.' On Dragonfly v1.34.0 default flags a hashtag is not a placement/lock unit, so a 24+n-key script is io-coordinated across shards, not shard-local; findings 1-9 and measurement item 4 ('one proactor pinned, three idle', :128) are all built on that unevidenced premise. The io vs shard-local distinction is never named."
+        },
+        {
+          "text": "claims-carry-dragonfly-evidence: every performance claim names Dragonfly-specific evidence (a measurement run, INFO/eval coordination counters, SCRIPT LATENCY, or a Dragonfly v1.34.0 doc/source citation)",
+          "passed": false,
+          "evidence": "The quantitative claims are asserted with no measurement, counter or citation: 'At a conservative 3-6 \u00b5s of dispatch overhead per call, that alone is 25-50 ms of locked-catalog time' (:24), the squashing/flush-point model in 'Platform facts' (:9), the one-hashtag-one-thread claim (:7), the listpack-vs-skiplist O(N)-per-ZCOUNT branch (:39), and Lua 5.1 string-interning cost (:70). None cites a v1.34.0 run, doc or source. The measurement section proposes counters only after the fact (INFO commandstats, SLOWLOG, ZCARD/OBJECT ENCODING, :125-131), and its premise that 'Dragonfly counts commands dispatched from inside Lua' in commandstats (:125) is itself unverified. No eval coordination counters and no SCRIPT LATENCY."
+        },
+        {
+          "text": "no-unverified-redis-only-advice: no Redis Functions/FUNCTION migration, no '#!lua flags=no-writes' shebang, no disable-atomicity-for-speed, no client pipelining as the fix for in-script calls, no redis.setresp(3) -- unless backed by Dragonfly evidence",
+          "passed": true,
+          "evidence": "Grep for FUNCTION, setresp, '#!lua', 'no-writes' and 'pipelin' finds none of the prohibited recommendations. The single occurrence of pipelining is a comparison, not a proposed fix: 'far more so than the equivalent loop in a pipeline' (:9). No atomicity relaxation is proposed; :28 only argues hoisting the reads loses no ordering or atomicity property."
+        },
+        {
+          "text": "flags-redundant-writes: the review flags as redundant writes both the delete-and-reinsert of unchanged grants at apply_new_mutable_mailbox_page.lua:612-616 (HDEL/ZREM of grant fields followed by HSET/ZADD of the same rows) and the rewrite at apply_new_mutable_mailbox_page.lua:403-415 of records and grants the script has already compared and proven identical, and states that these writes still cost shard mutations, journal bytes and replica bytes",
+          "passed": true,
+          "evidence": "REVIEW.md:45-61 '### 3. Unconditional re-write of grants and records that are already identical \u2014 lines 403-414 vs 612-618' covers both halves: 'lines 615 and 618 unconditionally HSET every grant payload and every record JSON back \u2014 including the entries the script has just confirmed are byte-identical' and 'the command list does HDEL 7 (line 612) -> ZREM 8 (line 613) -> HSET 7 (line 615) -> ZADD 8 (line 616): a delete-then-reinsert of an unchanged entry'. Costs are stated as 'Four dispatched mutations per unchanged grant instead of zero', dense-hash/zset delete+reinsert churn, and 'Four journal records per unchanged grant replicated to every replica' (:52-55), consistent with platform fact 4 at :10. Matches the input at :612-616 and :403-415; it additionally preserves the half-removed-mailbox reasoning."
+        }
+      ],
+      "notes": []
+    },
+    {
+      "eval_id": 3,
+      "configuration": "without_skill",
+      "run_number": 1,
+      "result": {
+        "pass_rate": 0.63,
+        "passed": 5,
+        "failed": 3,
+        "total": 8,
+        "time_seconds": 0.0,
+        "tokens": 38383,
+        "tool_calls": 0,
+        "errors": 0
+      },
+      "expectations": [
+        {
+          "text": "both-keys-declared-in-keys: {t}:leases and {t}:due are both passed in KEYS, not constructed inside the script body",
+          "passed": true,
+          "evidence": "renew_leases_batch.lua:47,93,94 use KEYS[1]/KEYS[2] only; no key name built in the script. DESIGN.md:23 `EVALSHA <sha> 2 {t}:leases {t}:due` and :31-36 shows the verified undeclared-key error at numkeys=0. Verified live on df-v1.34.0."
+        },
+        {
+          "text": "single-hmget-for-batch: the batch of up to 64 lease fields is read with one HMGET rather than per-item HGET",
+          "passed": true,
+          "evidence": "renew_leases_batch.lua:43-47 builds `fields` then `local stored = redis.call('HMGET', KEYS[1], unpack(fields))`; the decision loop (56-89) issues no calls."
+        },
+        {
+          "text": "batched-hset-and-zadd-for-successes: successful renewals are written with one multi-field HSET and one multi-member ZADD (or equivalent single batched calls)",
+          "passed": true,
+          "evidence": "renew_leases_batch.lua:92-95 `if nh > 0 then redis.call('HSET', KEYS[1], unpack(hset_args)); redis.call('ZADD', KEYS[2], unpack(zadd_args))`. Live 4-item run produced correct hash/zset state."
+        },
+        {
+          "text": "explicit-64-bound-and-chunking-awareness: the script enforces an explicit bound of 64 items and shows awareness of unpack/argument-count chunking limits",
+          "passed": false,
+          "evidence": "The 64 bound is enforced (renew_leases_batch.lua:16,26-29 MAX_ITEMS with rejection of n > 64), but there is no chunking/unpack-limit awareness anywhere: grep for 'unpack', 'chunk', 'stack' over DESIGN.md and transcript.md returns zero hits. DESIGN.md:138-140 only says peak memory is 'the <=128-element write argument lists'; it never notes the Lua unpack/argument-count ceiling or what to do if MAX_ITEMS is raised. Failure scenario: a later change to MAX_ITEMS=5000 hits a Lua stack overflow in `unpack(fields)` with no guidance in the design."
+        },
+        {
+          "text": "per-item-status-stable-protocol: the reply carries a per-item status covering renewed/token_mismatch/expired/missing with a stable constant-arity protocol",
+          "passed": true,
+          "evidence": "DESIGN.md:62-80 flat array of length 1+2N, `[2i]` status string 'renewed'|'token_mismatch'|'expired'|'missing', `[2i+1]` deadline or 0, request order, duplicates included. renew_leases_batch.lua:87-88 fills both slots on every path. Live: `1789529624032 renewed <dl> token_mismatch 0 expired 0 missing 0`."
+        },
+        {
+          "text": "server-time-used-for-deadline: the new deadline is computed from server time obtained on the server, per the stated contract",
+          "passed": true,
+          "evidence": "renew_leases_batch.lua:37-39 `local t = redis.call('TIME')` -> now_ms -> `new_deadline = now_ms + ttl_ms`; DESIGN.md:41-44 'The script takes no clock argument ... a client with a skewed clock cannot extend or kill a lease.'"
+        },
+        {
+          "text": "measurement-plan-names-script-latency-and-equal-seed: the verification note names SCRIPT LATENCY or the eval coordination counters, an identical-seed comparison, and p50 plus p99",
+          "passed": false,
+          "evidence": "None of the three named elements is present. grep over DESIGN.md and transcript.md for 'script latency', 'coordination', 'p50', 'median' returns zero hits: the plan (DESIGN.md:158-244) uses redis-benchmark, INFO commandstats usec deltas, SLOWLOG and INFO latencystats only, and reports 'avg / p95 / p99' (:192), never p50. No identical-seed variant comparison either: DESIGN.md:186-190 drives `redis-benchmark -r 100000` with `m:__rand_int__`, i.e. randomized fields per arm, and section E (:225-228) compares against client pipelining without any equal-seed/identical-reply control."
+        },
+        {
+          "text": "no-unverified-redis-only-advice: the design contains no Redis-origin performance advice presented without Dragonfly evidence",
+          "passed": false,
+          "evidence": "Redis-cluster-origin placement claim stated as Dragonfly fact and never measured: DESIGN.md:13-14 'Both keys carry the same {t} hash tag, so Dragonfly maps them to **one shard**.' and :142-144 'The {t} hash tag keeps the transaction on one shard: Dragonfly takes locks on two keys in one shard instead of coordinating a multi-shard transaction.' On df-v1.34.0 defaults a hashtag is not the placement/lock unit (that requires --lock_on_hashtags), and the transcript shows no coordination-counter or flag check; yet the conclusion at :219-223 ('renew_leases_batch does not scale by adding shards or cores') is a shipping decision built on it. Also Redis 7 shebang syntax presented as the Dragonfly mechanism, unverified: :38-39 'Do **not** work around it with `#!lua flags=allow-undeclared-keys` - that flag makes the script run as a global transaction and removes the single-shard fast path' (Dragonfly's form is `--!df flags=`; the transcript never tests any flag). Plus unmeasured Redis lore at :174-175 'Always benchmark EVALSHA, never EVAL: EVAL re-parses and re-compiles and measures the compiler'."
+        }
+      ],
+      "notes": []
+    }
+  ],
+  "run_summary": {
+    "with_skill": {
+      "pass_rate": {
+        "mean": 1.0,
+        "stddev": 0.0,
+        "min": 1.0,
+        "max": 1.0
+      },
+      "time_seconds": {
+        "mean": 0.0,
+        "stddev": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "tokens": {
+        "mean": 59773.3333,
+        "stddev": 8693.9136,
+        "min": 54536,
+        "max": 69809
+      }
+    },
+    "without_skill": {
+      "pass_rate": {
+        "mean": 0.6823,
+        "stddev": 0.0615,
+        "min": 0.63,
+        "max": 0.75
+      },
+      "time_seconds": {
+        "mean": 0.0,
+        "stddev": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "tokens": {
+        "mean": 48052.6667,
+        "stddev": 12443.1207,
+        "min": 38383,
+        "max": 62091
+      }
+    },
+    "delta": {
+      "pass_rate": "+0.32",
+      "time_seconds": "+0.0",
+      "tokens": "+11721"
+    }
+  },
+  "notes": []
+}

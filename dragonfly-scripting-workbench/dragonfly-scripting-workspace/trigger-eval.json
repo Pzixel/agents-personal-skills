@@ -1,0 +1,82 @@
+[
+  {
+    "query": "our worker claims jobs with an EVALSHA script on dragonfly (v1.34) and p99 went from 8ms to 60ms after we grew the due zset to ~5k entries. script is in crates/store/assets/claim_batch.lua, 14 KEYS all under {inbound}. where do I even start looking?",
+    "should_trigger": true
+  },
+  {
+    "query": "Review this Lua for Dragonfly: it loops over ~8000 grant fields doing redis.call('HGET', KEYS[7], f) each. Is HMGET actually faster on Dragonfly or is that just a Redis thing? Server flags are defaults + proactor_threads=4.",
+    "should_trigger": true
+  },
+  {
+    "query": "we're moving our BullMQ-style queue scripts from redis 7 to dragonfly. they start with #!lua flags=no-writes and use redis.setresp(3). what breaks and what should I change in the scripts themselves?",
+    "should_trigger": true
+  },
+  {
+    "query": "need a dragonfly lua op renew_leases_batch: up to 64 leases in {t}:leases hash + {t}:due zset, renew only if token matches, return per-item status. write the script and tell me how to check it's not slow before we ship",
+    "should_trigger": true
+  },
+  {
+    "query": "INFO on our dragonfly shows eval_io_coordination_total climbing ~200/s and eval_shardlocal_coordination_total flat. all our keys share one hashtag. does that mean our scripts are on the slow path? should we enable lock_on_hashtags?",
+    "should_trigger": true
+  },
+  {
+    "query": "how do I read SCRIPT LATENCY output from dragonfly and get p99 per script sha? the histogram buckets look weird and never reset",
+    "should_trigger": true
+  },
+  {
+    "query": "is it worth turning my 12-command pipeline into a single Lua script on dragonfly? keys are in 3 different hashtags. I read that scripts are always faster than pipelines in redis",
+    "should_trigger": true
+  },
+  {
+    "query": "apply_page.lua builds a 20MB json plan with cjson.encode and HSETs it before applying, every time, even on the happy path. on dragonfly, is that blocking other clients on the shard? how would I measure that",
+    "should_trigger": true
+  },
+  {
+    "query": "dragonfly: my script uses --!df flags=disable-atomicity because the keys are hot. throughput got worse not better. why?",
+    "should_trigger": true
+  },
+  {
+    "query": "we implement rate limiting with a lua sliding-window script (ZADD/ZREMRANGEBYSCORE/ZCARD) on dragonfly. should we keep that or is there a native command",
+    "should_trigger": true
+  },
+  {
+    "query": "redis 7.2 cluster: my Lua script gets CROSSSLOT errors when the keys are in different slots. how do I fix the hash tags in my key names? (this is AWS elasticache, not dragonfly)",
+    "should_trigger": false
+  },
+  {
+    "query": "set up the dragonfly kubernetes operator with 3 replicas, snapshots every 5 minutes and an ACL file. what does the CRD look like",
+    "should_trigger": false
+  },
+  {
+    "query": "dragonfly is using 6GB with maxmemory=4GB and cache_mode=true. why isn't eviction keeping it under the limit? no lua involved, just plain SET/GET with TTL",
+    "should_trigger": false
+  },
+  {
+    "query": "what's the difference between dragonfly, valkey and keydb for a session cache? we just do GET/SET/EXPIRE",
+    "should_trigger": false
+  },
+  {
+    "query": "write a clickhouse materialized view that aggregates email opens per domain per hour from the raw events table",
+    "should_trigger": false
+  },
+  {
+    "query": "BullMQ on dragonfly: jobs stay in 'waiting' after a worker restart. we use the default prefix, no hashtag. is this a config thing on the BullMQ side?",
+    "should_trigger": false
+  },
+  {
+    "query": "how do I configure dragonfly replication with --replicaof and make failover automatic on docker compose? no scripts, just the topology",
+    "should_trigger": false
+  },
+  {
+    "query": "my redis-py code does r.eval(script, 2, k1, k2) and I want to switch to register_script so I can pipeline it. this is against a managed redis on GCP",
+    "should_trigger": false
+  },
+  {
+    "query": "explain how Dragonfly's dashtable saves memory compared to redis dict. I'm writing an internal wiki page, no code",
+    "should_trigger": false
+  },
+  {
+    "query": "our postgres query planner picks a seq scan on the mailboxes table even with an index on (workspace_id, due_at). explain analyze attached",
+    "should_trigger": false
+  }
+]

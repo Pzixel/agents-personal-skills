@@ -1,0 +1,280 @@
+=== Q11 raw log ===
+date: 2026-09-16T04:44:05+0300
+driver: q11_redis_advice.py
+note: four pieces of Redis advice, 200 iterations after 20 warm-up, on the default primary and on a throwaway --lock_on_hashtags node
+server version: df-v1.34.0 (redis_version 7.4.0), threads=4
+server flags:   ["--cache_mode=false","--maxmemory=2048Mi","--dbfilename=dump","--proactor_threads=4"]
+
+throwaway node: ["--cache_mode=false","--maxmemory=2048Mi","--dbfilename=dump","--proactor_threads=4"]
+
+--- ===== node default (:6379) ===== ---
+server version: df-v1.34.0 (redis_version 7.4.0), threads=4
+server flags:   ["--cache_mode=false","--maxmemory=2048Mi","--dbfilename=dump","--proactor_threads=4"]
+
+--- a) pipeline vs script vs MULTI/EXEC - default ---
+$ SCRIPT LOAD <64 x GET over KEYS> -> c2bf3945a165b34b529941becab933666e62ef63
+$ SCRIPT LOAD <64 x HSET over KEYS> -> 4029335ab6ded192fe8ca98c3c421dd108b33163
+$ GET/HSET x64 on keys in the single hashtag {q11a}, 2048B values, 200 iterations after 20 warm-up
+    [default | GET x64 | client pipeline (1 round trip)] p50 479us p99 1306us | eval_shardlocal_coordination=+0 eval_io_coordination=+0 eval_squashed_flushes=+0 lua_blocked=+0 | tx_batch_schedule_calls_total=+14080 tx_batch_scheduled_items_total=+14080 tx_normal_total=+14080 tx_shard_optimistic_total=+14080
+    [default | GET x64 | one atomic script] p50 1860us p99 2752us | eval_shardlocal_coordination=+0 eval_io_coordination=+220 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_normal_total=+220 tx_shard_polls=+14960 used_memory_lua=+8976
+    [default | GET x64 | MULTI/EXEC] p50 1026us p99 1415us | eval_shardlocal_coordination=+0 eval_io_coordination=+0 eval_squashed_flushes=+0 lua_blocked=+0 | tx_normal_total=+220 tx_shard_polls=+1760
+    [default | HSET x64 | client pipeline (1 round trip)] p50 1419us p99 1907us | eval_shardlocal_coordination=+0 eval_io_coordination=+0 eval_squashed_flushes=+0 lua_blocked=+0 | tx_batch_schedule_calls_total=+14080 tx_batch_scheduled_items_total=+14080 tx_normal_total=+14080 tx_shard_optimistic_total=+14080
+    [default | HSET x64 | one atomic script] p50 2379us p99 3585us | eval_shardlocal_coordination=+0 eval_io_coordination=+220 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_normal_total=+220 tx_shard_polls=+14960 used_memory_lua=+5088
+    [default | HSET x64 | MULTI/EXEC] p50 981us p99 1476us | eval_shardlocal_coordination=+0 eval_io_coordination=+0 eval_squashed_flushes=+0 lua_blocked=+0 | tx_normal_total=+220 tx_shard_polls=+1760
+
+--- c) sliding-window Lua limiter vs CL.THROTTLE - default ---
+$ SCRIPT LOAD <ZREMRANGEBYSCORE+ZCARD+ZADD+PEXPIRE limiter> -> ef6126eb9ec61aec16617f7e41f97f620b3ba35e
+$ EVALSHA ef6126eb9ec61aec16617f7e41f97f620b3ba35e 1 {q11c}rl <now_ms> 60000 10000000 <id>
+    [default | Lua sliding window] p50 131us p99 161us | eval_shardlocal_coordination=+220 eval_io_coordination=+0 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_cnt=+1 lua_interpreter_return=+220 tx_batch_schedule_calls_total=+220 tx_batch_scheduled_items_total=+220 tx_normal_total=+220 tx_shard_optimistic_total=+220 used_memory_lua=+43376
+    zset after the run: ZCARD {q11c}rl = 220
+$ CL.THROTTLE {q11c}rlt 10000000 10000000 60 1
+    first reply: [0, 10000001, 10000000, -1, 1]
+    [default | CL.THROTTLE] p50 150us p99 172us | eval_shardlocal_coordination=+0 eval_io_coordination=+0 eval_squashed_flushes=+0 lua_blocked=+0 | tx_batch_schedule_calls_total=+220 tx_batch_scheduled_items_total=+220 tx_normal_total=+220 tx_shard_optimistic_total=+220
+
+--- d) SCRIPT LOAD of a 8894B script under load - default ---
+[default d] calibration: 64 calls -> 1831us, 1024 calls -> 14467us => 13.162us/call + 989us fixed; chose n=76 -> p50 1320us (target 2000us)
+$ EVALSHA cd2ebcdf99fb3d1c0287651427faf74a9b179534 8 <8 keys in {q8s}> 76   # x4 loader processes in a loop
+    [default | idle | SCRIPT LOAD 8894B, same text (sha already cached)] p50 162us p99 231us | eval_shardlocal_coordination=+0 eval_io_coordination=+0 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_batch_schedule_calls_total=+220 tx_batch_scheduled_items_total=+220 tx_normal_total=+220 tx_shard_optimistic_total=+220 used_memory_lua=-13784
+    [default | idle | SCRIPT LOAD 8894B, fresh text each time] p50 499us p99 648us | eval_shardlocal_coordination=+0 eval_io_coordination=+0 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_batch_schedule_calls_total=+220 tx_batch_scheduled_items_total=+220 tx_normal_total=+220 tx_shard_optimistic_total=+220 used_memory_lua=+2809712
+    [default | idle | EVALSHA of a 1-key trivial script] p50 115us p99 186us | eval_shardlocal_coordination=+220 eval_io_coordination=+0 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_batch_schedule_calls_total=+220 tx_batch_scheduled_items_total=+220 tx_normal_total=+220 tx_shard_optimistic_total=+220 used_memory_lua=+31936
+    [default | 4 loaders | SCRIPT LOAD 8894B, same text (sha already cached)] p50 149us p99 222us | eval_shardlocal_coordination=+0 eval_io_coordination=+20 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_cnt=+1 lua_interpreter_return=+240 tx_batch_schedule_calls_total=+220 tx_batch_scheduled_items_total=+220 tx_normal_total=+240 tx_shard_optimistic_total=+220 tx_shard_polls=+1613 used_memory_lua=-1606776
+    [default | 4 loaders | SCRIPT LOAD 8894B, fresh text each time] p50 478us p99 1332us | eval_shardlocal_coordination=+0 eval_io_coordination=+30 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+251 tx_batch_schedule_calls_total=+220 tx_batch_scheduled_items_total=+220 tx_normal_total=+250 tx_shard_optimistic_total=+220 tx_shard_polls=+2430 used_memory_lua=+2690320
+    [default | 4 loaders | EVALSHA of a 1-key trivial script] p50 81us p99 114us | eval_shardlocal_coordination=+220 eval_io_coordination=+14 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+235 tx_batch_schedule_calls_total=+220 tx_batch_scheduled_items_total=+220 tx_normal_total=+234 tx_shard_optimistic_total=+220 tx_shard_polls=+1169 used_memory_lua=+849616
+
+--- b) 100k x 64B: strings vs one hash vs 1000 hashes - default ---
+$ # 100000 string keys: built in 0.1s, # Keyspace db0:keys=100000,expires=0,hits=0,misses=0,hit_ratio=0.00,avg_ttl=-1
+    used_memory 1229120 -> 9602624 = 8373504 bytes (83.7 B/value)
+$ DEBUG OBJHIST
+___begin object histogram___
+
+OBJECT:string
+________________________________________________________________
+Key memory used:
+Count: 100000 Average: 0.0000  StdDev: 0.00
+Min: 0.0000  Median: 0.0000  Max: 0.0000
+------------------------------------------------------
+[       0,       1 ) 100000 100.000% 100.000% ####################
+
+Values - Total Memory used:
+Count: 100000 Average: 48.0000  StdDev: 0.00
+Min: 48.0000  Median: 48.0000  Max: 48.0000
+------------------------------------------------------
+[      45,      50 ) 100000 100.000% 100.000% ####################
+
+Items length histogram:
+Count: 0 Average: 0.0000  StdDev: 0.00
+Min: 0.0000  Median: 0.0000  Max: 0.0000
+------------------------------------------------------
+
+___end object histogram___
+
+$ GET <round-robin over 257 of the 100000 values>
+    [default | 100000 string keys | single GET] p50 147us p99 218us | eval_shardlocal_coordination=+0 eval_io_coordination=+0 eval_squashed_flushes=+0 lua_blocked=+0 | tx_batch_schedule_calls_total=+220 tx_batch_scheduled_items_total=+220 tx_normal_total=+220 tx_shard_optimistic_total=+220
+$ # 1 hash x 100000 fields: built in 0.7s, # Keyspace db0:keys=1,expires=0,hits=0,misses=0,hit_ratio=0.00,avg_ttl=-1
+    used_memory 1229120 -> 12193168 = 10964048 bytes (109.6 B/value)
+$ DEBUG OBJHIST
+___begin object histogram___
+
+OBJECT:hash
+________________________________________________________________
+Key memory used:
+Count: 1 Average: 0.0000  StdDev: 0.00
+Min: 0.0000  Median: 0.0000  Max: 0.0000
+------------------------------------------------------
+[       0,       1 ) 1 100.000% 100.000% ####################
+
+Values - Total Memory used:
+Count: 1 Average: 10964048.0000  StdDev: 0.00
+Min: 10964048.0000  Median: 10964048.0000  Max: 10964048.0000
+------------------------------------------------------
+[ 10000000, 12000000 ) 1 100.000% 100.000% ####################
+
+Cardinality histogram (number of elements in sets):
+Count: 1 Average: 100000.0000  StdDev: 0.00
+Min: 100000.0000  Median: 100000.0000  Max: 100000.0000
+------------------------------------------------------
+[  100000,  120000 ) 1 100.000% 100.000% ####################
+
+Items length histogram:
+Count: 100000 Average: 69.8889  StdDev: 0.94
+Min: 66.0000  Median: 70.0000  Max: 70.0000
+------------------------------------------------------
+[      60,      70 ) 10000  10.000%  10.000% ##
+[      70,      80 ) 90000  90.000% 100.000% ##################
+
+___end object histogram___
+
+$ HGET <round-robin over 257 of the 100000 values>
+    [default | 1 hash x 100000 fields | single HGET] p50 147us p99 171us | eval_shardlocal_coordination=+0 eval_io_coordination=+0 eval_squashed_flushes=+0 lua_blocked=+0 | tx_batch_schedule_calls_total=+220 tx_batch_scheduled_items_total=+220 tx_normal_total=+220 tx_shard_optimistic_total=+220
+$ # 1000 hashes x 100 fields: built in 0.6s, # Keyspace db0:keys=1000,expires=0,hits=0,misses=0,hit_ratio=0.00,avg_ttl=-1
+    used_memory 1229120 -> 12189120 = 10960000 bytes (109.6 B/value)
+$ DEBUG OBJHIST
+___begin object histogram___
+
+OBJECT:hash
+________________________________________________________________
+Key memory used:
+Count: 1000 Average: 0.0000  StdDev: 0.00
+Min: 0.0000  Median: 0.0000  Max: 0.0000
+------------------------------------------------------
+[       0,       1 ) 1000 100.000% 100.000% ####################
+
+Values - Total Memory used:
+Count: 1000 Average: 10960.0000  StdDev: 0.00
+Min: 10960.0000  Median: 10960.0000  Max: 10960.0000
+------------------------------------------------------
+[   10000,   12000 ) 1000 100.000% 100.000% ####################
+
+Cardinality histogram (number of elements in sets):
+Count: 1000 Average: 100.0000  StdDev: 0.00
+Min: 100.0000  Median: 100.0000  Max: 100.0000
+------------------------------------------------------
+[     100,     120 ) 1000 100.000% 100.000% ####################
+
+Items length histogram:
+Count: 100000 Average: 66.9000  StdDev: 0.80
+Min: 66.0000  Median: 66.0000  Max: 67.0000
+------------------------------------------------------
+[      60,      70 ) 100000 100.000% 100.000% ####################
+
+___end object histogram___
+
+$ HGET <round-robin over 257 of the 100000 values>
+    [default | 1000 hashes x 100 fields | single HGET] p50 149us p99 213us | eval_shardlocal_coordination=+0 eval_io_coordination=+0 eval_squashed_flushes=+0 lua_blocked=+0 | tx_batch_schedule_calls_total=+220 tx_batch_scheduled_items_total=+220 tx_normal_total=+220 tx_shard_optimistic_total=+220
+
+--- ===== node lock_on_hashtags (:6382) ===== ---
+server version: df-v1.34.0 (redis_version 7.4.0), threads=4
+server flags:   ["--cache_mode=false","--maxmemory=2048Mi","--dbfilename=dump","--proactor_threads=4"]
+
+--- a) pipeline vs script vs MULTI/EXEC - lock_on_hashtags ---
+$ SCRIPT LOAD <64 x GET over KEYS> -> 4ed2ba555f3d251e200a316ba143e56121ba3da5
+$ SCRIPT LOAD <64 x HSET over KEYS> -> ad7f5c065705a1bf57c99220a1ad7f010afed0c6
+$ GET/HSET x64 on keys in the single hashtag {q11a}, 2048B values, 200 iterations after 20 warm-up
+    [lock_on_hashtags | GET x64 | client pipeline (1 round trip)] p50 446us p99 539us | eval_shardlocal_coordination=+0 eval_io_coordination=+0 eval_squashed_flushes=+0 lua_blocked=+0 | tx_inline_runs_total=+14080 tx_normal_total=+14080 tx_shard_optimistic_total=+14080
+    [lock_on_hashtags | GET x64 | one atomic script] p50 186us p99 226us | eval_shardlocal_coordination=+220 eval_io_coordination=+0 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_cnt=+1 lua_interpreter_return=+220 tx_batch_schedule_calls_total=+1 tx_batch_scheduled_items_total=+1 tx_inline_runs_total=+219 tx_normal_total=+220 tx_shard_optimistic_total=+220 used_memory_lua=+79680
+    [lock_on_hashtags | GET x64 | MULTI/EXEC] p50 460us p99 547us | eval_shardlocal_coordination=+0 eval_io_coordination=+0 eval_squashed_flushes=+0 lua_blocked=+0 | tx_inline_runs_total=+440 tx_normal_total=+220 tx_shard_polls=+1100
+    [lock_on_hashtags | HSET x64 | client pipeline (1 round trip)] p50 397us p99 458us | eval_shardlocal_coordination=+0 eval_io_coordination=+0 eval_squashed_flushes=+0 lua_blocked=+0 | tx_inline_runs_total=+14080 tx_normal_total=+14080 tx_shard_optimistic_total=+14080
+    [lock_on_hashtags | HSET x64 | one atomic script] p50 175us p99 196us | eval_shardlocal_coordination=+220 eval_io_coordination=+0 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_inline_runs_total=+220 tx_normal_total=+220 tx_shard_optimistic_total=+220 used_memory_lua=+9456
+    [lock_on_hashtags | HSET x64 | MULTI/EXEC] p50 472us p99 631us | eval_shardlocal_coordination=+0 eval_io_coordination=+0 eval_squashed_flushes=+0 lua_blocked=+0 | tx_inline_runs_total=+440 tx_normal_total=+220 tx_shard_polls=+1100
+
+--- c) sliding-window Lua limiter vs CL.THROTTLE - lock_on_hashtags ---
+$ SCRIPT LOAD <ZREMRANGEBYSCORE+ZCARD+ZADD+PEXPIRE limiter> -> 0f88c7ec588d9168744cf567aebaf132de355823
+$ EVALSHA 0f88c7ec588d9168744cf567aebaf132de355823 1 {q11c}rl <now_ms> 60000 10000000 <id>
+    [lock_on_hashtags | Lua sliding window] p50 99us p99 115us | eval_shardlocal_coordination=+220 eval_io_coordination=+0 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_inline_runs_total=+220 tx_normal_total=+220 tx_shard_optimistic_total=+220 used_memory_lua=-21888
+    zset after the run: ZCARD {q11c}rl = 220
+$ CL.THROTTLE {q11c}rlt 10000000 10000000 60 1
+    first reply: [0, 10000001, 10000000, -1, 1]
+    [lock_on_hashtags | CL.THROTTLE] p50 118us p99 135us | eval_shardlocal_coordination=+0 eval_io_coordination=+0 eval_squashed_flushes=+0 lua_blocked=+0 | tx_inline_runs_total=+220 tx_normal_total=+220 tx_shard_optimistic_total=+220
+
+--- d) SCRIPT LOAD of a 8894B script under load - lock_on_hashtags ---
+[lock_on_hashtags d] calibration: 64 calls -> 164us, 1024 calls -> 642us => 0.498us/call + 132us fixed; chose n=3749 -> p50 2034us (target 2000us)
+$ EVALSHA 69b816dbde3e2c9f546ab3d66067d0639c26ecd1 8 <8 keys in {q8s}> 3749   # x4 loader processes in a loop
+    [lock_on_hashtags | idle | SCRIPT LOAD 8894B, same text (sha already cached)] p50 133us p99 146us | eval_shardlocal_coordination=+0 eval_io_coordination=+0 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_batch_schedule_calls_total=+220 tx_batch_scheduled_items_total=+220 tx_normal_total=+220 tx_shard_optimistic_total=+220 used_memory_lua=-8696
+    [lock_on_hashtags | idle | SCRIPT LOAD 8894B, fresh text each time] p50 440us p99 796us | eval_shardlocal_coordination=+0 eval_io_coordination=+0 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_batch_schedule_calls_total=+220 tx_batch_scheduled_items_total=+220 tx_normal_total=+220 tx_shard_optimistic_total=+220 used_memory_lua=+3261072
+    [lock_on_hashtags | idle | EVALSHA of a 1-key trivial script] p50 125us p99 160us | eval_shardlocal_coordination=+220 eval_io_coordination=+0 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_batch_schedule_calls_total=+220 tx_batch_scheduled_items_total=+220 tx_normal_total=+220 tx_shard_optimistic_total=+220 used_memory_lua=+31936
+    [lock_on_hashtags | 4 loaders | SCRIPT LOAD 8894B, same text (sha already cached)] p50 162us p99 256us | eval_shardlocal_coordination=+32 eval_io_coordination=+0 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+252 tx_batch_schedule_calls_total=+220 tx_batch_scheduled_items_total=+220 tx_inline_runs_total=+32 tx_normal_total=+252 tx_shard_optimistic_total=+252 used_memory_lua=-15280
+    [lock_on_hashtags | 4 loaders | SCRIPT LOAD 8894B, fresh text each time] p50 7787us p99 8666us | eval_shardlocal_coordination=+896 eval_io_coordination=+0 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+1116 tx_batch_schedule_calls_total=+220 tx_batch_scheduled_items_total=+220 tx_inline_runs_total=+896 tx_normal_total=+1116 tx_shard_optimistic_total=+1116 used_memory_lua=+1280560
+    [lock_on_hashtags | 4 loaders | EVALSHA of a 1-key trivial script] p50 7712us p99 8621us | eval_shardlocal_coordination=+1116 eval_io_coordination=+0 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+1116 tx_batch_schedule_calls_total=+220 tx_batch_scheduled_items_total=+220 tx_inline_runs_total=+896 tx_normal_total=+1116 tx_shard_optimistic_total=+1116 used_memory_lua=+24256
+
+--- b) 100k x 64B: strings vs one hash vs 1000 hashes - lock_on_hashtags ---
+$ # 100000 string keys: built in 0.0s, # Keyspace db0:keys=100000,expires=0,hits=0,misses=0,hit_ratio=0.00,avg_ttl=-1
+    used_memory 1229120 -> 9602624 = 8373504 bytes (83.7 B/value)
+$ DEBUG OBJHIST
+___begin object histogram___
+
+OBJECT:string
+________________________________________________________________
+Key memory used:
+Count: 100000 Average: 0.0000  StdDev: 0.00
+Min: 0.0000  Median: 0.0000  Max: 0.0000
+------------------------------------------------------
+[       0,       1 ) 100000 100.000% 100.000% ####################
+
+Values - Total Memory used:
+Count: 100000 Average: 48.0000  StdDev: 0.00
+Min: 48.0000  Median: 48.0000  Max: 48.0000
+------------------------------------------------------
+[      45,      50 ) 100000 100.000% 100.000% ####################
+
+Items length histogram:
+Count: 0 Average: 0.0000  StdDev: 0.00
+Min: 0.0000  Median: 0.0000  Max: 0.0000
+------------------------------------------------------
+
+___end object histogram___
+
+$ GET <round-robin over 257 of the 100000 values>
+    [lock_on_hashtags | 100000 string keys | single GET] p50 188us p99 263us | eval_shardlocal_coordination=+0 eval_io_coordination=+0 eval_squashed_flushes=+0 lua_blocked=+0 | tx_batch_schedule_calls_total=+167 tx_batch_scheduled_items_total=+167 tx_inline_runs_total=+53 tx_normal_total=+220 tx_shard_optimistic_total=+220
+$ # 1 hash x 100000 fields: built in 0.6s, # Keyspace db0:keys=1,expires=0,hits=0,misses=0,hit_ratio=0.00,avg_ttl=-1
+    used_memory 1229120 -> 12193168 = 10964048 bytes (109.6 B/value)
+$ DEBUG OBJHIST
+___begin object histogram___
+
+OBJECT:hash
+________________________________________________________________
+Key memory used:
+Count: 1 Average: 0.0000  StdDev: 0.00
+Min: 0.0000  Median: 0.0000  Max: 0.0000
+------------------------------------------------------
+[       0,       1 ) 1 100.000% 100.000% ####################
+
+Values - Total Memory used:
+Count: 1 Average: 10964048.0000  StdDev: 0.00
+Min: 10964048.0000  Median: 10964048.0000  Max: 10964048.0000
+------------------------------------------------------
+[ 10000000, 12000000 ) 1 100.000% 100.000% ####################
+
+Cardinality histogram (number of elements in sets):
+Count: 1 Average: 100000.0000  StdDev: 0.00
+Min: 100000.0000  Median: 100000.0000  Max: 100000.0000
+------------------------------------------------------
+[  100000,  120000 ) 1 100.000% 100.000% ####################
+
+Items length histogram:
+Count: 100000 Average: 69.8889  StdDev: 0.94
+Min: 66.0000  Median: 70.0000  Max: 70.0000
+------------------------------------------------------
+[      60,      70 ) 10000  10.000%  10.000% ##
+[      70,      80 ) 90000  90.000% 100.000% ##################
+
+___end object histogram___
+
+$ HGET <round-robin over 257 of the 100000 values>
+    [lock_on_hashtags | 1 hash x 100000 fields | single HGET] p50 156us p99 221us | eval_shardlocal_coordination=+0 eval_io_coordination=+0 eval_squashed_flushes=+0 lua_blocked=+0 | tx_batch_schedule_calls_total=+220 tx_batch_scheduled_items_total=+220 tx_normal_total=+220 tx_shard_optimistic_total=+220
+$ # 1000 hashes x 100 fields: built in 0.5s, # Keyspace db0:keys=1000,expires=0,hits=0,misses=0,hit_ratio=0.00,avg_ttl=-1
+    used_memory 1229120 -> 12189120 = 10960000 bytes (109.6 B/value)
+$ DEBUG OBJHIST
+___begin object histogram___
+
+OBJECT:hash
+________________________________________________________________
+Key memory used:
+Count: 1000 Average: 0.0000  StdDev: 0.00
+Min: 0.0000  Median: 0.0000  Max: 0.0000
+------------------------------------------------------
+[       0,       1 ) 1000 100.000% 100.000% ####################
+
+Values - Total Memory used:
+Count: 1000 Average: 10960.0000  StdDev: 0.00
+Min: 10960.0000  Median: 10960.0000  Max: 10960.0000
+------------------------------------------------------
+[   10000,   12000 ) 1000 100.000% 100.000% ####################
+
+Cardinality histogram (number of elements in sets):
+Count: 1000 Average: 100.0000  StdDev: 0.00
+Min: 100.0000  Median: 100.0000  Max: 100.0000
+------------------------------------------------------
+[     100,     120 ) 1000 100.000% 100.000% ####################
+
+Items length histogram:
+Count: 100000 Average: 66.9000  StdDev: 0.80
+Min: 66.0000  Median: 66.0000  Max: 67.0000
+------------------------------------------------------
+[      60,      70 ) 100000 100.000% 100.000% ####################
+
+___end object histogram___
+
+$ HGET <round-robin over 257 of the 100000 values>
+    [lock_on_hashtags | 1000 hashes x 100 fields | single HGET] p50 148us p99 233us | eval_shardlocal_coordination=+0 eval_io_coordination=+0 eval_squashed_flushes=+0 lua_blocked=+0 | tx_batch_schedule_calls_total=+178 tx_batch_scheduled_items_total=+178 tx_inline_runs_total=+42 tx_normal_total=+220 tx_shard_optimistic_total=+220
+
+throwaway node removed; lab is back to its default flags

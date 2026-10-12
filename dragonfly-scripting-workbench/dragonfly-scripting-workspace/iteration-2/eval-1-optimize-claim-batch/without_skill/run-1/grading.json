@@ -1,0 +1,50 @@
+{
+  "expectations": [
+    {
+      "text": "reply-equality-with-original: the optimized script returns replies byte-identical to the original on the same seeded state, proven by running scripts/bench_script.py --compare (clock-bearing reply positions excluded)",
+      "passed": true,
+      "evidence": "Grader re-ran on the same fresh container eval1g-70744 (df-v1.34.0, port 32827): bench_script.py --spec ... --seed ... --reseed --compare <original> <without_skill>. Output verbatim: 'replies identical on this seed (164 fields, ignored [1, 7, 12, ... 162])', exit 0."
+    },
+    {
+      "text": "p50-improved-on-same-seed: the measured p50 of the optimized script is lower than the original's p50 measured on the same seed and the same container",
+      "passed": true,
+      "evidence": "Grader measurement on eval1g-70744 (30 iters, 5 warmup, --reseed): original p50=68480.6us p99=71497.2us; without_skill p50=6749.9us p99=11164.3us (p50 ratio 0.099). Original-vs-original control on the same container: p50 97735.9us vs 97756.0us (ratio 1.000). SCRIPT LATENCY avg 67381us -> 5361us."
+    },
+    {
+      "text": "per-candidate-hget-loop-batched: the per-candidate HGET/HMGET-per-mailbox loop over the candidate window is replaced by batched multi-field reads",
+      "passed": true,
+      "evidence": "outputs/claim_mailbox_batch.lua batches the candidate window: hmget_all helper (line 16, redis.call('HMGET', key, unpack(fields, index, last)), 256/chunk) covers versions, leases, records (KEYS[13]) and receipts (KEYS[8]); descriptor is one HMGET at line 179. The 3 remaining HGETs (lines 57, 129, 145) are per-claim/per-recovery-slot, not the per-candidate window loop."
+    },
+    {
+      "text": "before-after-numbers-present: the deliverables contain concrete before/after numbers measured against a Dragonfly v1.34.0 container, not estimates",
+      "passed": true,
+      "evidence": "NOTES.md 'Result' table: original p50 67.6ms, optimized p50 1.91ms, n=30, plus a second alternating pass 95.7ms vs 1.73ms, measured on the arm's own container (transcript step 8, teardown 'docker rm -f eval3-ns-df'). Concrete, not estimates; grader reproduced the direction (68480.6 -> 6749.9us p50)."
+    },
+    {
+      "text": "reply-protocol-and-recovery-preserved: the whole-window protocol/version checks and the lease-receipt recovery semantics are unchanged",
+      "passed": true,
+      "evidence": "Grader cross-validated both harnesses on eval1g-70744: with_skill's differential_paths.py (14 scenarios) -> 'FAILURES: none'; the arm's own difftest.py (35 scenarios, reply + full 14-key dump, incl. record_missing_beyond_batch, descriptor_applying, arg_* validation order) -> 'ALL 35 CASES MATCH'. Status-literal census matches the original (17 PROTOCOL, 6 FENCED, all status strings present)."
+    },
+    {
+      "text": "states-execution-regime-with-evidence: the notes state that this script is io-coordinated on the given default flags because a shared hashtag does not co-locate keys on one shard without --lock_on_hashtags, and support that statement with the eval_io_coordination_total / eval_shardlocal_coordination_total deltas per invocation or an equivalent measurement taken on the v1.34.0 container",
+      "passed": false,
+      "evidence": "FAIL. Grep of NOTES.md and transcript.md for 'coordination|io_coord|shardlocal|hashtag|lock_on' returns zero matches. The notes' root cause is a generic 'Dragonfly executes every redis.call from a script as a separately scheduled command against the shard set' with a ~25-30us/call figure; they never state the script is io-coordinated, never state that a shared hashtag fails to co-locate keys without --lock_on_hashtags, and report no eval_io_coordination_total / eval_shardlocal_coordination_total deltas or equivalent regime measurement."
+    },
+    {
+      "text": "before-after-on-identical-seeded-state: the before/after comparison is run on identical seeded state (the seed re-applied before each timed call) with a reply-equality check between the two variants, and both p50 and p99 are reported for each arm",
+      "passed": false,
+      "evidence": "FAIL. The seeded state is re-applied before each timed call (bench.py reset_round() restores the due zset and clears leases/receipts) and difftest.py provides a 35-case reply-equality check, but no p99 is reported for either arm: bench.py prints min/p50/p90/max/mean and NOTES.md's table lists p50/mean/min/max only. Grep for 'p99' across NOTES.md and transcript.md returns zero matches."
+    },
+    {
+      "text": "no-unverified-redis-only-advice: every performance claim in the output cites Dragonfly-specific evidence -- a Dragonfly execution-path counter (eval_io_coordination_total / eval_shardlocal_coordination_total / lua_blocked_total), a SCRIPT LATENCY or bench measurement taken on v1.34.0, or a Dragonfly v1.34.0 doc/source citation -- and the output contains no Redis-origin performance advice presented without such Dragonfly evidence",
+      "passed": true,
+      "evidence": "All performance claims rest on measurements from the arm's own v1.34.0 container: the ~25-30us/call figure is derived in transcript step 5 (stubbing ~968 HEXISTS calls removed ~28ms, 30.81ms -> 2.33ms p50) rather than imported from Redis, and the before/after table comes from bench.py runs on the container. No Redis-origin advice (cluster slots, pipelining lore, Redis benchmark numbers) appears in the output."
+    }
+  ],
+  "summary": {
+    "passed": 6,
+    "failed": 2,
+    "total": 8,
+    "pass_rate": 0.75
+  }
+}

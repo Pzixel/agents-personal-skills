@@ -1,0 +1,197 @@
+=== Q5 raw log ===
+date: 2026-09-16T04:37:46+0300
+driver: q5_key_placement.py
+note: 256 HGET per script, 2048B values, identical call count in every variant; only key placement / atomicity / server flags vary
+server version: df-v1.34.0 (redis_version 7.4.0), threads=4
+server flags:   ["--cache_mode=false","--maxmemory=2048Mi","--dbfilename=dump","--proactor_threads=4"]
+
+$ SCRIPT LOAD <256 HGET / 1 key (shard-local) / atomic> -> 44ec811ed96dbed8e946d99383c9eef6edb6313b
+$ EVALSHA 44ec811ed96dbed8e946d99383c9eef6edb6313b 1 {q5one}k0 256
+    [256 HGET / 1 key (shard-local) / atomic] counters over 220 invocations: eval_shardlocal_coordination=+220 eval_io_coordination=+0 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_batch_schedule_calls_total=+220 tx_batch_scheduled_items_total=+220 tx_normal_total=+220 tx_shard_optimistic_total=+220 used_memory_lua=-257216
+$ SCRIPT LOAD <256 HGET / 1 key (shard-local) / disable-atomicity> -> 4d4a895ec49386114ff80f1436887e8e19ed5a6b
+$ EVALSHA 4d4a895ec49386114ff80f1436887e8e19ed5a6b 1 {q5one}k0 256
+    [256 HGET / 1 key (shard-local) / disable-atomicity] counters over 220 invocations: eval_shardlocal_coordination=+0 eval_io_coordination=+220 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_batch_schedule_calls_total=+56320 tx_batch_scheduled_items_total=+56320 tx_normal_total=+56320 tx_shard_optimistic_total=+56320
+$ SCRIPT LOAD <256 HGET / 8 keys, 1 hashtag / atomic> -> e6329d3aa0bf560ac690b3494bb93cd7777d927a
+$ EVALSHA e6329d3aa0bf560ac690b3494bb93cd7777d927a 8 {q5tag}k0 {q5tag}k1 {q5tag}k2 {q5tag}k3 {q5tag}k4 {q5tag}k5 {q5tag}k6 {q5tag}k7 256
+    [256 HGET / 8 keys, 1 hashtag / atomic] counters over 220 invocations: eval_shardlocal_coordination=+0 eval_io_coordination=+220 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_normal_total=+220 tx_shard_polls=+57200
+$ SCRIPT LOAD <256 HGET / 8 keys, 1 hashtag / disable-atomicity> -> 0fe7fc2ca138e5f485e4938192bd0350c93e707e
+$ EVALSHA 0fe7fc2ca138e5f485e4938192bd0350c93e707e 8 {q5tag}k0 {q5tag}k1 {q5tag}k2 {q5tag}k3 {q5tag}k4 {q5tag}k5 {q5tag}k6 {q5tag}k7 256
+    [256 HGET / 8 keys, 1 hashtag / disable-atomicity] counters over 220 invocations: eval_shardlocal_coordination=+0 eval_io_coordination=+220 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_batch_schedule_calls_total=+56320 tx_batch_scheduled_items_total=+56320 tx_normal_total=+56320 tx_shard_optimistic_total=+56320 used_memory_lua=+23040
+$ SCRIPT LOAD <256 HGET / 8 keys, 8 hashtags / atomic> -> 9c33edb72e75eb9d0d35fb0feb388572271272ae
+$ EVALSHA 9c33edb72e75eb9d0d35fb0feb388572271272ae 8 {q5t0}k0 {q5t1}k1 {q5t2}k2 {q5t3}k3 {q5t4}k4 {q5t5}k5 {q5t6}k6 {q5t7}k7 256
+    [256 HGET / 8 keys, 8 hashtags / atomic] counters over 220 invocations: eval_shardlocal_coordination=+0 eval_io_coordination=+220 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_normal_total=+220 tx_shard_polls=+57200 used_memory_lua=-17920
+$ SCRIPT LOAD <256 HGET / 8 keys, 8 hashtags / disable-atomicity> -> 3387d069cdfa885735004b510b40d1a89d7d380a
+$ EVALSHA 3387d069cdfa885735004b510b40d1a89d7d380a 8 {q5t0}k0 {q5t1}k1 {q5t2}k2 {q5t3}k3 {q5t4}k4 {q5t5}k5 {q5t6}k6 {q5t7}k7 256
+    [256 HGET / 8 keys, 8 hashtags / disable-atomicity] counters over 220 invocations: eval_shardlocal_coordination=+0 eval_io_coordination=+220 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_batch_schedule_calls_total=+56320 tx_batch_scheduled_items_total=+56320 tx_normal_total=+56320 tx_shard_optimistic_total=+56320 used_memory_lua=+99840
+$ SCRIPT LOAD <256 HGET / 8 keys, 1 hashtag / allow-undeclared-keys> -> bc6dfda3a5b8298e4bee1cf64c4db44a0a11f252
+$ EVALSHA bc6dfda3a5b8298e4bee1cf64c4db44a0a11f252 0 (no keys) 256 {q5tag}k0 {q5tag}k1 {q5tag}k2 {q5tag}k3 {q5tag}k4 {q5tag}k5 {q5tag}k6 {q5tag}k7
+    [256 HGET / 8 keys, 1 hashtag / allow-undeclared-keys] counters over 220 invocations: eval_shardlocal_coordination=+0 eval_io_coordination=+220 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_global_total=+220 tx_shard_polls=+57200 used_memory_lua=+43520
+$ SCRIPT LOAD <256 HGET / 8 keys, 8 hashtags / allow-undeclared-keys> -> 496fb4a17485230c0b9de2d5e00c07911d625c2d
+$ EVALSHA 496fb4a17485230c0b9de2d5e00c07911d625c2d 0 (no keys) 256 {q5t0}k0 {q5t1}k1 {q5t2}k2 {q5t3}k3 {q5t4}k4 {q5t5}k5 {q5t6}k6 {q5t7}k7
+    [256 HGET / 8 keys, 8 hashtags / allow-undeclared-keys] counters over 220 invocations: eval_shardlocal_coordination=+0 eval_io_coordination=+220 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_global_total=+220 tx_shard_polls=+57200 used_memory_lua=-5120
+$ SCRIPT LOAD <256 HSET (discarded) / 8 keys, 1 hashtag> -> bc90f98fc1a2affc49f01bf3b28e5f884dd57906
+$ EVALSHA bc90f98fc1a2affc49f01bf3b28e5f884dd57906 8 {q5tag}k0 {q5tag}k1 {q5tag}k2 {q5tag}k3 {q5tag}k4 {q5tag}k5 {q5tag}k6 {q5tag}k7 256 b'wwwwwwwwwwwwwwwwwwwwww
+    [256 HSET (discarded) / 8 keys, 1 hashtag] counters over 220 invocations: eval_shardlocal_coordination=+0 eval_io_coordination=+220 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_normal_total=+220 tx_shard_polls=+57200 used_memory_lua=-77856
+$ SCRIPT LOAD <256 HSET (discarded) / 8 keys, 8 hashtags> -> eec4e46ea0c1d8a6817df850d9d29d06a8f58ee6
+$ EVALSHA eec4e46ea0c1d8a6817df850d9d29d06a8f58ee6 8 {q5t0}k0 {q5t1}k1 {q5t2}k2 {q5t3}k3 {q5t4}k4 {q5t5}k5 {q5t6}k6 {q5t7}k7 256 b'wwwwwwwwwwwwwwwwwwwwww
+    [256 HSET (discarded) / 8 keys, 8 hashtags] counters over 220 invocations: eval_shardlocal_coordination=+0 eval_io_coordination=+220 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_normal_total=+220 tx_shard_polls=+57200 used_memory_lua=+12704
+
+--- [default] SCRIPT LATENCY (usec; includes warm-up) ---
+$ SCRIPT LATENCY
+[256 HGET / 1 key (shard-local) / atomic] 44ec811ed96dbed8e946d99383c9eef6edb6313b: SCRIPT LATENCY n=221 avg=142.8778us median=137.0543us max=679.0us buckets=6
+[256 HGET / 1 key (shard-local) / disable-atomicity] 4d4a895ec49386114ff80f1436887e8e19ed5a6b: SCRIPT LATENCY n=221 avg=199.9457us median=196.6667us max=238.0us buckets=2
+[256 HGET / 8 keys, 1 hashtag / atomic] e6329d3aa0bf560ac690b3494bb93cd7777d927a: SCRIPT LATENCY n=221 avg=6270.7783us median=6461.5385us max=9658.0us buckets=9
+[256 HGET / 8 keys, 1 hashtag / disable-atomicity] 0fe7fc2ca138e5f485e4938192bd0350c93e707e: SCRIPT LATENCY n=221 avg=5735.7647us median=6296.5517us max=7849.0us buckets=7
+[256 HGET / 8 keys, 8 hashtags / atomic] 9c33edb72e75eb9d0d35fb0feb388572271272ae: SCRIPT LATENCY n=221 avg=6626.0724us median=6495.098us max=9830.0us buckets=8
+[256 HGET / 8 keys, 8 hashtags / disable-atomicity] 3387d069cdfa885735004b510b40d1a89d7d380a: SCRIPT LATENCY n=221 avg=6488.8416us median=6479.1667us max=7930.0us buckets=6
+[256 HGET / 8 keys, 1 hashtag / allow-undeclared-keys] bc6dfda3a5b8298e4bee1cf64c4db44a0a11f252: SCRIPT LATENCY n=221 avg=6448.4706us median=6548.8722us max=10465.0us buckets=10
+[256 HGET / 8 keys, 8 hashtags / allow-undeclared-keys] 496fb4a17485230c0b9de2d5e00c07911d625c2d: SCRIPT LATENCY n=221 avg=6335.6697us median=6448.4848us max=9028.0us buckets=8
+[256 HSET (discarded) / 8 keys, 1 hashtag] bc90f98fc1a2affc49f01bf3b28e5f884dd57906: SCRIPT LATENCY n=221 avg=6733.2217us median=6635.7143us max=10101.0us buckets=7
+[256 HSET (discarded) / 8 keys, 8 hashtags] eec4e46ea0c1d8a6817df850d9d29d06a8f58ee6: SCRIPT LATENCY n=221 avg=6619.5566us median=7159.0909us max=8546.0us buckets=8
+
+--- default flags (dfskill-primary :6379) ---
+| variant                                               | n   | p50_us | p95_us | p99_us | min_us | max_us  | mean_us | total_us  | shape        | us_per_call(p50) | shardlocal/io per call |
+|-------------------------------------------------------|-----|--------|--------|--------|--------|---------|---------|-----------|--------------|------------------|------------------------|
+| 256 HGET / 1 key (shard-local) / atomic               | 200 | 259.5  | 286.2  | 300.7  | 242.0  | 306.8   | 261.8   | 52362.1   | 1k/1tag      | 1.0              | 1.00/0.00              |
+| 256 HGET / 1 key (shard-local) / disable-atomicity    | 200 | 315.9  | 343.2  | 359.8  | 288.3  | 372.1   | 318.2   | 63639.0   | 1k/1tag      | 1.2              | 0.00/1.00              |
+| 256 HGET / 8 keys, 1 hashtag / atomic                 | 200 | 6899.0 | 7734.9 | 9280.5 | 3285.7 | 9950.6  | 6601.8  | 1320367.1 | 8k/1tag      | 26.9             | 0.00/1.00              |
+| 256 HGET / 8 keys, 1 hashtag / disable-atomicity      | 200 | 6751.4 | 7214.8 | 8200.2 | 3352.7 | 13259.5 | 5914.6  | 1182923.5 | 8k/1tag      | 26.4             | 0.00/1.00              |
+| 256 HGET / 8 keys, 8 hashtags / atomic                | 200 | 6912.7 | 7205.5 | 9207.0 | 4074.0 | 11893.0 | 6971.3  | 1394261.1 | 8k/8tag      | 27.0             | 0.00/1.00              |
+| 256 HGET / 8 keys, 8 hashtags / disable-atomicity     | 200 | 6881.6 | 7155.1 | 7433.0 | 3479.1 | 8200.6  | 6784.6  | 1356927.4 | 8k/8tag      | 26.9             | 0.00/1.00              |
+| 256 HGET / 8 keys, 1 hashtag / allow-undeclared-keys  | 200 | 6968.2 | 8243.0 | 9917.5 | 3227.5 | 10775.5 | 6690.2  | 1338033.6 | 0k decl/1tag | 27.2             | 0.00/1.00              |
+| 256 HGET / 8 keys, 8 hashtags / allow-undeclared-keys | 200 | 6955.1 | 7503.8 | 8168.8 | 3452.2 | 9484.2  | 6646.0  | 1329191.2 | 0k decl/8tag | 27.2             | 0.00/1.00              |
+| 256 HSET (discarded) / 8 keys, 1 hashtag              | 200 | 7180.5 | 7653.2 | 8093.1 | 3517.8 | 10627.3 | 7029.2  | 1405835.0 | 8k/1tag      | 28.0             | 0.00/1.00              |
+| 256 HSET (discarded) / 8 keys, 8 hashtags             | 200 | 7285.2 | 7746.7 | 7891.3 | 3609.3 | 7977.4  | 6798.5  | 1359700.1 | 8k/8tag      | 28.5             | 0.00/1.00              |
+$ SCRIPT LOAD <256 GET / 1 hashtag> -> e70a6f5b4b9f48b937555921d29e6767695b6949
+$ EVALSHA e70a6f5b4b9f48b937555921d29e6767695b6949 256 {q5hop}g0 {q5hop}g1 {q5hop}g2 {q5hop}g3 {q5hop}g4 {q5hop}g5 {q5hop}g6 {q5hop}g7 {q5hop}g8 {q5hop}g9 {q5hop}g10 {q5hop}g11 {q5hop}g12 {q5hop}g13 {q5hop}g14 {q5hop}g15 {q5hop}g16 {q5 
+    [256 GET / 1 hashtag] counters over 220 invocations: eval_shardlocal_coordination=+0 eval_io_coordination=+220 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_normal_total=+220 tx_shard_polls=+57200 used_memory_lua=+48768
+$ SCRIPT LOAD <256 GET / 4 hashtags> -> 31034ccc27e1072e7f0d819b2b627c6dca7d4a7f
+$ EVALSHA 31034ccc27e1072e7f0d819b2b627c6dca7d4a7f 256 {q5h0}g0 {q5h1}g1 {q5h2}g2 {q5h3}g3 {q5h0}g4 {q5h1}g5 {q5h2}g6 {q5h3}g7 {q5h0}g8 {q5h1}g9 {q5h2}g10 {q5h3}g11 {q5h0}g12 {q5h1}g13 {q5h2}g14 {q5h3}g15 {q5h0}g16 {q5h1}g17 {q5h2}g18  
+    [256 GET / 4 hashtags] counters over 220 invocations: eval_shardlocal_coordination=+0 eval_io_coordination=+220 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_normal_total=+220 tx_shard_polls=+57200 used_memory_lua=+9872
+
+--- [default] hop microbenchmark (256 GET on 256 distinct keys) ---
+| variant              | n   | p50_us | p95_us | p99_us  | min_us | max_us  | mean_us | total_us  | shape     | us_per_call(p50) | shardlocal/io per call |
+|----------------------|-----|--------|--------|---------|--------|---------|---------|-----------|-----------|------------------|------------------------|
+| 256 GET / 1 hashtag  | 200 | 6466.5 | 8661.3 | 11159.2 | 3151.3 | 13845.2 | 6704.1  | 1340824.6 | 256k/1tag | 25.3             | 0.00/1.00              |
+| 256 GET / 4 hashtags | 200 | 5930.2 | 6573.0 | 6990.5  | 2833.7 | 7601.8  | 5159.3  | 1031865.8 | 256k/4tag | 23.2             | 0.00/1.00              |
+
+--- restart with --lock_on_hashtags -> dfskill-flag :6382 ---
+$ docker run -d --name dfskill-flag -p 6382:6379 docker.dragonflydb.io/dragonflydb/dragonfly@sha256:366e34f415c22983dc1c4a1d575fa2d9c22b9a3998a9934bf1cc6d16c17695db --cache_mode=false --maxmemory=2048Mi --dbfilename=dump --proactor_threads=4 --lock_on_hashtags
+server version: df-v1.34.0 (redis_version 7.4.0), threads=4
+server flags:   --cache_mode=false --maxmemory=2048Mi --dbfilename=dump --proactor_threads=4 --lock_on_hashtags
+$ SCRIPT LOAD <256 HGET / 1 key (shard-local) / atomic> -> 6c76d8ec285680ea9c61e8b28184b780fef5a93e
+$ EVALSHA 6c76d8ec285680ea9c61e8b28184b780fef5a93e 1 {q5one}k0 256
+    [256 HGET / 1 key (shard-local) / atomic] counters over 220 invocations: eval_shardlocal_coordination=+220 eval_io_coordination=+0 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_cnt=+1 lua_interpreter_return=+220 tx_inline_runs_total=+220 tx_normal_total=+220 tx_shard_optimistic_total=+220 used_memory_lua=+46912
+$ SCRIPT LOAD <256 HGET / 1 key (shard-local) / disable-atomicity> -> 548cbc30e53920920e1e7e62828a8f839eba3761
+$ EVALSHA 548cbc30e53920920e1e7e62828a8f839eba3761 1 {q5one}k0 256
+    [256 HGET / 1 key (shard-local) / disable-atomicity] counters over 220 invocations: eval_shardlocal_coordination=+0 eval_io_coordination=+220 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_inline_runs_total=+56320 tx_normal_total=+56320 tx_shard_optimistic_total=+56320 used_memory_lua=-2560
+$ SCRIPT LOAD <256 HGET / 8 keys, 1 hashtag / atomic> -> cc29c6481b242e992b55c88f00ba17c0768c9ddc
+$ EVALSHA cc29c6481b242e992b55c88f00ba17c0768c9ddc 8 {q5tag}k0 {q5tag}k1 {q5tag}k2 {q5tag}k3 {q5tag}k4 {q5tag}k5 {q5tag}k6 {q5tag}k7 256
+    [256 HGET / 8 keys, 1 hashtag / atomic] counters over 220 invocations: eval_shardlocal_coordination=+220 eval_io_coordination=+0 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_batch_schedule_calls_total=+220 tx_batch_scheduled_items_total=+220 tx_normal_total=+220 tx_shard_optimistic_total=+220 used_memory_lua=-10240
+$ SCRIPT LOAD <256 HGET / 8 keys, 1 hashtag / disable-atomicity> -> 565dd3d1b046e6675c9705f1f3d8e4be74a2949a
+$ EVALSHA 565dd3d1b046e6675c9705f1f3d8e4be74a2949a 8 {q5tag}k0 {q5tag}k1 {q5tag}k2 {q5tag}k3 {q5tag}k4 {q5tag}k5 {q5tag}k6 {q5tag}k7 256
+    [256 HGET / 8 keys, 1 hashtag / disable-atomicity] counters over 220 invocations: eval_shardlocal_coordination=+0 eval_io_coordination=+220 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_batch_schedule_calls_total=+56320 tx_batch_scheduled_items_total=+56320 tx_normal_total=+56320 tx_shard_optimistic_total=+56320 used_memory_lua=-10240
+$ SCRIPT LOAD <256 HGET / 8 keys, 8 hashtags / atomic> -> 0ba7ab1024bfb09c2a1b51b238e9caa30f8e5189
+$ EVALSHA 0ba7ab1024bfb09c2a1b51b238e9caa30f8e5189 8 {q5t0}k0 {q5t1}k1 {q5t2}k2 {q5t3}k3 {q5t4}k4 {q5t5}k5 {q5t6}k6 {q5t7}k7 256
+    [256 HGET / 8 keys, 8 hashtags / atomic] counters over 220 invocations: eval_shardlocal_coordination=+0 eval_io_coordination=+220 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_inline_runs_total=+7040 tx_normal_total=+220 tx_shard_polls=+57200 used_memory_lua=-10240
+$ SCRIPT LOAD <256 HGET / 8 keys, 8 hashtags / disable-atomicity> -> 837a08b7ecb7a5c6f3ccb54183bfe887c300cf80
+$ EVALSHA 837a08b7ecb7a5c6f3ccb54183bfe887c300cf80 8 {q5t0}k0 {q5t1}k1 {q5t2}k2 {q5t3}k3 {q5t4}k4 {q5t5}k5 {q5t6}k6 {q5t7}k7 256
+    [256 HGET / 8 keys, 8 hashtags / disable-atomicity] counters over 220 invocations: eval_shardlocal_coordination=+0 eval_io_coordination=+220 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_batch_schedule_calls_total=+49280 tx_batch_scheduled_items_total=+49280 tx_inline_runs_total=+7040 tx_normal_total=+56320 tx_shard_optimistic_total=+56320
+$ SCRIPT LOAD <256 HGET / 8 keys, 1 hashtag / allow-undeclared-keys> -> cdfb8d7120ada1c6d504fe0254427e59bbbd8f3b
+$ EVALSHA cdfb8d7120ada1c6d504fe0254427e59bbbd8f3b 0 (no keys) 256 {q5tag}k0 {q5tag}k1 {q5tag}k2 {q5tag}k3 {q5tag}k4 {q5tag}k5 {q5tag}k6 {q5tag}k7
+    [256 HGET / 8 keys, 1 hashtag / allow-undeclared-keys] counters over 220 invocations: eval_shardlocal_coordination=+0 eval_io_coordination=+220 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_global_total=+220 tx_shard_polls=+57200
+$ SCRIPT LOAD <256 HGET / 8 keys, 8 hashtags / allow-undeclared-keys> -> c1953c00399ac222862982f73f4c7d1ff7885f98
+$ EVALSHA c1953c00399ac222862982f73f4c7d1ff7885f98 0 (no keys) 256 {q5t0}k0 {q5t1}k1 {q5t2}k2 {q5t3}k3 {q5t4}k4 {q5t5}k5 {q5t6}k6 {q5t7}k7
+    [256 HGET / 8 keys, 8 hashtags / allow-undeclared-keys] counters over 220 invocations: eval_shardlocal_coordination=+0 eval_io_coordination=+220 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_global_total=+220 tx_inline_runs_total=+7040 tx_shard_polls=+57200
+$ SCRIPT LOAD <256 HSET (discarded) / 8 keys, 1 hashtag> -> fea031560f0eb5848272ecefb39d138c48e37ca5
+$ EVALSHA fea031560f0eb5848272ecefb39d138c48e37ca5 8 {q5tag}k0 {q5tag}k1 {q5tag}k2 {q5tag}k3 {q5tag}k4 {q5tag}k5 {q5tag}k6 {q5tag}k7 256 b'wwwwwwwwwwwwwwwwwwwwww
+    [256 HSET (discarded) / 8 keys, 1 hashtag] counters over 220 invocations: eval_shardlocal_coordination=+220 eval_io_coordination=+0 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_batch_schedule_calls_total=+220 tx_batch_scheduled_items_total=+220 tx_normal_total=+220 tx_shard_optimistic_total=+220 used_memory_lua=+16768
+$ SCRIPT LOAD <256 HSET (discarded) / 8 keys, 8 hashtags> -> 50d1719e530c59726f61406fd3c7d6d7b920e0b5
+$ EVALSHA 50d1719e530c59726f61406fd3c7d6d7b920e0b5 8 {q5t0}k0 {q5t1}k1 {q5t2}k2 {q5t3}k3 {q5t4}k4 {q5t5}k5 {q5t6}k6 {q5t7}k7 256 b'wwwwwwwwwwwwwwwwwwwwww
+    [256 HSET (discarded) / 8 keys, 8 hashtags] counters over 220 invocations: eval_shardlocal_coordination=+0 eval_io_coordination=+220 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_inline_runs_total=+7040 tx_normal_total=+220 tx_shard_polls=+57200 used_memory_lua=-3072
+
+--- [--lock_on_hashtags] SCRIPT LATENCY (usec; includes warm-up) ---
+$ SCRIPT LATENCY
+[256 HGET / 1 key (shard-local) / atomic] 6c76d8ec285680ea9c61e8b28184b780fef5a93e: SCRIPT LATENCY n=221 avg=163.0588us median=158.3333us max=466.0us buckets=5
+[256 HGET / 1 key (shard-local) / disable-atomicity] 548cbc30e53920920e1e7e62828a8f839eba3761: SCRIPT LATENCY n=221 avg=174.5566us median=173.8562us max=228.0us buckets=4
+[256 HGET / 8 keys, 1 hashtag / atomic] cc29c6481b242e992b55c88f00ba17c0768c9ddc: SCRIPT LATENCY n=221 avg=180.5611us median=178.1197us max=214.0us buckets=4
+[256 HGET / 8 keys, 1 hashtag / disable-atomicity] 565dd3d1b046e6675c9705f1f3d8e4be74a2949a: SCRIPT LATENCY n=221 avg=7347.5882us median=7470.0us max=10114.0us buckets=9
+[256 HGET / 8 keys, 8 hashtags / atomic] 0ba7ab1024bfb09c2a1b51b238e9caa30f8e5189: SCRIPT LATENCY n=221 avg=6484.8009us median=6503.1847us max=8929.0us buckets=8
+[256 HGET / 8 keys, 8 hashtags / disable-atomicity] 837a08b7ecb7a5c6f3ccb54183bfe887c300cf80: SCRIPT LATENCY n=221 avg=6027.2579us median=6250.0us max=16598.0us buckets=12
+[256 HGET / 8 keys, 1 hashtag / allow-undeclared-keys] cdfb8d7120ada1c6d504fe0254427e59bbbd8f3b: SCRIPT LATENCY n=221 avg=6684.5294us median=7331.0811us max=10449.0us buckets=8
+[256 HGET / 8 keys, 8 hashtags / allow-undeclared-keys] c1953c00399ac222862982f73f4c7d1ff7885f98: SCRIPT LATENCY n=221 avg=4564.8235us median=3865.9794us max=9776.0us buckets=9
+[256 HSET (discarded) / 8 keys, 1 hashtag] fea031560f0eb5848272ecefb39d138c48e37ca5: SCRIPT LATENCY n=221 avg=196.6697us median=193.1034us max=382.0us buckets=6
+[256 HSET (discarded) / 8 keys, 8 hashtags] 50d1719e530c59726f61406fd3c7d6d7b920e0b5: SCRIPT LATENCY n=221 avg=6630.2308us median=6776.699us max=11455.0us buckets=9
+| variant                                               | n   | p50_us | p95_us | p99_us  | min_us | max_us  | mean_us | total_us  | shape        | us_per_call(p50) | shardlocal/io per call |
+|-------------------------------------------------------|-----|--------|--------|---------|--------|---------|---------|-----------|--------------|------------------|------------------------|
+| 256 HGET / 1 key (shard-local) / atomic               | 200 | 373.1  | 631.3  | 1290.7  | 309.2  | 3749.9  | 428.6   | 85722.0   | 1k/1tag      | 1.5              | 1.00/0.00              |
+| 256 HGET / 1 key (shard-local) / disable-atomicity    | 200 | 357.8  | 444.5  | 499.2   | 287.5  | 1419.1  | 366.8   | 73352.1   | 1k/1tag      | 1.4              | 0.00/1.00              |
+| 256 HGET / 8 keys, 1 hashtag / atomic                 | 200 | 393.0  | 450.8  | 543.2   | 269.0  | 690.3   | 390.9   | 78188.4   | 8k/1tag      | 1.5              | 1.00/0.00              |
+| 256 HGET / 8 keys, 1 hashtag / disable-atomicity      | 200 | 7763.6 | 8197.2 | 8736.5  | 3775.5 | 10501.2 | 7629.4  | 1525877.5 | 8k/1tag      | 30.3             | 0.00/1.00              |
+| 256 HGET / 8 keys, 8 hashtags / atomic                | 200 | 7014.7 | 7644.2 | 9210.8  | 3440.7 | 10868.8 | 6823.8  | 1364751.1 | 8k/8tag      | 27.4             | 0.00/1.00              |
+| 256 HGET / 8 keys, 8 hashtags / disable-atomicity     | 200 | 6773.5 | 8026.5 | 11195.5 | 3569.6 | 14951.8 | 5997.6  | 1199519.2 | 8k/8tag      | 26.5             | 0.00/1.00              |
+| 256 HGET / 8 keys, 1 hashtag / allow-undeclared-keys  | 200 | 7695.5 | 8261.5 | 9197.4  | 3696.5 | 10844.8 | 6869.8  | 1373959.0 | 0k decl/1tag | 30.1             | 0.00/1.00              |
+| 256 HGET / 8 keys, 8 hashtags / allow-undeclared-keys | 200 | 3918.7 | 7472.2 | 7991.0  | 3326.4 | 10066.6 | 4524.8  | 904963.4  | 0k decl/8tag | 15.3             | 0.00/1.00              |
+| 256 HSET (discarded) / 8 keys, 1 hashtag              | 200 | 327.2  | 364.2  | 399.1   | 287.5  | 8267.8  | 369.0   | 73796.6   | 8k/1tag      | 1.3              | 1.00/0.00              |
+| 256 HSET (discarded) / 8 keys, 8 hashtags             | 200 | 7059.9 | 7831.6 | 8326.4  | 3378.1 | 11727.8 | 6782.2  | 1356449.5 | 8k/8tag      | 27.6             | 0.00/1.00              |
+
+--- restart with --lua_auto_async=true -> dfskill-flag :6382 ---
+$ docker run -d --name dfskill-flag -p 6382:6379 docker.dragonflydb.io/dragonflydb/dragonfly@sha256:366e34f415c22983dc1c4a1d575fa2d9c22b9a3998a9934bf1cc6d16c17695db --cache_mode=false --maxmemory=2048Mi --dbfilename=dump --proactor_threads=4 --lua_auto_async=true
+server version: df-v1.34.0 (redis_version 7.4.0), threads=4
+server flags:   --cache_mode=false --maxmemory=2048Mi --dbfilename=dump --proactor_threads=4 --lua_auto_async=true
+$ SCRIPT LOAD <256 HGET / 1 key (shard-local) / atomic> -> 320da0e2122c1d57f2076545ba975e2d98fc3fd6
+$ EVALSHA 320da0e2122c1d57f2076545ba975e2d98fc3fd6 1 {q5one}k0 256
+    [256 HGET / 1 key (shard-local) / atomic] counters over 220 invocations: eval_shardlocal_coordination=+220 eval_io_coordination=+0 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_cnt=+1 lua_interpreter_return=+220 tx_inline_runs_total=+220 tx_normal_total=+220 tx_shard_optimistic_total=+220 used_memory_lua=+46912
+$ SCRIPT LOAD <256 HGET / 1 key (shard-local) / disable-atomicity> -> 2b79fc8a49b80c3acb9f4324156121147806aa97
+$ EVALSHA 2b79fc8a49b80c3acb9f4324156121147806aa97 1 {q5one}k0 256
+    [256 HGET / 1 key (shard-local) / disable-atomicity] counters over 220 invocations: eval_shardlocal_coordination=+0 eval_io_coordination=+220 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_inline_runs_total=+56320 tx_normal_total=+56320 tx_shard_optimistic_total=+56320 used_memory_lua=-2560
+$ SCRIPT LOAD <256 HGET / 8 keys, 1 hashtag / atomic> -> ead1e8cc139897402fa4676cbdc47bbddccad096
+$ EVALSHA ead1e8cc139897402fa4676cbdc47bbddccad096 8 {q5tag}k0 {q5tag}k1 {q5tag}k2 {q5tag}k3 {q5tag}k4 {q5tag}k5 {q5tag}k6 {q5tag}k7 256
+    [256 HGET / 8 keys, 1 hashtag / atomic] counters over 220 invocations: eval_shardlocal_coordination=+0 eval_io_coordination=+220 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_inline_runs_total=+7040 tx_normal_total=+220 tx_shard_polls=+57200 used_memory_lua=-10240
+$ SCRIPT LOAD <256 HGET / 8 keys, 1 hashtag / disable-atomicity> -> 6cf5e94f7c2f3e53a4462b283d86b20604f4d3b3
+$ EVALSHA 6cf5e94f7c2f3e53a4462b283d86b20604f4d3b3 8 {q5tag}k0 {q5tag}k1 {q5tag}k2 {q5tag}k3 {q5tag}k4 {q5tag}k5 {q5tag}k6 {q5tag}k7 256
+    [256 HGET / 8 keys, 1 hashtag / disable-atomicity] counters over 220 invocations: eval_shardlocal_coordination=+0 eval_io_coordination=+220 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_batch_schedule_calls_total=+49280 tx_batch_scheduled_items_total=+49280 tx_inline_runs_total=+7040 tx_normal_total=+56320 tx_shard_optimistic_total=+56320 used_memory_lua=-10240
+$ SCRIPT LOAD <256 HGET / 8 keys, 8 hashtags / atomic> -> 1a7e31c7594988db71ad883b754b1556aba245c3
+$ EVALSHA 1a7e31c7594988db71ad883b754b1556aba245c3 8 {q5t0}k0 {q5t1}k1 {q5t2}k2 {q5t3}k3 {q5t4}k4 {q5t5}k5 {q5t6}k6 {q5t7}k7 256
+    [256 HGET / 8 keys, 8 hashtags / atomic] counters over 220 invocations: eval_shardlocal_coordination=+0 eval_io_coordination=+220 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_inline_runs_total=+7040 tx_normal_total=+220 tx_shard_polls=+57200 used_memory_lua=-10240
+$ SCRIPT LOAD <256 HGET / 8 keys, 8 hashtags / disable-atomicity> -> 7d642ad9971666e44a7a2d6a25cad9e1c6782a1d
+$ EVALSHA 7d642ad9971666e44a7a2d6a25cad9e1c6782a1d 8 {q5t0}k0 {q5t1}k1 {q5t2}k2 {q5t3}k3 {q5t4}k4 {q5t5}k5 {q5t6}k6 {q5t7}k7 256
+    [256 HGET / 8 keys, 8 hashtags / disable-atomicity] counters over 220 invocations: eval_shardlocal_coordination=+0 eval_io_coordination=+220 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_batch_schedule_calls_total=+49280 tx_batch_scheduled_items_total=+49280 tx_inline_runs_total=+7040 tx_normal_total=+56320 tx_shard_optimistic_total=+56320
+$ SCRIPT LOAD <256 HGET / 8 keys, 1 hashtag / allow-undeclared-keys> -> be5c9671d3978d36bbdea8a84119ec4327dbe86b
+$ EVALSHA be5c9671d3978d36bbdea8a84119ec4327dbe86b 0 (no keys) 256 {q5tag}k0 {q5tag}k1 {q5tag}k2 {q5tag}k3 {q5tag}k4 {q5tag}k5 {q5tag}k6 {q5tag}k7
+    [256 HGET / 8 keys, 1 hashtag / allow-undeclared-keys] counters over 220 invocations: eval_shardlocal_coordination=+0 eval_io_coordination=+220 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_global_total=+220 tx_inline_runs_total=+7040 tx_shard_polls=+57200
+$ SCRIPT LOAD <256 HGET / 8 keys, 8 hashtags / allow-undeclared-keys> -> d6f895994cd23cb2a196a0e0a16b89696fe95a53
+$ EVALSHA d6f895994cd23cb2a196a0e0a16b89696fe95a53 0 (no keys) 256 {q5t0}k0 {q5t1}k1 {q5t2}k2 {q5t3}k3 {q5t4}k4 {q5t5}k5 {q5t6}k6 {q5t7}k7
+    [256 HGET / 8 keys, 8 hashtags / allow-undeclared-keys] counters over 220 invocations: eval_shardlocal_coordination=+0 eval_io_coordination=+220 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_global_total=+220 tx_inline_runs_total=+7040 tx_shard_polls=+57200
+$ SCRIPT LOAD <256 HSET (discarded) / 8 keys, 1 hashtag> -> fca70a4a848c84a06fa285daf48f37e81557fdb3
+$ EVALSHA fca70a4a848c84a06fa285daf48f37e81557fdb3 8 {q5tag}k0 {q5tag}k1 {q5tag}k2 {q5tag}k3 {q5tag}k4 {q5tag}k5 {q5tag}k6 {q5tag}k7 256 b'wwwwwwwwwwwwwwwwwwwwww
+    [256 HSET (discarded) / 8 keys, 1 hashtag] counters over 220 invocations: eval_shardlocal_coordination=+0 eval_io_coordination=+220 eval_squashed_flushes=+2420 lua_blocked=+0 | lua_interpreter_return=+220 tx_normal_total=+220 tx_shard_polls=+8140 used_memory_lua=+16768
+$ SCRIPT LOAD <256 HSET (discarded) / 8 keys, 8 hashtags> -> 24c2af9b5fe36b798b030a663b0071966f4e1aa4
+$ EVALSHA 24c2af9b5fe36b798b030a663b0071966f4e1aa4 8 {q5t0}k0 {q5t1}k1 {q5t2}k2 {q5t3}k3 {q5t4}k4 {q5t5}k5 {q5t6}k6 {q5t7}k7 256 b'wwwwwwwwwwwwwwwwwwwwww
+    [256 HSET (discarded) / 8 keys, 8 hashtags] counters over 220 invocations: eval_shardlocal_coordination=+0 eval_io_coordination=+220 eval_squashed_flushes=+2420 lua_blocked=+0 | lua_interpreter_return=+220 tx_normal_total=+220 tx_shard_polls=+10560 used_memory_lua=-3072
+
+--- [--lua_auto_async=true] SCRIPT LATENCY (usec; includes warm-up) ---
+$ SCRIPT LATENCY
+[256 HGET / 1 key (shard-local) / atomic] 320da0e2122c1d57f2076545ba975e2d98fc3fd6: SCRIPT LATENCY n=221 avg=172.1493us median=168.8us max=1076.0us buckets=6
+[256 HGET / 1 key (shard-local) / disable-atomicity] 2b79fc8a49b80c3acb9f4324156121147806aa97: SCRIPT LATENCY n=221 avg=185.4977us median=181.3462us max=669.0us buckets=7
+[256 HGET / 8 keys, 1 hashtag / atomic] ead1e8cc139897402fa4676cbdc47bbddccad096: SCRIPT LATENCY n=221 avg=6449.8643us median=6470.9302us max=13567.0us buckets=9
+[256 HGET / 8 keys, 1 hashtag / disable-atomicity] 6cf5e94f7c2f3e53a4462b283d86b20604f4d3b3: SCRIPT LATENCY n=221 avg=6260.181us median=6429.4118us max=18044.0us buckets=9
+[256 HGET / 8 keys, 8 hashtags / atomic] 1a7e31c7594988db71ad883b754b1556aba245c3: SCRIPT LATENCY n=221 avg=6755.8009us median=6529.4118us max=9176.0us buckets=5
+[256 HGET / 8 keys, 8 hashtags / disable-atomicity] 7d642ad9971666e44a7a2d6a25cad9e1c6782a1d: SCRIPT LATENCY n=221 avg=6674.2986us median=6644.6281us max=22627.0us buckets=12
+[256 HGET / 8 keys, 1 hashtag / allow-undeclared-keys] be5c9671d3978d36bbdea8a84119ec4327dbe86b: SCRIPT LATENCY n=221 avg=6416.914us median=6441.989us max=9131.0us buckets=8
+[256 HGET / 8 keys, 8 hashtags / allow-undeclared-keys] d6f895994cd23cb2a196a0e0a16b89696fe95a53: SCRIPT LATENCY n=221 avg=6586.1267us median=6497.3545us max=9108.0us buckets=8
+[256 HSET (discarded) / 8 keys, 1 hashtag] fca70a4a848c84a06fa285daf48f37e81557fdb3: SCRIPT LATENCY n=221 avg=561.3846us median=550.6912us max=1064.0us buckets=3
+[256 HSET (discarded) / 8 keys, 8 hashtags] 24c2af9b5fe36b798b030a663b0071966f4e1aa4: SCRIPT LATENCY n=221 avg=597.733us median=587.3016us max=658.0us buckets=2
+| variant                                               | n   | p50_us | p95_us | p99_us  | min_us | max_us  | mean_us | total_us  | shape        | us_per_call(p50) | shardlocal/io per call |
+|-------------------------------------------------------|-----|--------|--------|---------|--------|---------|---------|-----------|--------------|------------------|------------------------|
+| 256 HGET / 1 key (shard-local) / atomic               | 200 | 393.6  | 838.8  | 1794.7  | 325.9  | 2982.9  | 471.6   | 94328.5   | 1k/1tag      | 1.5              | 1.00/0.00              |
+| 256 HGET / 1 key (shard-local) / disable-atomicity    | 200 | 380.2  | 538.8  | 1354.7  | 280.2  | 4251.1  | 419.2   | 83848.6   | 1k/1tag      | 1.5              | 0.00/1.00              |
+| 256 HGET / 8 keys, 1 hashtag / atomic                 | 200 | 6875.1 | 7224.8 | 7359.2  | 3256.0 | 7858.5  | 6538.2  | 1307643.7 | 8k/1tag      | 26.9             | 0.00/1.00              |
+| 256 HGET / 8 keys, 1 hashtag / disable-atomicity      | 200 | 6887.6 | 7444.3 | 8990.8  | 3450.9 | 18228.0 | 6760.4  | 1352071.3 | 8k/1tag      | 26.9             | 0.00/1.00              |
+| 256 HGET / 8 keys, 8 hashtags / atomic                | 200 | 6972.0 | 7728.9 | 8393.5  | 4945.0 | 13157.7 | 7056.7  | 1411347.6 | 8k/8tag      | 27.2             | 0.00/1.00              |
+| 256 HGET / 8 keys, 8 hashtags / disable-atomicity     | 200 | 6832.9 | 8813.2 | 11513.5 | 3521.5 | 22983.6 | 6914.8  | 1382956.4 | 8k/8tag      | 26.7             | 0.00/1.00              |
+| 256 HGET / 8 keys, 1 hashtag / allow-undeclared-keys  | 200 | 6957.8 | 7185.9 | 7349.7  | 3362.9 | 7508.6  | 6618.7  | 1323730.8 | 0k decl/1tag | 27.2             | 0.00/1.00              |
+| 256 HGET / 8 keys, 8 hashtags / allow-undeclared-keys | 200 | 6991.5 | 7441.2 | 8213.8  | 3596.0 | 13388.5 | 6865.8  | 1373156.8 | 0k decl/8tag | 27.3             | 0.00/1.00              |
+| 256 HSET (discarded) / 8 keys, 1 hashtag              | 200 | 749.4  | 819.4  | 1027.8  | 693.9  | 1250.4  | 758.0   | 151600.3  | 8k/1tag      | 2.9              | 0.00/1.00              |
+| 256 HSET (discarded) / 8 keys, 8 hashtags             | 200 | 802.0  | 873.9  | 930.6   | 725.6  | 978.0   | 805.7   | 161144.6  | 8k/8tag      | 3.1              | 0.00/1.00              |
+$ docker rm -f dfskill-flag   # lab back to default flags

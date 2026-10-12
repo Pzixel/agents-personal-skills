@@ -1,0 +1,4 @@
+interface:
+  display_name: "Pareto Design Selection"
+  short_description: "Screen cheaply, refine strategies, validate a Pareto set"
+  default_prompt: "Use $pareto-design-selection to screen decision strategies with sound cheap checks, refine promising families within fixed search limits, and validate finalists through calibrated pure simulation and a Pareto table the owner chooses from."

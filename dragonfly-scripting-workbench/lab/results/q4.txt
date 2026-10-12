@@ -1,0 +1,125 @@
+=== Q4 raw log ===
+date: 2026-09-16T03:39:10+0300
+driver: q4_big_json.py
+note: 3 warm-up + 50 measured iterations per size (fewer than 200: a 32 MiB cjson.encode is ~100ms-scale); a concurrent client GETs {q4probe}g throughout
+server version: df-v1.34.0 (redis_version 7.4.0), threads=4
+server flags:   ["--cache_mode=false","--maxmemory=2048Mi","--dbfilename=dump","--proactor_threads=4"]
+
+$ SCRIPT LOAD <build table, cjson.encode, HSET> -> a3ddf54d8ac5daff971f428e1ded569f149ca6a9
+$ SCRIPT LOAD <HDEL the plan field>            -> c6e6cdfb4998f6e62d0b819db865806996ae0e20
+
+--- baseline GET latency (no script running) ---
+| variant        | n     | p50_us | p95_us | p99_us | min_us | max_us  | mean_us | total_us  |
+|----------------|-------|--------|--------|--------|--------|---------|---------|-----------|
+| idle GET probe | 29467 | 61.9   | 91.8   | 155.1  | 45.0   | 29586.2 | 67.6    | 1991384.5 |
+
+--- 1 MiB plan ---
+$ EVALSHA a3ddf54d8ac5daff971f428e1ded569f149ca6a9 1 {q4}plan 1048576 <1024B entry> plan1
+  -> encoded blob = 1053466 bytes (1.00 MiB)
+$ EVALSHA c6e6cdfb4998f6e62d0b819db865806996ae0e20 1 {q4}plan plan1
+| variant                     | n  | p50_us | p95_us | p99_us | min_us | max_us | mean_us | total_us | blob_MiB | error |
+|-----------------------------|----|--------|--------|--------|--------|--------|---------|----------|----------|-------|
+| 1 MiB plan encode+HSET      | 50 | 1904.6 | 2020.5 | 2135.9 | 1700.9 | 2135.9 | 1902.2  | 95110.1  | 1.00     |       |
+| 1 MiB plan encode+HSET+HDEL | 20 | 2054.1 | 2299.2 | 2299.2 | 1845.1 | 2299.2 | 2059.3  | 41186.7  |          |       |
+| during     | GET p50_us | GET p95_us | GET p99_us | GET max_us | n            |
+|------------|------------|------------|------------|------------|--------------|
+| 1 MiB plan | 84.3       | 147.8      | 220.9      | 325.4      | 1055 samples |
+
+--- 8 MiB plan ---
+$ EVALSHA a3ddf54d8ac5daff971f428e1ded569f149ca6a9 1 {q4}plan 8388608 <1024B entry> plan8
+  -> encoded blob = 8435422 bytes (8.04 MiB)
+$ EVALSHA c6e6cdfb4998f6e62d0b819db865806996ae0e20 1 {q4}plan plan8
+| variant                     | n  | p50_us  | p95_us  | p99_us  | min_us  | max_us  | mean_us | total_us | blob_MiB | error |
+|-----------------------------|----|---------|---------|---------|---------|---------|---------|----------|----------|-------|
+| 8 MiB plan encode+HSET      | 50 | 15069.9 | 18496.6 | 18598.2 | 13291.5 | 18598.2 | 15313.3 | 765666.4 | 8.04     |       |
+| 8 MiB plan encode+HSET+HDEL | 20 | 15625.6 | 16971.1 | 16971.1 | 14774.7 | 16971.1 | 15714.6 | 314292.8 |          |       |
+| during     | GET p50_us | GET p95_us | GET p99_us | GET max_us | n             |
+|------------|------------|------------|------------|------------|---------------|
+| 8 MiB plan | 60.0       | 104.0      | 183.6      | 1035.6     | 12010 samples |
+
+--- 32 MiB plan ---
+$ EVALSHA a3ddf54d8ac5daff971f428e1ded569f149ca6a9 1 {q4}plan 33554432 <1024B entry> plan32
+  -> encoded blob = 33766783 bytes (32.20 MiB)
+$ EVALSHA c6e6cdfb4998f6e62d0b819db865806996ae0e20 1 {q4}plan plan32
+  -> FAILED on repeat: ResponseError: Error running script (call to a3ddf54d8ac5daff971f428e1ded569f149ca6a9): @user_script:11: -ERR Out of memory
+| variant                      | n | p50_us | p95_us | p99_us | min_us | max_us | mean_us | total_us | blob_MiB | error                                                        |
+|------------------------------|---|--------|--------|--------|--------|--------|---------|----------|----------|--------------------------------------------------------------|
+| 32 MiB plan encode+HSET      | 0 | -      | -      | -      | -      | -      | -       | -        | 32.20    | ResponseError: Error running script (call to a3ddf54d8ac5daf |
+| 32 MiB plan encode+HSET+HDEL | 0 | -      | -      | -      | -      | -      | -       | -        |          | ResponseError: Error running script (call to a3ddf54d8ac5daf |
+| during      | GET p50_us | GET p95_us | GET p99_us | GET max_us | n             |
+|-------------|------------|------------|------------|------------|---------------|
+| 32 MiB plan | 86.5       | 186.8      | 375.1      | 19927.4    | 28971 samples |
+$ SCRIPT LATENCY
+
+--- SCRIPT LATENCY (usec; includes warm-up iterations) ---
+[encode+HSET] a3ddf54d8ac5daff971f428e1ded569f149ca6a9
+Count: 203 Average: 21631.8424  StdDev: 23689.57
+Min: 1576.0000  Median: 14600.0000  Max: 86336.0000
+------------------------------------------------------
+[    1400,    1600 ) 2   0.985%   0.985% 
+[    1600,    1800 ) 34  16.749%  17.734% ###
+[    1800,    2000 ) 35  17.241%  34.975% ###
+[    2000,    2500 ) 5   2.463%  37.438% 
+[   12000,   14000 ) 7   3.448%  40.887% #
+[   14000,   16000 ) 59  29.064%  69.951% ######
+[   16000,   18000 ) 6   2.956%  72.906% #
+[   18000,   20000 ) 3   1.478%  74.384% 
+[   20000,   25000 ) 1   0.493%  74.877% 
+[   35000,   40000 ) 1   0.493%  75.369% 
+[   50000,   60000 ) 18   8.867%  84.236% ##
+[   60000,   70000 ) 30  14.778%  99.015% ###
+[   70000,   80000 ) 1   0.493%  99.507% 
+[   80000,   90000 ) 1   0.493% 100.000%
+[HDEL] c6e6cdfb4998f6e62d0b819db865806996ae0e20
+Count: 44 Average: 48.0455  StdDev: 35.28
+Min: 15.0000  Median: 36.4286  Max: 124.0000
+------------------------------------------------------
+[      14,      16 ) 1   2.273%   2.273% 
+[      16,      18 ) 5  11.364%  13.636% ##
+[      18,      20 ) 5  11.364%  25.000% ##
+[      20,      25 ) 8  18.182%  43.182% ####
+[      30,      35 ) 1   2.273%  45.455% 
+[      35,      40 ) 6  13.636%  59.091% ###
+[      40,      45 ) 4   9.091%  68.182% ##
+[      45,      50 ) 3   6.818%  75.000% #
+[      90,     100 ) 2   4.545%  79.545% #
+[     100,     120 ) 7  15.909%  95.455% ###
+[     120,     140 ) 2   4.545% 100.000% #
+
+--- memory after the run ---
+$ INFO memory
+# Memory
+used_memory:1229120
+used_memory_human:1.17MiB
+used_memory_peak:38977984
+used_memory_peak_human:37.17MiB
+fibers_stack_vms:2449312
+fibers_count:40
+used_memory_rss:2671497216
+used_memory_rss_human:2.49GiB
+used_memory_peak_rss:38977984
+maxmemory:2147483648
+maxmemory_human:2.00GiB
+used_memory_lua:44844264
+object_used_memory:0
+table_used_memory:1127904
+prime_capacity:26880
+expire_capacity:3360
+num_entries:1
+inline_keys:1
+small_string_bytes:0
+pipeline_cache_bytes:0
+dispatch_queue_bytes:0
+dispatch_queue_subscriber_bytes:0
+dispatch_queue_peak_bytes:0
+client_read_buffer_peak_bytes:4096
+tls_bytes:71416
+snapshot_serialization_bytes:0
+commands_squashing_replies_bytes:0
+psync_buffer_size:250
+psync_buffer_bytes:2409513260
+cache_mode:store
+maxmemory_policy:noeviction
+replication_streaming_buffer_bytes:28
+replication_full_sync_buffer_bytes:0
+

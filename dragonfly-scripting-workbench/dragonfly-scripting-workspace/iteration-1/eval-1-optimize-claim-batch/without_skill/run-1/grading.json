@@ -1,0 +1,61 @@
+{
+  "expectations": [
+    {
+      "text": "reply-equality-with-original: the optimized script returns replies byte-identical to the original on the same seeded state, proven by running scripts/bench_script.py --compare (clock-bearing reply positions excluded)",
+      "passed": true,
+      "evidence": "Grader ran, on container eval-1-grader (df-v1.34.0, threads=4, port 32821): bench_script.py --spec claim_mailbox_batch_spec.json --seed claim_mailbox_batch_seed.py --reseed --compare <original> <without_skill>. Output: 'replies identical on this seed (164 fields, ignored [1,7,12,...,162])', exit code 0. A head-to-head --compare of with_skill vs without_skill also reported identical replies."
+    },
+    {
+      "text": "p50-improved-on-same-seed: the measured p50 of the optimized script is lower than the original's p50 measured on the same seed and the same container",
+      "passed": true,
+      "evidence": "Grader-measured p50 on one container (eval-1-grader), same seed, --reseed, 30 timed iters. Paired run B: original 41852.1 us vs without_skill 6045.7 us (ratio 0.144). Paired run A (same container, same seed): original 100114.0 us vs with_skill 6424.0 us (ratio 0.064). Head-to-head third run: with_skill 5995.3 us vs without_skill 6284.0 us. THREE SCRIPTS: original p50 = 41852.1 us / 100114.0 us (two paired runs; the absolute moves with host load), without_skill = 6045.7 us (6284.0 us head-to-head), with_skill = 6424.0 us (5995.3 us head-to-head). without_skill is 6.9x faster than the original it was paired against, and statistically indistinguishable from the with_skill arm. Server SCRIPT LATENCY agrees: original avg 40581 us, without_skill avg 5090 us. NOTE: the arm's own NOTES.md claims optimized p50 = 1.81 ms; the grader measures 6.0-6.3 ms on the shipped spec/seed. The assertion passes on the grader's number, not the arm's."
+    },
+    {
+      "text": "per-candidate-hget-loop-batched: the per-candidate HGET/HMGET-per-mailbox loop over the candidate window is replaced by batched multi-field reads",
+      "passed": true,
+      "evidence": "outputs/claim_mailbox_batch.lua:273-274 replaces the original's two per-candidate HGETs (original lines 184-185) with 'local versions = hmget_all(versions_key, candidates, candidate_count)' and 'local raw_leases = hmget_all(KEYS[7], candidates, candidate_count)'; hmget_all (lines 12-32) issues HMGET in bounded chunks (~400 fields). Records and stale receipts become one batched read each after the prefetch pass (lines 285-300+). Fences 4 GET -> 1 MGET (line 220); descriptor 3 HGET -> 1 HMGET (line 237); request receipts 32 HGET -> 1 HMGET. Writes chunked via call_chunked/call_pairs_chunked (lines 392-398, 428+). Grader-measured effect: SCRIPT LATENCY avg 40581 us -> 5090 us. Arm's own counter file command_counts.json records 3234 -> 22 server commands per invocation."
+    },
+    {
+      "text": "payload-reads-bounded-by-batch-size: record/payload reads are bounded by batch_size (32), not by candidate_window (1024)",
+      "passed": false,
+      "evidence": "Not present. outputs/claim_mailbox_batch.lua:296-299 appends a record field for EVERY candidate with a version and no live lease, and those are all fetched in one batched HMGET pass. In the production shape (~1000 due, mostly unleased) that is ~1000 x ~2 KB of payload pulled into Lua per invocation, i.e. bounded by candidate_window, not by batch_size. READING APPLIED: literal - the property the assertion names is objectively absent from the output. THE ASSERTION CONFLICTS WITH 'reply-protocol-and-recovery-preserved' AND WITH THE PROMPT ('without changing its reply protocol or its recovery semantics'): the original emits {'PROTOCOL','record_missing'} (original line 217) for any eligible candidate anywhere in the 1024-window, including the 40th, so restricting the read to the first 32 claimables changes the reply on such states. The arm states this explicitly at NOTES.md:95-98 ('the full candidate list is still scanned - stopping early once 32 claimables are found would skip removals/rescores and the CLEANUP_REQUIRED / PROTOCOL detections ... it would change recovery semantics'). The only construction satisfying both - existence-probing the tail with per-field HSTRLEN/HEXISTS and HMGETing payloads only for the <=32 claimables - costs ~1000 extra round trips on Dragonfly, which this arm's own measurement (3234 calls -> 64.6 ms) shows is the dominant cost, so it is a pessimization. This failure is an eval defect (unsatisfiable assertion), not a defect in this arm; the same verdict is recorded for the other arm."
+    },
+    {
+      "text": "before-after-numbers-present: the deliverables contain concrete before/after numbers measured against a Dragonfly v1.34.0 container, not estimates",
+      "passed": true,
+      "evidence": "NOTES.md:3-18 names the pinned digest and the exact flags, then reports measured A/B-interleaved numbers, 30 samples each: cold 1000-mailbox claim p50 64.60 ms -> 1.81 ms (35.7x), mean/min/p90/max 59.57/32.48/67.07/82.85 ms -> 1.84/1.52/1.97/3.03 ms, 30-claim drain total 1083.25 ms -> 43.77 ms, and server commands per invocation 3234 -> 22 from INFO stats:total_commands_processed. Raw data retained in outputs/bench_results.json and outputs/command_counts.json with reproducers bench.py/cmdcount.py/harness.py. These are measurements, not estimates. Caveat recorded under the p50 assertion: the absolute figures are ~3x more optimistic than the grader's on the shipped spec/seed, so the harness shape differs; the assertion is about presence of measured before/after numbers and is satisfied."
+    },
+    {
+      "text": "reply-protocol-and-recovery-preserved: the whole-window protocol/version checks and the lease-receipt recovery semantics are unchanged",
+      "passed": true,
+      "evidence": "The decision pass (outputs/claim_mailbox_batch.lua:340-390) iterates all candidate_count entries and applies the same checks in the same order as the original 183-245: PROTOCOL lease, removals, CLEANUP_REQUIRED with the same stale-receipt validation, PROTOCOL record_missing (line 358), PROTOCOL receipt / receipt_lease_mismatch, and 'claim_count < batch_size' still only gates insertion, not the scan. The receipt-recovery block (lines 170-217) keeps the original order receipt -> receipt_token -> lease -> receipt_lease_mismatch -> RECEIPT_EXPIRED/record_missing and still returns early via resolved_response. Write reordering hazard is handled explicitly rather than argued away: lines 405-411 and 433-440 build written_slot and skip the stale-receipt/capture HDEL when the same token is written by an earlier claim slot, preserving the original interleaved delete-then-write keyspace. earliest_due() left on ZRANGE WITHSCORES to keep reply element 3's wire type (NOTES.md:92-94). Confirmed externally by the grader's --compare (identical replies) and by the arm's difftest.py (30/30 scenarios identical on reply AND post-state of all 14 keys, FAILS 0)."
+    },
+    {
+      "text": "no-unverified-redis-only-advice: the output contains no Redis-origin performance advice presented without Dragonfly evidence",
+      "passed": true,
+      "evidence": "The single mechanistic claim - 'Each redis.call from Lua is a full command dispatch (argument marshalling, key hashing, shard hop, reply conversion). At ~20 us of amortized cost that alone accounts for the observed ~60 ms, and it runs inside the script's exclusive transaction, so it also blocks the shards holding {inbound}' (NOTES.md:31-34) - is Dragonfly-framed (shard hop, exclusive transaction) and the ~20 us figure is derived from this arm's own Dragonfly measurements (3234 calls at 64.60 ms p50, INFO stats counter delta in command_counts.json), not from Redis lore. No single-threaded-server, pipelining, or EVAL-vs-pipeline folklore appears. The one cluster-ism, 'all four keys share the hashtag and are declared keys, so this is slot-safe' (NOTES.md:43-44), is a correctness rationale for MGET, not performance advice, so it does not trigger the rule. WEAKER THAN THE OTHER ARM: no eval_io/eval_shardlocal coordination counters, no SCRIPT LATENCY reading, and no Dragonfly v1.34.0 doc/source citation - the evidence is entirely end-to-end timing plus a command counter. That is still Dragonfly-specific measurement the arm ran, so the assertion passes."
+    }
+  ],
+  "summary": {
+    "passed": 6,
+    "failed": 1,
+    "total": 7,
+    "pass_rate": 0.86
+  },
+  "eval_feedback": {
+    "suggestions": [
+      {
+        "assertion": "payload-reads-bounded-by-batch-size: record/payload reads are bounded by batch_size (32), not by candidate_window (1024)",
+        "reason": "Unsatisfiable together with reply-equality-with-original and reply-protocol-and-recovery-preserved: the original's PROTOCOL record_missing fires for eligible candidates beyond the 32nd, so any bound on record reads changes replies. Both arms independently reached this conclusion and both fail the assertion as written. Rephrase to what is achievable and discriminating, e.g. 'record payloads are fetched in batched HMGETs rather than one HGET per candidate, and the whole-window record_missing detection is retained'."
+      },
+      {
+        "assertion": "no-unverified-redis-only-advice: the output contains no Redis-origin performance advice presented without Dragonfly evidence",
+        "reason": "Negatively phrased, so it passes for any output that simply says little. Both arms passed, but with very different evidence quality: with_skill cites coordination counters, SCRIPT LATENCY, tx_shard_polls and lab experiments; without_skill cites only wall-clock and a command count. A positive assertion - 'the notes cite at least one Dragonfly execution-path counter (eval_io/eval_shardlocal coordination, tx_shard_polls) or SCRIPT LATENCY' - would discriminate, and matches expected_output which already names those counters."
+      },
+      {
+        "reason": "before-after-numbers-present does not require the numbers to be reproducible. This arm reports optimized p50 = 1.81 ms; the grader measures 6.0 ms on the shipped spec/seed, a ~3x gap that no assertion catches. Requiring the deliverable to be measurable with scripts/bench_script.py on the shipped spec would close it."
+      }
+    ],
+    "overall": "Six of seven assertions sound. payload-reads-bounded-by-batch-size is mis-specified; the Redis-advice assertion is too easy to pass by omission."
+  }
+}

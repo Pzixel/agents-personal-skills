@@ -1,0 +1,45 @@
+{
+  "expectations": [
+    {
+      "text": "finds-per-grant-hget-loop-453: a finding names the per-grant HGET loop at or around line 453 and proposes batching it (HMGET)",
+      "passed": true,
+      "evidence": "REVIEW.md finding 1: '### 1. Line 453 - per-field `HGET` inside the old-grant loop. Up to 8192 hops (~220 ms).' quotes '453: local old_payload = redis.call('HGET', KEYS[7], field)' (exact match at apply_new_mutable_mailbox_page.lua:453) and proposes 'one `chunked_call('HMGET', KEYS[7], old_grant_fields)`' plus a union-HMGET dedup with line 410."
+    },
+    {
+      "text": "finds-cjson-plan-encode-673: a finding names the cjson.encode of the replay plan at or around lines 673-674 on the success path",
+      "passed": true,
+      "evidence": "Finding 5 '### 5. Lines 673-675, 692 - the plan blob: encoded first, bounded afterwards' quotes lines 673/674/675 verbatim; the file has `local header_raw = cjson.encode(header)` at 673 and `local plan_raw = cjson.encode(plan)` at 674. Adds that MAX_PLAN_BYTES=32 MiB is checked after the encode and is the size measured to OOM the server [lab Q4]."
+    },
+    {
+      "text": "chunked-call-recognized-correct: the chunked_call helper around lines 134-150 is recognized as the right idiom, not reported as a defect",
+      "passed": true,
+      "evidence": "chunked_call is the prescribed fix in finding 1 and listed as already-correct at call sites 339/354/403/410/421/422/513. The only critique (finding 6) is the NATIVE_CHUNK_ITEMS=256 constant, raising the read chunk toward the measured unpack ceiling (8163 fields OK, 8164 overflow [lab Q9]) - a tuning note inside the idiom, not a defect report against the helper."
+    },
+    {
+      "text": "findings-have-line-numbers-and-impact-order: every finding carries a concrete line number and the list is explicitly ordered by expected impact",
+      "passed": true,
+      "evidence": "Heading '## Findings, ordered by expected impact'; findings 1-8 each carry lines (453; 220; 113-132/255/334; 553; 673-675/692; line 1 NATIVE_CHUNK_ITEMS; 57-100/293-312/440-466/591-610; 135/154/169/183/198, 102-110, 463). Ordering rationale stated: 'Every finding below is ordered by how many hops it removes, and ~27 us/hop is the conversion rate.' Transcript shows a spot-check pass that corrected 8 cited line numbers."
+    },
+    {
+      "text": "names-recovery-contract-no-change: the review states what it would NOT change because it belongs to the recovery contract",
+      "passed": true,
+      "evidence": "Section '## What I would **not** change - recovery contract, not waste', 10 items: receipt HSET/execute/commit/HDEL ordering (692-702), scope_commands on keys 22+n..24+n before the receipt (679-687), per-key `SET ... NX` vs MSETNX at 220 for replay safety, mget_dynamic cursor pre-read (564-572), whole-window conflict checks, TIME at 638, ZADD_NX semantics, the MAX_* budgets, KEYS-only addressing, string reply shape."
+    },
+    {
+      "text": "addresses-multikey-coordination-cost: the review addresses the coordination cost of this 14-key script on default flags (io vs shard-local) and the --lock_on_hashtags trade-off",
+      "passed": true,
+      "evidence": "Section 0: 'On default flags a shared hashtag does not co-locate keys on one shard - placement is by full key name, so this is regime (a), io-coordinated ... 26.95 us ... versus 1.01 us shard-local [lab Q5][S1]'. Trade-off stated: one tag vs 4 proactor threads means --lock_on_hashtags 'would serialise the whole workload behind one shard - it buys 26.95 to 1.54 us/call and pays for it by queuing every unrelated operation on that tag', kept as a two-arm experiment only."
+    },
+    {
+      "text": "claims-carry-dragonfly-evidence: every performance claim names Dragonfly-specific evidence (a measurement run, INFO/eval coordination counters, SCRIPT LATENCY, or a Dragonfly v1.34.0 doc/source citation)",
+      "passed": true,
+      "evidence": "Each numeric claim carries a citation that resolves in the skill's measurement corpus: 26.95/27.00/1.54 us and eval_io_coordination_total (references/execution-model.md:52, measurements.md Q5), p50 41183->7814 / p99 52222->17150 (measurements.md Q7), 1 MiB 1905 us / 8 MiB 15070 us / 32 MiB 33766783 B then -ERR Out of memory (Q4), unpack 8163/8164 (Q9), acall 28.05->2.93 us (Q5) with df-src main_service.cc:2034. Counter-diff, SCRIPT LATENCY watch and eval_squashed_flushes are named as the confirmation method rather than asserted."
+    },
+    {
+      "text": "no-unverified-redis-only-advice: no Redis Functions/FUNCTION migration, no '#!lua flags=no-writes' shebang, no disable-atomicity-for-speed, no client pipelining as the fix for in-script calls, no redis.setresp(3) -- unless backed by Dragonfly evidence",
+      "passed": true,
+      "evidence": "No FUNCTION/FCALL, no shebang, no setresp, no client-pipelining proposal. Directives are named only to reject them: 'Likewise, `--!df flags=` is not an optimisation: both real flags remove the fast path and `allow-undeclared-keys` promotes the script to a GLOBAL transaction that stalls every shard [df-src DetermineMultiMode][S2]'. The one runtime suggestion, redis.acall, is Dragonfly-specific and carries a measurement plus a flush-semantics caveat."
+    }
+  ],
+  "summary": {"passed": 8, "failed": 0, "total": 8, "pass_rate": 1.0}
+}

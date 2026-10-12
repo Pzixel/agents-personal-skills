@@ -1,0 +1,7 @@
+interface:
+  display_name: "Superpowers: Receiving Code Review (psilon)"
+  short_description: "Validate review feedback before acting"
+  default_prompt: "Use $superpowers-receiving-code-review-psilon to evaluate this review feedback against the code before acting."
+
+policy:
+  allow_implicit_invocation: true

@@ -1,0 +1,220 @@
+{
+  "schema_version": 1,
+  "purpose": "Behavioral forward evaluation of test-audit decisions, not word/regex matching and not production test coverage.",
+  "evaluation_request": "Use $test-audit. Each case supplies its own synthetic contract and scope. Treat cases as independent. Complete the requested review/plan/handoff without external mutations. For each case return id, decisions, contract and defect evidence, next action or verification, and limits. Do not read rubric.json. Do not spawn child agents.",
+  "cases": [
+    {
+      "id": "T01",
+      "mode": "authoring",
+      "request": "Оцени предложенный новый тест для изменения переменной окружения. Добавлять его разрешено только если он проходит критерии ценности скилла.",
+      "contract": "Operational values come from deployment environment. Missing values fail at startup. The established typed configuration library already enforces field names and required values. This change only renames an env field and updates its manifest entry.",
+      "files": {
+        "config.rs": "struct Config { #[env(name = \"SYNC_PERIOD\")] sync_period: Duration }",
+        "proposed_test.rs": "#[test] fn env_contract() { assert!(include_str!(\"config.rs\").contains(\"SYNC_PERIOD\")); assert!(include_str!(\"deployment.yaml\").contains(\"SYNC_PERIOD\")); }"
+      },
+      "existing_evidence": "Typed library compile checks and manifest validation are required. No custom semantic parsing changed."
+    },
+    {
+      "id": "T02",
+      "mode": "audit",
+      "request": "Проверь тест преобразования кодов вымышленного сервиса доступа в доменные решения. Разрешён только review.",
+      "contract": "Fictional service codes Allowed and Refused map to Proceed and Deny. Unknown maps to ManualReview. An absent response is pending and maps to null, never ManualReview. These meanings are repository-owned policy, not dependency serialization.",
+      "files": {
+        "policy.rs": "fn map_response(v: Option<ServiceCode>) -> Option<Decision> { match v { None => None, Some(Allowed) => Some(Proceed), Some(Refused) => Some(Deny), _ => Some(ManualReview) } }",
+        "tests.rs": "#[test] fn pending() { assert_eq!(map_response(None), None); }\n#[test] fn codes() { for (input, expected) in [(Allowed, Proceed), (Refused, Deny), (Unknown, ManualReview)] { assert_eq!(map_response(Some(input)), Some(expected)); }"
+      },
+      "existing_evidence": "No other test directly checks these meanings. Candidate is at the pure policy boundary."
+    },
+    {
+      "id": "T03",
+      "mode": "authoring",
+      "request": "Нужен ли этот тест защиты от повторного начисления? Если нет, дай минимальную дальнейшую проверку.",
+      "contract": "grant_once is already an atomic domain operation implemented and verified elsewhere. This change adds a handler that forwards its precomputed description and returns its outcome unchanged. No new guarantee is requested.",
+      "files": {
+        "handler.rs": "async fn handler(g: &GrantOps, d: GrantDescription) -> Result<Outcome> { g.grant_once(d).await }",
+        "proposed_test.rs": "fake.grant_once_result = Ok(AlreadyGranted); let actual = handler(&fake, description).await; assert_eq!(actual, Ok(AlreadyGranted));"
+      },
+      "existing_evidence": "Real grant_once binding has unchanged conflict coverage. Handler contains no decisions or lifecycle."
+    },
+    {
+      "id": "T04",
+      "mode": "authoring",
+      "request": "Выбери минимальный тест для нового retry-решения. Это ревью предложения, код пока не меняй.",
+      "contract": "A permanent provider refusal ends this operation even when a retry budget remains. A retryable refusal is deferred until the supplied provider retry-after instant. The supplied attempt identity and destination must be preserved. Jitter, current time, and configuration are input facts.",
+      "files": {
+        "policy.rs": "fn decide_retry(f: RetryFacts) -> Decision { /* pure function, no clients */ }",
+        "proposed_test.rs": "let facts = facts(PermanentRefusal, budget_remaining = 3, now = 100, jitter = 7); assert_eq!(decide_retry(facts), Stop(PermanentRefusal));"
+      },
+      "existing_evidence": "New policy replaces an old unconditional retry on every refusal. No equivalent direct policy test exists."
+    },
+    {
+      "id": "T05",
+      "mode": "audit",
+      "request": "Оцени доказательство конкурентной защиты; разрешён только аудит. Достаточно ли его для заявленного поведения?",
+      "contract": "Concurrent claims for one (tenant_id, job_id) must produce one accepted reservation. The changed real binding currently does SELECT absent then INSERT without a unique constraint or lock. The contract predates the change.",
+      "files": {
+        "test.rs": "let fake = InMemoryGrantOnce::with_mutex(); join!(workflow(&fake, key), workflow(&fake, key)); assert_eq!(fake.accepted_count(key), 1);",
+        "real_binding.rs": "async fn reserve(key: Key) { if select(key).await.is_none() { insert(key).await; } }"
+      },
+      "existing_evidence": "The fake implements its own grant-once behavior. No focused test exercises the changed database reservation binding. No live write authority has been granted for this review."
+    },
+    {
+      "id": "T06",
+      "mode": "audit",
+      "request": "Оцени следующий workflow-тест и его fake; scope — только review.",
+      "contract": "The consumer processes bounded items. When processing fails after accepting item A, finalization must settle A before returning. If finalization also fails, the processing error remains the primary error. An item never accepted must not be finalized.",
+      "files": {
+        "workflow.rs": "async fn consume(ops: DomainOps) -> Result { /* accept item, process, finalize accepted items on exit */ }",
+        "test.rs": "fake.script = [Accepted(\"A\"), ProcessError(\"bad payload\"), FinalizeError(\"closed\")]; let outcome = consume(fake.ops()).await; let settled = fake.finalized_keys(); assert_eq!(outcome.primary_error(), \"bad payload\"); assert_eq!(settled, [\"A\"]);"
+      },
+      "existing_evidence": "Fake implements only accept, process and finalize with supported outcomes. No client/SQL emulation. This is the only proof of failure finalization and primary-error precedence."
+    },
+    {
+      "id": "T07",
+      "mode": "audit",
+      "request": "Нужно ли оставлять оба теста после извлечения policy? Разрешён обзор одного владельца поведения.",
+      "contract": "For a pending approval decision, processing must defer. The request handler only loads facts, invokes that policy, and dispatches the decided action. The change adds no transport or lifetime requirement.",
+      "files": {
+        "policy_test.rs": "assert_eq!(decide_processing(pending_facts), Defer { item_id: 41 });",
+        "handler_test.rs": "fake.decision = Defer { item_id: 41 }; handler(fake).await; assert_eq!(fake.dispatched_actions(), [Defer { item_id: 41 }]);"
+      },
+      "existing_evidence": "Direct policy proof is independent. Handler test only freezes forwarding and mock call shape."
+    },
+    {
+      "id": "T08",
+      "mode": "audit",
+      "request": "Проверь тест проверки владельца записи. Дай конкретное решение по утверждению.",
+      "contract": "A record whose tenant differs from the requester tenant must be rejected as OwnershipMismatch; same-tenant requests are accepted. The rule is pure repository-owned policy and no other test covers mismatches.",
+      "files": {
+        "test.rs": "let input = request(record_tenant = 9, requester_tenant = 12); let expected = decide_access(input.clone()); let actual = decide_access(input); assert_eq!(actual, expected);"
+      },
+      "existing_evidence": "Mismatch acceptance is a plausible defect, but candidate constructs expected via the function under test."
+    },
+    {
+      "id": "T09",
+      "mode": "audit",
+      "request": "Проверь тест защиты секретов. Разрешён только review, никаких операций с реальными секретами.",
+      "contract": "Public failure events must omit credential values and keep the provider error code. A custom repository-owned sanitization policy maps error facts to the public event. This changed policy currently has no direct behavior test.",
+      "files": {
+        "test.rs": "assert!(include_str!(\"errors.rs\").contains(\"redact_credentials\"));",
+        "errors.rs": "fn public_failure(facts: ErrorFacts) -> PublicEvent { /* custom mapping */ }"
+      },
+      "existing_evidence": "The source assertion can pass while the mapping leaks a synthetic credential. Tests may use synthetic input and an exact independently specified event."
+    },
+    {
+      "id": "T10",
+      "mode": "campaign",
+      "request": "Сделай read-only аудит подсистемы из этих двух тестов. Можно ли назвать его завершённым и удалить красный тест?",
+      "contract": "Input time strings containing an explicit offset are normalized to UTC dates. A signed receipt owned by another tenant is denied. Both are repository-owned unchecked semantic rules. No code changes are authorized.",
+      "files": {
+        "time_test.rs": "assert_eq!(utc_date(\"2026-09-30T00:30:00+03:00\"), \"2026-09-29\");",
+        "receipt_test.rs": "assert_eq!(authorize(receipt_owner = 12, requester = 13), Denied);"
+      },
+      "existing_evidence": "Pinned baseline: time_test FAIL, actual 2026-09-30; receipt_test PASS. History confirms the offset rule. No other proof. Product fix and delivery have not been performed."
+    },
+    {
+      "id": "T11",
+      "mode": "campaign",
+      "request": "Оцени план удалить redundant test и helper после интеграции upstream. Scope — review, ветки не меняй.",
+      "contract": "format_receipt is a production byte mapping required by a documented external consumer. The old local wrapper test duplicates a direct mapping test. New upstream production call sites now invoke format_receipt; that fact was absent in the old deletion plan.",
+      "files": {
+        "old_plan.txt": "Delete wrapper_test.rs and format_receipt; keep byte_mapping_test.rs.",
+        "new_calls.rs": "let wire = format_receipt(receipt); send_external(wire).await;",
+        "wrapper_test.rs": "assert_eq!(wrapper(fake_formatter), fake_formatter.output);"
+      },
+      "existing_evidence": "Byte mapping keeper remains independent and passes. The old plan called format_receipt a test-only seam without inspecting the new callers."
+    },
+    {
+      "id": "T12",
+      "mode": "campaign",
+      "request": "Кандидат на удаление: текущий writer больше не пишет null. Проверь тест и решение аудита.",
+      "contract": "Legacy persisted null approval values remain readable during the supported lifecycle. They mean pending, not denied. Processing must defer while approval is pending. Current writers store explicit Pending, but deployed readers still decode old null rows.",
+      "files": {
+        "test.rs": "let facts = decode_legacy_row(row(approval = null)); assert_eq!(decide_processing(facts), Defer { item_id: 41 });",
+        "reader.rs": "fn decode_legacy_row(row: StoredRow) -> Facts { /* repository-owned semantic decoding */ }"
+      },
+      "existing_evidence": "Authoritative support contract and current reader establish reachability. New writer coverage does not exercise the persisted old representation."
+    },
+    {
+      "id": "T13",
+      "mode": "authoring",
+      "request": "Изменение касается только typed flags и forwarding. Сделай тест-план. Можно ли ограничиться существующими проверками?",
+      "contract": "The change only passes a typed RuntimeFlags value through an unchanged constructor. Types and required environment field names are already enforced by the established libraries. No semantic rule, interaction guarantee, or external representation changed.",
+      "files": {
+        "entry.rs": "fn build(flags: RuntimeFlags) -> Worker { Worker::new(flags) }"
+      },
+      "existing_evidence": "Required compilation and lint gates remain. There is no uncovered repository-owned behavioral decision in scope."
+    },
+    {
+      "id": "T14",
+      "mode": "authoring",
+      "request": "Для прямой проверки детерминированной policy предлагается база данных и общий инфраструктурный simulator. Оцени план; запускать ничего не надо.",
+      "contract": "The policy decides ownership from explicit value facts and performs no I/O. No interaction, database, or persistence contract is changed. The requested proof concerns only this policy. A requester whose tenant differs from the record owner must receive OwnershipMismatch.",
+      "files": {
+        "plan.txt": "Run ownership policy through a new database fixture and a generic SQL/client simulator instead of directly supplying its value inputs."
+      },
+      "existing_evidence": "The smallest decision boundary is the pure policy. No existing proof detects acceptance of a mismatched owner; its expected denial is stated by the scenario contract."
+    },
+    {
+      "id": "T15",
+      "mode": "campaign",
+      "request": "По этим фактам дай handoff для оставшейся доставки. Код не меняй и ничего не деплой.",
+      "contract": "Agreed delivery contract: the reviewed correction must merge through the project CI publication path, reach its target environment, then pass the specified authenticated behavior check and observation. Current request authorizes handoff only.",
+      "files": {
+        "evidence.txt": "revision: abc123; policy tests: PASS; required lint: PASS; preservation review: accepted abc123; PR: open; merge: NOT_RUN; CI publication: NOT_RUN; rollout: NOT_OBSERVED; authenticated behavior: NOT_RUN; observation: NOT_RUN."
+      },
+      "existing_evidence": "Assigned implementer owns delivery; current task has no direct artifact deployment permission. No watcher was requested."
+    },
+    {
+      "id": "T16",
+      "mode": "audit",
+      "request": "По имеющимся фактам реши, можно ли удалить тест внешнего receipt encoding. Только review.",
+      "contract": "A function encodes receipts. It is unclear whether byte layout is external contract or internal formatting. No consumer specification has been supplied.",
+      "files": {
+        "test.rs": "assert_eq!(encode_receipt(receipt()), \"v1:0012:ok\");",
+        "history.txt": "Commit says: preserve existing receipt format. No linked requirement. Call sites inspected so far are internal; external publication path is not yet inspected."
+      },
+      "existing_evidence": "The candidate is old and slow. No overlapping proof was found in the inspected local files. More evidence may be in an external consumer path."
+    },
+    {
+      "id": "T17",
+      "mode": "campaign",
+      "request": "Дай ledger и правило учёта деклараций/строк для этого параметризованного теста. Только review; как поступить со строками, требующими разных решений?",
+      "contract": "Repository mapping maps a denied provider response to Deny and an absent provider response to Defer. Both are supported business outcomes. MalformedSchema is rejected by an unchanged typed dependency before the mapping can be called; this row cannot occur in production. No other mapping proof exists.",
+      "files": {
+        "test_policy.py": "@pytest.mark.parametrize(\"response, expected\", [(Denied(), Deny()), (None, Defer()), (MalformedSchema(), SchemaError())])\ndef test_mapping(response, expected):\n    assert map_response(response) == expected"
+      },
+      "existing_evidence": "The first two rows exercise custom semantic rules; the last duplicates dependency schema validation and cannot reach the stated owner."
+    },
+    {
+      "id": "T18",
+      "mode": "campaign",
+      "request": "Дай ledger и число деклараций для этой табличной проверки. Только review. Требуется ли отдельный инструмент конкретного фреймворка?",
+      "contract": "The fictional custom mapping contract is Allowed→Proceed, Refused→Deny, missing→Pending. All rows are supported. No existing overlapping proof; mapping swaps and treating pending as Deny are plausible repository-owned defects.",
+      "files": {
+        "tests.rs": "#[test]\nfn mapping() {\n    for (input, expected) in [(Some(Allowed), Proceed), (Some(Refused), Deny), (None, Pending)] {\n        assert_eq!(map_response(input), expected);\n    }\n}"
+      },
+      "existing_evidence": "One logical test declaration, three data rows; every row protects the stated custom mapping at its smallest owner boundary."
+    },
+    {
+      "id": "T19",
+      "mode": "audit",
+      "request": "Проверь exact-byte тест пользовательского протокола; не является ли он ненужной проверкой строк? Только review.",
+      "contract": "External consumer specification requires bytes b\"v1\\x00<workspace as decimal>\\x00accepted\\n\" for an accepted receipt. The repository owns custom encoding. The standard serializer is not used; a missing delimiter or swapped field is a plausible incompatible output.",
+      "files": {
+        "test_encoding.py": "def test_receipt_encoding():\n    actual = encode_receipt(workspace=12, outcome=\"accepted\")\n    assert actual == b\"v1\\x0012\\x00accepted\\n\""
+      },
+      "existing_evidence": "This is the only direct encoding proof. It compares output bytes with the independently documented wire contract, not source text."
+    },
+    {
+      "id": "T20",
+      "mode": "campaign",
+      "request": "Проверь критерий завершения pruning campaign. Достаточно ли данной проверки? Не выполняй мутации или release.",
+      "contract": "Campaign removes redundant layers and preserves unique contract proof. Two missing contracts were restored to keepers after an initial review. A supported tenant-mismatch defect should cause each relevant keeper to fail; that detectability is not yet demonstrated.",
+      "files": {
+        "evidence.txt": "pinned final revision: def456; all required local checks: PASS; keepers: PASS; deleted vs keeper independent preservation review: NOT_RUN; mutations for restored contracts: NOT_RUN; proposed completion: all green, campaign complete."
+      },
+      "existing_evidence": "Scope is local pruning only, no production behavior or live gate. Available reviewers may inspect read-only. Isolated local controls can be prepared by the assigned implementer, but current request authorizes only review."
+    }
+  ]
+}

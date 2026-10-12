@@ -1,0 +1,116 @@
+=== Q6 raw log ===
+date: 2026-09-16T03:39:50+0300
+driver: q6_replica.py
+note: A's Q2 write scripts verbatim (32 items x (5 HSET + 1 ZADD) vs 5 multi-field HSET + 1 multi-member ZADD), primary :6379 with the replica attached vs detached
+server version: df-v1.34.0 (redis_version 7.4.0), threads=4
+server flags:   ["--cache_mode=false","--maxmemory=2048Mi","--dbfilename=dump","--proactor_threads=4"]
+
+$ SCRIPT LOAD <Q2 per-call> -> d4395c792592cc0537cfc2629b5776b029ec202b
+$ SCRIPT LOAD <Q2 batched>  -> 2436898d5613b6f59e493d77214d0db042572f85
+
+--- round 1: attached ---
+$ REPLICAOF primary 6379  # on dfskill-replica :6380
+primary connected_slaves:1
+# Replication
+$ EVALSHA d4395c792592cc0537cfc2629b5776b029ec202b 6 {q2}h0 {q2}h1 {q2}h2 {q2}h3 {q2}h4 {q2}z 32 <64B>
+    [32x(5 HSET + 1 ZADD) | attached #1] counters over 220 invocations: eval_shardlocal_coordination=+0 eval_io_coordination=+220 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_normal_total=+220 tx_shard_polls=+43123 used_memory_lua=-3504
+$ EVALSHA 2436898d5613b6f59e493d77214d0db042572f85 6 {q2}h0 {q2}h1 {q2}h2 {q2}h3 {q2}h4 {q2}z 32 <64B>
+    [5 multi-HSET + 1 multi-ZADD | attached #1] counters over 220 invocations: eval_shardlocal_coordination=+0 eval_io_coordination=+220 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_normal_total=+220 tx_shard_polls=+2200 used_memory_lua=+10784
+
+--- round 2: standalone ---
+$ REPLICAOF NO ONE  # on dfskill-replica :6380
+primary connected_slaves:0
+# Replication
+$ EVALSHA d4395c792592cc0537cfc2629b5776b029ec202b 6 {q2}h0 {q2}h1 {q2}h2 {q2}h3 {q2}h4 {q2}z 32 <64B>
+    [32x(5 HSET + 1 ZADD) | standalone #1] counters over 220 invocations: eval_shardlocal_coordination=+0 eval_io_coordination=+220 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_inline_runs_total=+14080 tx_normal_total=+220 tx_shard_polls=+43120 used_memory_lua=-16928
+$ EVALSHA 2436898d5613b6f59e493d77214d0db042572f85 6 {q2}h0 {q2}h1 {q2}h2 {q2}h3 {q2}h4 {q2}z 32 <64B>
+    [5 multi-HSET + 1 multi-ZADD | standalone #1] counters over 220 invocations: eval_shardlocal_coordination=+0 eval_io_coordination=+220 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_inline_runs_total=+440 tx_normal_total=+220 tx_shard_polls=+2200 used_memory_lua=+2496
+
+--- round 3: standalone ---
+$ REPLICAOF NO ONE  # on dfskill-replica :6380
+primary connected_slaves:0
+# Replication
+$ EVALSHA d4395c792592cc0537cfc2629b5776b029ec202b 6 {q2}h0 {q2}h1 {q2}h2 {q2}h3 {q2}h4 {q2}z 32 <64B>
+    [32x(5 HSET + 1 ZADD) | standalone #2] counters over 220 invocations: eval_shardlocal_coordination=+0 eval_io_coordination=+220 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_inline_runs_total=+14080 tx_normal_total=+220 tx_shard_polls=+43120 used_memory_lua=+13376
+$ EVALSHA 2436898d5613b6f59e493d77214d0db042572f85 6 {q2}h0 {q2}h1 {q2}h2 {q2}h3 {q2}h4 {q2}z 32 <64B>
+    [5 multi-HSET + 1 multi-ZADD | standalone #2] counters over 220 invocations: eval_shardlocal_coordination=+0 eval_io_coordination=+220 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_inline_runs_total=+440 tx_normal_total=+220 tx_shard_polls=+2200 used_memory_lua=+4864
+
+--- round 4: attached ---
+$ REPLICAOF primary 6379  # on dfskill-replica :6380
+primary connected_slaves:1
+# Replication
+$ EVALSHA d4395c792592cc0537cfc2629b5776b029ec202b 6 {q2}h0 {q2}h1 {q2}h2 {q2}h3 {q2}h4 {q2}z 32 <64B>
+    [32x(5 HSET + 1 ZADD) | attached #2] counters over 220 invocations: eval_shardlocal_coordination=+0 eval_io_coordination=+220 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_normal_total=+220 tx_shard_polls=+43123 used_memory_lua=+14912
+$ EVALSHA 2436898d5613b6f59e493d77214d0db042572f85 6 {q2}h0 {q2}h1 {q2}h2 {q2}h3 {q2}h4 {q2}z 32 <64B>
+    [5 multi-HSET + 1 multi-ZADD | attached #2] counters over 220 invocations: eval_shardlocal_coordination=+0 eval_io_coordination=+220 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_normal_total=+220 tx_shard_polls=+2200 used_memory_lua=+28928
+
+--- restoring the lab: replica attached ---
+$ REPLICAOF primary 6379  # on dfskill-replica :6380
+primary connected_slaves:1
+# Replication
+role:slave
+master_host:primary
+master_port:6379
+master_link_status:up
+master_last_io_seconds_ago:0
+master_sync_in_progress:1
+master_replid:18c0fec7dce59df84eb6b2c2f58eac34584e0a1c
+slave_priority:100
+slave_read_only:1
+psync_attempts:0
+psync_successes:0
+$ SCRIPT LATENCY
+
+--- SCRIPT LATENCY (usec; both conditions share one sha, so these histograms cover attached+standalone together) ---
+[per-call] d4395c792592cc0537cfc2629b5776b029ec202b
+Count: 884 Average: 4388.8790  StdDev: 819.98
+Min: 2087.0000  Median: 4306.7993  Max: 16637.0000
+------------------------------------------------------
+[    2000,    2500 ) 5   0.566%   0.566% 
+[    2500,    3000 ) 17   1.923%   2.489% 
+[    3000,    3500 ) 17   1.923%   4.412% 
+[    3500,    4000 ) 33   3.733%   8.145% #
+[    4000,    4500 ) 602  68.100%  76.244% ##############
+[    4500,    5000 ) 139  15.724%  91.968% ###
+[    5000,    6000 ) 56   6.335%  98.303% #
+[    6000,    7000 ) 8   0.905%  99.208% 
+[    7000,    8000 ) 1   0.113%  99.321% 
+[    9000,   10000 ) 1   0.113%  99.434% 
+[   10000,   12000 ) 3   0.339%  99.774% 
+[   12000,   14000 ) 1   0.113%  99.887% 
+[   16000,   18000 ) 1   0.113% 100.000%
+[batched] 2436898d5613b6f59e493d77214d0db042572f85
+Count: 884 Average: 344.0486  StdDev: 221.83
+Min: 142.0000  Median: 288.4848  Max: 2421.0000
+------------------------------------------------------
+[     140,     160 ) 5   0.566%   0.566% 
+[     160,     180 ) 14   1.584%   2.149% 
+[     180,     200 ) 13   1.471%   3.620% 
+[     200,     250 ) 283  32.014%  35.633% ######
+[     250,     300 ) 164  18.552%  54.186% ####
+[     300,     350 ) 160  18.100%  72.285% ####
+[     350,     400 ) 93  10.520%  82.805% ##
+[     400,     450 ) 44   4.977%  87.783% #
+[     450,     500 ) 30   3.394%  91.176% #
+[     500,     600 ) 23   2.602%  93.778% #
+[     600,     700 ) 9   1.018%  94.796% 
+[     700,     800 ) 15   1.697%  96.493% 
+[     800,     900 ) 9   1.018%  97.511% 
+[     900,    1000 ) 5   0.566%  98.077% 
+[    1000,    1200 ) 4   0.452%  98.529% 
+[    1200,    1400 ) 5   0.566%  99.095% 
+[    1400,    1600 ) 3   0.339%  99.434% 
+[    1800,    2000 ) 1   0.113%  99.548% 
+[    2000,    2500 ) 4   0.452% 100.000%
+
+--- client latency ---
+| variant                                     | n   | p50_us | p95_us | p99_us  | min_us | max_us  | mean_us | total_us | redis_calls | us_per_call(p50) |
+|---------------------------------------------|-----|--------|--------|---------|--------|---------|---------|----------|-------------|------------------|
+| 32x(5 HSET + 1 ZADD) | attached #1          | 200 | 4659.6 | 5485.2 | 6288.3  | 2936.5 | 9856.0  | 4752.7  | 950540.0 | 192         | 24.3             |
+| 32x(5 HSET + 1 ZADD) | attached #2          | 200 | 4698.4 | 6032.2 | 10676.9 | 2710.7 | 13491.9 | 4854.7  | 970938.3 | 192         | 24.5             |
+| 32x(5 HSET + 1 ZADD) | standalone #1        | 200 | 4522.0 | 6203.5 | 7549.3  | 2687.5 | 17119.3 | 4754.0  | 950805.7 | 192         | 23.6             |
+| 32x(5 HSET + 1 ZADD) | standalone #2        | 200 | 4446.8 | 4987.7 | 5489.3  | 2447.7 | 5927.5  | 4484.9  | 896986.0 | 192         | 23.2             |
+| 5 multi-HSET + 1 multi-ZADD | attached #1   | 200 | 505.0  | 692.5  | 858.4   | 404.2  | 1433.1  | 530.3   | 106069.6 | 6           | 84.2             |
+| 5 multi-HSET + 1 multi-ZADD | attached #2   | 200 | 633.8  | 1629.8 | 2496.0  | 431.9  | 2643.8  | 776.9   | 155371.7 | 6           | 105.6            |
+| 5 multi-HSET + 1 multi-ZADD | standalone #1 | 200 | 383.9  | 453.8  | 521.5   | 345.6  | 952.5   | 394.4   | 78881.6  | 6           | 64.0             |
+| 5 multi-HSET + 1 multi-ZADD | standalone #2 | 200 | 420.4  | 677.9  | 1444.9  | 263.1  | 1747.4  | 452.2   | 90430.2  | 6           | 70.1             |

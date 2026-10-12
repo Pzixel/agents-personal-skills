@@ -1,0 +1,46 @@
+#!/bin/bash
+# check-run [--log-dir DIR] -- <command...>
+#
+# Runs the command, keeps its full output in a log file, and prints only the
+# verdict, the log path and the last 30 lines, so that reading a check costs a
+# fixed amount of context instead of the size of the output. Exits with the
+# command's own exit code. It knows nothing about any particular build tool:
+# whatever is after `--` is run as given.
+set -u
+
+log_dir=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --log-dir)
+      log_dir="${2-}"; shift 2 ;;
+    --log-dir=*)
+      log_dir="${1#--log-dir=}"; shift ;;
+    --)
+      shift; break ;;
+    -h|--help)
+      printf '%s\n' "usage: check-run [--log-dir DIR] -- <command...>"; exit 0 ;;
+    *)
+      printf '%s\n' "check-run: unexpected argument '$1' (usage: check-run [--log-dir DIR] -- <command...>)" >&2
+      exit 2 ;;
+  esac
+done
+
+if [ $# -eq 0 ]; then
+  printf '%s\n' "check-run: no command (usage: check-run [--log-dir DIR] -- <command...>)" >&2
+  exit 2
+fi
+
+if [ -z "$log_dir" ]; then
+  if [ -d ./tmp ]; then log_dir=./tmp; else log_dir="${TMPDIR:-/tmp}"; fi
+fi
+mkdir -p "$log_dir" 2>/dev/null || log_dir="${TMPDIR:-/tmp}"
+
+log="${log_dir%/}/check-run-$(date +%s)-$$.log"
+"$@" >"$log" 2>&1
+rc=$?
+
+if [ "$rc" -eq 0 ]; then printf 'PASS\n'; else printf 'FAIL exit=%s\n' "$rc"; fi
+printf 'log: %s\n' "$log"
+printf '%s\n' '--- last 30 lines'
+tail -30 "$log"
+exit "$rc"

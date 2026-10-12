@@ -1,0 +1,49 @@
+=== Q3 raw log ===
+date: 2026-09-16T03:38:54+0300
+driver: q3_read_after_full.py
+note: 1024 due candidates, no leases, 2048B payloads, batch size 32
+server version: df-v1.34.0 (redis_version 7.4.0), threads=4
+server flags:   ["--cache_mode=false","--maxmemory=2048Mi","--dbfilename=dump","--proactor_threads=4"]
+
+$ ZADD {q3}due 0..1023 mN ; HSET {q3}ver/{q3}payload (seed, 2048B payloads)
+$ SCRIPT LOAD <payload for all 1024>   -> 9b630daeed8927fe639c2f4852e014cbeb29226a
+$ SCRIPT LOAD <payload for first 32 only> -> 663073e92535224e33a34d0c09a3eb3f9a341a47
+$ EVALSHA 9b630daeed8927fe639c2f4852e014cbeb29226a 4 {q3}due {q3}ver {q3}lease {q3}payload 1024 1024
+  -> candidates=1024 chosen=1024 payload_bytes=2097152
+$ EVALSHA 663073e92535224e33a34d0c09a3eb3f9a341a47 4 {q3}due {q3}ver {q3}lease {q3}payload 1024 1024 32
+  -> candidates=1024 chosen=1024 payload_bytes=65536
+$ SCRIPT LATENCY
+
+--- client latency ---
+| variant              | n   | p50_us  | p95_us  | p99_us  | min_us  | max_us  | mean_us | total_us  | redis_calls | payload_KiB |
+|----------------------|-----|---------|---------|---------|---------|---------|---------|-----------|-------------|-------------|
+| payload for all 1024 | 200 | 34135.8 | 41485.6 | 50827.4 | 17051.4 | 53150.2 | 34240.0 | 6847992.1 | 3072        | 2048        |
+| payload for first 32 | 200 | 31971.2 | 35226.7 | 44045.4 | 15493.2 | 64056.2 | 31030.8 | 6206168.9 | 2080        | 64          |
+
+--- SCRIPT LATENCY (usec; includes warm-up iterations) ---
+[read-after-full] 9b630daeed8927fe639c2f4852e014cbeb29226a
+Count: 221 Average: 33380.7919  StdDev: 4657.86
+Min: 16672.0000  Median: 32835.8209  Max: 52600.0000
+------------------------------------------------------
+[   16000,   18000 ) 2   0.905%   0.905% 
+[   20000,   25000 ) 8   3.620%   4.525% #
+[   25000,   30000 ) 24  10.860%  15.385% ##
+[   30000,   35000 ) 133  60.181%  75.566% ############
+[   35000,   40000 ) 42  19.005%  94.570% ####
+[   40000,   45000 ) 6   2.715%  97.285% #
+[   45000,   50000 ) 4   1.810%  99.095% 
+[   50000,   60000 ) 2   0.905% 100.000%
+[early stop] 663073e92535224e33a34d0c09a3eb3f9a341a47
+Count: 221 Average: 30581.9593  StdDev: 5312.47
+Min: 15270.0000  Median: 31781.2500  Max: 63575.0000
+------------------------------------------------------
+[   14000,   16000 ) 8   3.620%   3.620% #
+[   16000,   18000 ) 4   1.810%   5.430% 
+[   18000,   20000 ) 1   0.452%   5.882% 
+[   20000,   25000 ) 9   4.072%   9.955% #
+[   25000,   30000 ) 31  14.027%  23.982% ###
+[   30000,   35000 ) 159  71.946%  95.928% ##############
+[   35000,   40000 ) 4   1.810%  97.738% 
+[   40000,   45000 ) 3   1.357%  99.095% 
+[   50000,   60000 ) 1   0.452%  99.548% 
+[   60000,   70000 ) 1   0.452% 100.000%

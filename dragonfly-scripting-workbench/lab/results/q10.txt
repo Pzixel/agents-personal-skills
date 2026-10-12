@@ -1,0 +1,111 @@
+=== Q10 raw log ===
+date: 2026-09-16T04:38:57+0300
+driver: q10_lock_on_hashtags.py
+note: Q2/Q3/Q7 workloads re-run verbatim on the default primary and on a throwaway --lock_on_hashtags node, back to back in one session
+server version: df-v1.34.0 (redis_version 7.4.0), threads=4
+server flags:   ["--cache_mode=false","--maxmemory=2048Mi","--dbfilename=dump","--proactor_threads=4"]
+
+
+--- throwaway node ---
+$ docker run -d --name dfskill-flag -p 6382:6379 docker.dragonflydb.io/dragonflydb/dragonfly@sha256:366e34f415c22983dc1c4a1d575fa2d9c22b9a3998a9934bf1cc6d16c17695db --cache_mode=false --maxmemory=2048Mi --dbfilename=dump --proactor_threads=4 --lock_on_hashtags
+flag node version: df-v1.34.0 (redis_version 7.4.0), threads=4
+flag node flags:   --cache_mode=false --maxmemory=2048Mi --dbfilename=dump --proactor_threads=4 --lock_on_hashtags
+
+--- Q2 workload on default ---
+$ SCRIPT LOAD <q2 per-item> -> 5afcf8c7c6805b57d556a3dc97e0af50e933eb67
+$ EVALSHA 5afcf8c7c6805b57d556a3dc97e0af50e933eb67 6 {q2}h0 {q2}h1 {q2}h2 {q2}h3 {q2}h4 {q2}z 32 b'q2vq2vq2vq2vq2
+    [[default] 32x(5 HSET + 1 ZADD)] counters over 220 invocations: eval_shardlocal_coordination=+0 eval_io_coordination=+220 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_normal_total=+220 tx_shard_polls=+43120 used_memory_lua=-47600
+$ SCRIPT LOAD <q2 batched> -> 44abde502c2ead5d62ed12595dcb6988fccc5f22
+$ EVALSHA 44abde502c2ead5d62ed12595dcb6988fccc5f22 6 {q2}h0 {q2}h1 {q2}h2 {q2}h3 {q2}h4 {q2}z 32 b'q2vq2vq2vq2vq2
+    [[default] 5 multi-field HSET + 1 multi-member ZADD] counters over 220 invocations: eval_shardlocal_coordination=+0 eval_io_coordination=+220 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_normal_total=+220 tx_shard_polls=+2200 used_memory_lua=+38816
+$ SCRIPT LOAD <q2 batched/acall> -> f2204ee37654d3518dc46743424f36070cdc351e
+$ EVALSHA f2204ee37654d3518dc46743424f36070cdc351e 6 {q2}h0 {q2}h1 {q2}h2 {q2}h3 {q2}h4 {q2}z 32 b'q2vq2vq2vq2vq2
+    [[default] batched, redis.acall (result discarded)] counters over 220 invocations: eval_shardlocal_coordination=+0 eval_io_coordination=+220 eval_squashed_flushes=+660 lua_blocked=+0 | lua_interpreter_return=+220 tx_normal_total=+220 tx_shard_polls=+1760 used_memory_lua=+21888
+
+--- Q2 workload on lock_on_hashtags ---
+$ SCRIPT LOAD <q2 per-item> -> e3523e59a99d6ededfeb38509de4f2df06787bd5
+$ EVALSHA e3523e59a99d6ededfeb38509de4f2df06787bd5 6 {q2}h0 {q2}h1 {q2}h2 {q2}h3 {q2}h4 {q2}z 32 b'q2vq2vq2vq2vq2
+    [[lock_on_hashtags] 32x(5 HSET + 1 ZADD)] counters over 220 invocations: eval_shardlocal_coordination=+220 eval_io_coordination=+0 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_inline_runs_total=+220 tx_normal_total=+220 tx_shard_optimistic_total=+220 used_memory_lua=+19952
+$ SCRIPT LOAD <q2 batched> -> 680b1da2b0ae1452f495c082c859642f53a8db72
+$ EVALSHA 680b1da2b0ae1452f495c082c859642f53a8db72 6 {q2}h0 {q2}h1 {q2}h2 {q2}h3 {q2}h4 {q2}z 32 b'q2vq2vq2vq2vq2
+    [[lock_on_hashtags] 5 multi-field HSET + 1 multi-member ZADD] counters over 220 invocations: eval_shardlocal_coordination=+220 eval_io_coordination=+0 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_inline_runs_total=+220 tx_normal_total=+220 tx_shard_optimistic_total=+220 used_memory_lua=-3264
+$ SCRIPT LOAD <q2 batched/acall> -> 8a2828770a72ab71a1e95ec765557056e88a4011
+$ EVALSHA 8a2828770a72ab71a1e95ec765557056e88a4011 6 {q2}h0 {q2}h1 {q2}h2 {q2}h3 {q2}h4 {q2}z 32 b'q2vq2vq2vq2vq2
+    [[lock_on_hashtags] batched, redis.acall (result discarded)] counters over 220 invocations: eval_shardlocal_coordination=+220 eval_io_coordination=+0 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_inline_runs_total=+220 tx_normal_total=+220 tx_shard_optimistic_total=+220 used_memory_lua=+6560
+| variant                                                     | n   | p50_us | p95_us | p99_us  | min_us | max_us  | mean_us | total_us | redis_calls | us_per_call(p50) | shardlocal/io per invocation |
+|-------------------------------------------------------------|-----|--------|--------|---------|--------|---------|---------|----------|-------------|------------------|------------------------------|
+| [default] 32x(5 HSET + 1 ZADD)                              | 200 | 3936.3 | 9069.3 | 13390.4 | 2764.6 | 30496.3 | 4748.2  | 949644.2 | 192         | 20.5             | 0.00/1.00                    |
+| [default] 5 multi-field HSET + 1 multi-member ZADD          | 200 | 397.8  | 482.9  | 533.8   | 310.8  | 574.5   | 399.0   | 79801.3  | 6           | 66.3             | 0.00/1.00                    |
+| [default] batched, redis.acall (result discarded)           | 200 | 338.7  | 402.2  | 439.4   | 271.9  | 499.0   | 342.5   | 68490.7  | 6           | 56.5             | 0.00/1.00                    |
+| [lock_on_hashtags] 32x(5 HSET + 1 ZADD)                     | 200 | 214.4  | 256.2  | 282.8   | 172.4  | 340.1   | 215.2   | 43031.8  | 192         | 1.1              | 1.00/0.00                    |
+| [lock_on_hashtags] 5 multi-field HSET + 1 multi-member ZADD | 200 | 109.7  | 127.9  | 150.2   | 98.8   | 192.2   | 111.6   | 22313.6  | 6           | 18.3             | 1.00/0.00                    |
+| [lock_on_hashtags] batched, redis.acall (result discarded)  | 200 | 107.5  | 127.3  | 168.1   | 96.8   | 211.0   | 110.5   | 22107.8  | 6           | 17.9             | 1.00/0.00                    |
+
+--- Q3 workload on default ---
+$ (q3 seed) ZADD {q3}due 0..1023 ; HSET {q3}payload <2048B payloads>
+$ SCRIPT LOAD <q3 full> -> 73d840ec173451890e1a83f6ad2e815cb1c0a8ae
+    [default] full: candidates=1024 chosen=1024 payload_bytes=2097152
+$ EVALSHA 73d840ec173451890e1a83f6ad2e815cb1c0a8ae 4 {q3}due {q3}ver {q3}lease {q3}payload 1024 1024
+    [[default] payload for all 1024] counters over 220 invocations: eval_shardlocal_coordination=+0 eval_io_coordination=+220 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_normal_total=+220 tx_shard_polls=+676940 used_memory_lua=+56320
+$ SCRIPT LOAD <q3 early> -> 54496fa58600c42e08eda5c5b42ad383a8082d2b
+    [default] early: candidates=1024 chosen=1024 payload_bytes=65536
+$ EVALSHA 54496fa58600c42e08eda5c5b42ad383a8082d2b 4 {q3}due {q3}ver {q3}lease {q3}payload 1024 1024 32
+    [[default] payload for first 32] counters over 220 invocations: eval_shardlocal_coordination=+0 eval_io_coordination=+220 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_normal_total=+220 tx_shard_polls=+458700
+
+--- Q3 workload on lock_on_hashtags ---
+$ (q3 seed) ZADD {q3}due 0..1023 ; HSET {q3}payload <2048B payloads>
+$ SCRIPT LOAD <q3 full> -> 6c8fd0194e7c896694040c3674f4748b6db4108f
+    [lock_on_hashtags] full: candidates=1024 chosen=1024 payload_bytes=2097152
+$ EVALSHA 6c8fd0194e7c896694040c3674f4748b6db4108f 4 {q3}due {q3}ver {q3}lease {q3}payload 1024 1024
+    [[lock_on_hashtags] payload for all 1024] counters over 220 invocations: eval_shardlocal_coordination=+220 eval_io_coordination=+0 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_cnt=+1 lua_interpreter_return=+220 tx_inline_runs_total=+220 tx_normal_total=+220 tx_shard_optimistic_total=+220 used_memory_lua=+170864
+$ SCRIPT LOAD <q3 early> -> 8097977943d83678423a3268f34a9865e2ddaf59
+    [lock_on_hashtags] early: candidates=1024 chosen=1024 payload_bytes=65536
+$ EVALSHA 8097977943d83678423a3268f34a9865e2ddaf59 4 {q3}due {q3}ver {q3}lease {q3}payload 1024 1024 32
+    [[lock_on_hashtags] payload for first 32] counters over 220 invocations: eval_shardlocal_coordination=+220 eval_io_coordination=+0 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+220 tx_inline_runs_total=+220 tx_normal_total=+220 tx_shard_optimistic_total=+220 used_memory_lua=-71680
+| variant                                 | n   | p50_us  | p95_us  | p99_us   | min_us  | max_us   | mean_us | total_us   | redis_calls | us_per_call(p50) | shardlocal/io per invocation |
+|-----------------------------------------|-----|---------|---------|----------|---------|----------|---------|------------|-------------|------------------|------------------------------|
+| [default] payload for all 1024          | 200 | 74627.4 | 96084.4 | 105756.2 | 42584.2 | 146647.9 | 70979.9 | 14195977.2 | 3072        | 24.3             | 0.00/1.00                    |
+| [default] payload for first 32          | 200 | 55423.2 | 62991.5 | 68832.8  | 29765.2 | 83058.7  | 48587.8 | 9717565.2  | 2080        | 26.6             | 0.00/1.00                    |
+| [lock_on_hashtags] payload for all 1024 | 200 | 1555.9  | 1706.7  | 1798.9   | 1451.0  | 1855.5   | 1570.1  | 314022.4   | 3072        | 0.5              | 1.00/0.00                    |
+| [lock_on_hashtags] payload for first 32 | 200 | 883.4   | 1032.1  | 1187.6   | 789.4   | 1993.8   | 898.6   | 179720.2   | 2080        | 0.4              | 1.00/0.00                    |
+
+--- Q7 workload (claim_mailbox_batch.lua) on default ---
+$ SET catalog:{inbound}:active_generation gen-q7 ; SET catalog:{inbound}:cursor_coverage_generation gen-q7 ; SET catalog:{inbound}:reconciled_server_run_id <master_replid> ; SET catalog:{inbound}:last_reconciliation_started_ms <now-1000>
+$ HSET catalog:{inbound}:generation:gen-q7:mailbox_versions <1024 mailbox_id -> version 7>
+$ HSET catalog:{inbound}:mailbox_records <1024 '<id>:7' -> ~2048B JSON>
+KEYS[11] catalog descriptor deliberately ABSENT -> legacy layout, versions read from KEYS[5]; KEYS[7] leases and KEYS[8] receipts ABSENT
+$ SCRIPT LOAD <q7 orig> -> 68c8defb96444fdb060b9d1542fba808028a005f
+$ SCRIPT LOAD <q7 hmget> -> 94b4ec9c0a38df207215c5d00f8e89cfcad00568
+    [default/orig] fence check PASSED: RESOLVED, earliest_due=1700000000000, 32/32 CLAIMED, deadline-now=120000 for all, record 2048B
+    [default/hmget] fence check PASSED: RESOLVED, earliest_due=1700000000000, 32/32 CLAIMED, deadline-now=120000 for all, record 2048B
+    [default] reply arrays identical (clock fields normalised): True
+    [default/orig iter0] fence check PASSED: RESOLVED, earliest_due=1700000000000, 32/32 CLAIMED, deadline-now=120000 for all, record 2048B
+    [default/orig iter20] fence check PASSED: RESOLVED, earliest_due=1700000000000, 32/32 CLAIMED, deadline-now=120000 for all, record 2048B
+    [default/orig] counters over 200 invocations: eval_shardlocal_coordination=+0 eval_io_coordination=+200 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+200 tx_normal_total=+399 tx_shard_polls=+663192 used_memory_lua=+157440
+    [default/hmget iter0] fence check PASSED: RESOLVED, earliest_due=1700000000000, 32/32 CLAIMED, deadline-now=120000 for all, record 2048B
+    [default/hmget iter20] fence check PASSED: RESOLVED, earliest_due=1700000000000, 32/32 CLAIMED, deadline-now=120000 for all, record 2048B
+    [default/hmget] counters over 200 invocations: eval_shardlocal_coordination=+0 eval_io_coordination=+200 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+200 tx_normal_total=+399 tx_shard_polls=+49792
+
+--- Q7 workload (claim_mailbox_batch.lua) on lock_on_hashtags ---
+$ SET catalog:{inbound}:active_generation gen-q7 ; SET catalog:{inbound}:cursor_coverage_generation gen-q7 ; SET catalog:{inbound}:reconciled_server_run_id <master_replid> ; SET catalog:{inbound}:last_reconciliation_started_ms <now-1000>
+$ HSET catalog:{inbound}:generation:gen-q7:mailbox_versions <1024 mailbox_id -> version 7>
+$ HSET catalog:{inbound}:mailbox_records <1024 '<id>:7' -> ~2048B JSON>
+KEYS[11] catalog descriptor deliberately ABSENT -> legacy layout, versions read from KEYS[5]; KEYS[7] leases and KEYS[8] receipts ABSENT
+$ SCRIPT LOAD <q7 orig> -> d62d332d832fe26766d30317f5ccb1fcf1ef47f1
+$ SCRIPT LOAD <q7 hmget> -> 5a5f4f6966c348026264f364c6f2de9ef49c5a10
+    [lock_on_hashtags/orig] fence check PASSED: RESOLVED, earliest_due=1700000000000, 32/32 CLAIMED, deadline-now=120000 for all, record 2048B
+    [lock_on_hashtags/hmget] fence check PASSED: RESOLVED, earliest_due=1700000000000, 32/32 CLAIMED, deadline-now=120000 for all, record 2048B
+    [lock_on_hashtags] reply arrays identical (clock fields normalised): True
+    [lock_on_hashtags/orig iter0] fence check PASSED: RESOLVED, earliest_due=1700000000000, 32/32 CLAIMED, deadline-now=120000 for all, record 2048B
+    [lock_on_hashtags/orig iter20] fence check PASSED: RESOLVED, earliest_due=1700000000000, 32/32 CLAIMED, deadline-now=120000 for all, record 2048B
+    [lock_on_hashtags/orig] counters over 200 invocations: eval_shardlocal_coordination=+200 eval_io_coordination=+0 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+200 tx_batch_schedule_calls_total=+399 tx_batch_scheduled_items_total=+399 tx_normal_total=+399 tx_shard_optimistic_total=+200 tx_shard_polls=+995
+    [lock_on_hashtags/hmget iter0] fence check PASSED: RESOLVED, earliest_due=1700000000000, 32/32 CLAIMED, deadline-now=120000 for all, record 2048B
+    [lock_on_hashtags/hmget iter20] fence check PASSED: RESOLVED, earliest_due=1700000000000, 32/32 CLAIMED, deadline-now=120000 for all, record 2048B
+    [lock_on_hashtags/hmget] counters over 200 invocations: eval_shardlocal_coordination=+200 eval_io_coordination=+0 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+200 tx_batch_schedule_calls_total=+399 tx_batch_scheduled_items_total=+399 tx_normal_total=+399 tx_shard_optimistic_total=+200 tx_shard_polls=+995
+| variant                                              | n   | p50_us  | p95_us   | p99_us   | min_us  | max_us   | mean_us | total_us   | shardlocal/io per invocation |
+|------------------------------------------------------|-----|---------|----------|----------|---------|----------|---------|------------|------------------------------|
+| [default] orig (per-candidate HGET)                  | 200 | 54947.5 | 104518.9 | 129410.5 | 47914.5 | 143868.6 | 69365.4 | 13873082.1 | 0.00/1.00                    |
+| [default] hmget prefetch + deferred payload          | 200 | 7223.5  | 8147.4   | 8746.7   | 4059.2  | 17483.7  | 6444.6  | 1288916.4  | 0.00/1.00                    |
+| [lock_on_hashtags] orig (per-candidate HGET)         | 200 | 2243.0  | 2540.5   | 2681.7   | 2083.5  | 2741.3   | 2287.9  | 457583.6   | 1.00/0.00                    |
+| [lock_on_hashtags] hmget prefetch + deferred payload | 200 | 862.2   | 2346.4   | 4041.0   | 725.9   | 4368.0   | 1061.5  | 212306.5   | 1.00/0.00                    |
+$ docker rm -f dfskill-flag   # lab back to its default state

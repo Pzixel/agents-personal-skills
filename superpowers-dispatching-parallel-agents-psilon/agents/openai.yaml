@@ -1,0 +1,7 @@
+interface:
+  display_name: "Superpowers: Parallel Agents (psilon)"
+  short_description: "Delegate independent substantial workstreams"
+  default_prompt: "Use $superpowers-dispatching-parallel-agents-psilon to establish independence and dispatch these substantial workstreams safely."
+
+policy:
+  allow_implicit_invocation: true

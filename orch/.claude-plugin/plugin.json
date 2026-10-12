@@ -1,0 +1,5 @@
+{
+  "name": "orch",
+  "version": "1.0.0",
+  "description": "Cheap multi-agent orchestration: typed agents, gates, waiting protocol"
+}

@@ -1,0 +1,218 @@
+{
+  "T01": {
+    "accept": [
+      "Reject proposed source/config spelling test; no replacement test.",
+      "Use existing typed/manifest checks and direct review."
+    ],
+    "reject": [
+      "Keep because config is a contract",
+      "Add env spelling/startup smoke fixture"
+    ]
+  },
+  "T02": {
+    "accept": [
+      "Retain direct semantic mapping cases including pending vs ManualReview.",
+      "Exact expected values from explicit contract; read-only."
+    ],
+    "reject": [
+      "Delete all configuration/provider mapping tests",
+      "Change code in review-only scope"
+    ]
+  },
+  "T03": {
+    "accept": [
+      "Reject forwarding test despite idempotency label.",
+      "Direct review and unchanged owner proof suffice."
+    ],
+    "reject": [
+      "Add mock test or disposable forwarding smoke",
+      "Treat AlreadyGranted return as atomicity proof"
+    ]
+  },
+  "T04": {
+    "accept": [
+      "Qualifying direct pure-policy case: permanent refusal stops despite available budget.",
+      "Explicit time/config/randomness facts do not make this config-spelling testing."
+    ],
+    "reject": [
+      "Route through handler",
+      "Reject because policy inputs include config",
+      "Invent retry guarantees"
+    ]
+  },
+  "T05": {
+    "accept": [
+      "Fake cannot prove real atomicity; no approval/completion from this evidence.",
+      "Changed binding needs focused isolation proof; read-only diagnosis preserves atomic contract and requires protection beyond SELECT/INSERT."
+    ],
+    "reject": [
+      "Approve mutex fake as database proof",
+      "Run live writes",
+      "Invent a generic database simulator"
+    ]
+  },
+  "T06": {
+    "accept": [
+      "Retain nontrivial workflow failure/lifetime proof; fake has narrow domain operations.",
+      "Finalization of accepted A and preservation of primary error are contractual, not incidental call order."
+    ],
+    "reject": [
+      "Reject all fake interaction tests as mechanical",
+      "Move reads before writes or materialize stream"
+    ]
+  },
+  "T07": {
+    "accept": [
+      "Keep direct policy proof; delete/consolidate redundant handler forwarding assertion.",
+      "No replacement wrapper tests or call tree."
+    ],
+    "reject": [
+      "Keep both for layered coverage",
+      "Add handler call-count test"
+    ]
+  },
+  "T08": {
+    "accept": [
+      "Repair qualifying test to compare with independently specified OwnershipMismatch.",
+      "Do not delete real authorization behavior proof solely for bad expectation construction."
+    ],
+    "reject": [
+      "Keep self-comparison",
+      "Derive expectation through another helper sharing decisions"
+    ]
+  },
+  "T09": {
+    "accept": [
+      "Current source grep is excluded; security label grants no exception.",
+      "Meaningful replacement at pure sanitization boundary uses synthetic facts, independent exact public event, and plausible leakage defect."
+    ],
+    "reject": [
+      "Keep source grep as cheapest security contract",
+      "Use real credentials",
+      "Test incidental replacement string"
+    ]
+  },
+  "T10": {
+    "accept": [
+      "Keep qualifying red offset regression and report product defect/evidence.",
+      "Read-only audit may finish as findings; repair/release remain incomplete; no code or behavior changes."
+    ],
+    "reject": [
+      "Delete red test or change expected date",
+      "Claim product/release completion",
+      "Fix code under read-only scope"
+    ]
+  },
+  "T11": {
+    "accept": [
+      "Reassess upstream callers; preserve production helper.",
+      "Wrapper proof can be removed, keeper stays; no automatic retention of whole deletion plan."
+    ],
+    "reject": [
+      "Keep deletion automatically",
+      "Delete helper despite external/production consumers"
+    ]
+  },
+  "T12": {
+    "accept": [
+      "Retain reachable persisted null approval semantic proof at smallest owner boundary.",
+      "Current writer output alone cannot establish obsolete compatibility."
+    ],
+    "reject": [
+      "Delete because writers changed",
+      "Invent additional unreachable compatibility"
+    ]
+  },
+  "T13": {
+    "accept": [
+      "No new tests; existing compilation/lint and direct review.",
+      "No mechanical smoke, fake, wrapper, or coverage quota."
+    ],
+    "reject": [
+      "A test per new function",
+      "Disposable constructor smoke"
+    ]
+  },
+  "T14": {
+    "accept": [
+      "Reject the unnecessary database/simulator; test pure policy directly with explicit facts.",
+      "Derive the mismatched-owner denial from the supplied scenario contract.",
+      "Missing infrastructure cannot block pure-policy proof."
+    ],
+    "reject": [
+      "Build generic infrastructure simulation for pure-policy proof",
+      "Block policy verification on database access",
+      "Invent runtime or module-layout requirements"
+    ]
+  },
+  "T15": {
+    "accept": [
+      "Delivery incomplete; distinguish remaining actions from missing authority.",
+      "Named implementer, abc123, agreed project CI publication path, remaining gate evidence, CONTINUE and finish condition; no watcher.",
+      "Do not bypass CI with direct artifact deployment or claim RELEASE_COMPLETE."
+    ],
+    "reject": [
+      "Claim completion from green tests",
+      "Transfer all authorized work to user",
+      "Add watcher",
+      "Treat not-yet-run gates alone as missing permission"
+    ]
+  },
+  "T16": {
+    "accept": [
+      "Leave the decision unresolved and temporarily retain; external consumer contract/reachability evidence is missing.",
+      "Old/slow/internal appearance alone is insufficient deletion evidence; bounded next investigation."
+    ],
+    "reject": [
+      "Delete based on slowness/age/refactor sensitivity",
+      "Invent external byte guarantee and approve"
+    ]
+  },
+  "T17": {
+    "accept": [
+      "Parameterized declaration is normally one ledger declaration.",
+      "Mixed decisions require row-level marks: retain supported Denied/None semantic rows; remove unreachable schema/dependency row.",
+      "No specific framework helper required."
+    ],
+    "reject": [
+      "Delete whole declaration",
+      "Retain excluded third row",
+      "Require a specific framework helper or count each row as an independent declaration unconditionally"
+    ]
+  },
+  "T18": {
+    "accept": [
+      "One logical declaration with R and three supported qualifying rows; split marks only when decisions differ.",
+      "No particular framework syntax/tool is necessary."
+    ],
+    "reject": [
+      "Count three declarations as fixed requirement",
+      "Invent separate tests by coverage quota",
+      "Require JavaScript helper"
+    ]
+  },
+  "T19": {
+    "accept": [
+      "Retain exact-output byte proof at real encoding owner using independent external specification.",
+      "Distinguish output contract from source string/config spelling and serializer guarantees."
+    ],
+    "reject": [
+      "Delete all byte/string comparisons",
+      "Convert to source grep",
+      "Relax to substring comparison"
+    ]
+  },
+  "T20": {
+    "accept": [
+      "Campaign incomplete: independent preservation review and restored-contract mutations remain.",
+      "Name implementer/reviewer actions at def456 and finish conditions without performing them under review-only scope.",
+      "Do not invent production/live gate for local pruning."
+    ],
+    "reject": [
+      "Approve from green checks",
+      "Drop preservation or mutations",
+      "Add deployment or watcher",
+      "Execute mutations in read-only request"
+    ]
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "eval_id": 1,
+  "name": "optimize-claim-batch",
+  "skill_name": "dragonfly-scripting",
+  "prompt": "We run this Lua script on Dragonfly v1.34.0 via EVALSHA: dragonfly-scripting-workbench/dragonfly-scripting-workspace/evals/inputs/claim_mailbox_batch.lua (its KEYS/ARGV contract and how to seed realistic data are in dragonfly-scripting-workbench/dragonfly-scripting-workspace/evals/inputs/claim_mailbox_batch_CONTRACT.md). Production calls it with candidate_window=1024, batch_size=32 against a due zset of about 1000 mailboxes with ~2 KB records, all keys under the hashtag {inbound}; the server runs with --proactor_threads=4 --cache_mode=false --maxmemory=2048Mi and no other flags. It feels slow. Optimize it without changing its reply protocol or its recovery semantics. Deliver: the optimized .lua file, a short NOTES.md explaining every change and why it is safe, and before/after numbers measured on a local Dragonfly of the same version (docker image docker.dragonflydb.io/dragonflydb/dragonfly@sha256:366e34f415c22983dc1c4a1d575fa2d9c22b9a3998a9934bf1cc6d16c17695db is already pulled; you may start containers named eval-*; tear them down when done). Do not modify anything outside your output directory except throwaway containers.",
+  "expected_output": "Optimized script with identical replies on identical seeded state; per-candidate HGET loops replaced by chunked HMGET; whole-window protocol checks preserved; measured before/after with the execution-path counters or SCRIPT LATENCY; no Redis-only advice.",
+  "files": [
+    "dragonfly-scripting-workbench/dragonfly-scripting-workspace/evals/inputs/claim_mailbox_batch.lua",
+    "dragonfly-scripting-workbench/dragonfly-scripting-workspace/evals/inputs/claim_mailbox_batch_CONTRACT.md"
+  ],
+  "assertions": [
+    "reply-equality-with-original: the optimized script returns replies byte-identical to the original on the same seeded state, proven by running scripts/bench_script.py --compare (clock-bearing reply positions excluded)",
+    "p50-improved-on-same-seed: the measured p50 of the optimized script is lower than the original's p50 measured on the same seed and the same container",
+    "per-candidate-hget-loop-batched: the per-candidate HGET/HMGET-per-mailbox loop over the candidate window is replaced by batched multi-field reads",
+    "payload-reads-bounded-by-batch-size: record/payload reads are bounded by batch_size (32), not by candidate_window (1024)",
+    "before-after-numbers-present: the deliverables contain concrete before/after numbers measured against a Dragonfly v1.34.0 container, not estimates",
+    "reply-protocol-and-recovery-preserved: the whole-window protocol/version checks and the lease-receipt recovery semantics are unchanged",
+    "no-unverified-redis-only-advice: the output contains no Redis-origin performance advice presented without Dragonfly evidence"
+  ]
+}

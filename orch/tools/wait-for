@@ -1,0 +1,149 @@
+#!/usr/bin/env python3
+"""wait-for [--every SECONDS] [--max SECONDS] -- <condition command...>
+
+Re-runs the condition command until it exits 0, then exits 0. Exits 124 if
+--max seconds elapse first (macOS has no timeout(1); this replaces it).
+
+The condition argv is shell-quoted (shlex.join) and run through /bin/sh -c, so
+each argv word survives intact: `-- sh -c '! gh pr checks | grep -q pending'`
+keeps the single-quoted script as one word, and a bare `-- test -f out.txt`
+works as written. Output is not streamed: only the
+last 15 lines of the final attempt's combined stdout+stderr are printed, plus
+one summary line with elapsed seconds and the attempt count.
+
+Never poll by hand around it; where it runs depends on who waits. A subagent
+runs it in the FOREGROUND (Bash timeout 600000, --max 570, the call repeated in
+the same turn): ending a turn delivers the subagent's reply to whoever spawned
+it, so a subagent that stops to wait sends an empty answer and wakes its caller
+for nothing. A subagent cannot background it: no-poll-gate refuses
+run_in_background for subagents. Work longer than one call is a script with a
+checkpoint on disk run in slices of at most ~570 s, one slice per call, all
+calls in the same turn. The main session may start it with run_in_background: true only
+for a wait it expects to end within a few minutes: the harness kills background
+Bash tasks with exit code 144 at events of its own (seen 2026-09-22 right after
+a typed user message and at a compaction; 8 of 13 background launches of one
+session died that way), and a killed wait reports nothing. A main-session wait
+longer than that goes to a Monitor whose command prints nothing until the state
+is terminal, or to a `watcher` subagent.
+
+One progress line per attempt goes to stderr with the time and the exit code of
+the condition, so a killed wait still shows the last state it saw.
+
+A broken condition is not "not yet": when the FIRST attempt exits 126/127 or
+its stderr reads like a usage, syntax or not-found error, wait-for prints that
+output and exits 2 at once. Seven false timeouts on green CI in one session
+came from a wrong flag or regex that looked like "still pending" for the whole
+--max (retro 2026-10-12). Exit 2 is distinct from 124 (deadline).
+"""
+
+import re
+import shlex
+import subprocess
+import sys
+import time
+
+TAIL_LINES = 15
+TIMEOUT_EXIT = 124
+BROKEN_EXIT = 2
+BROKEN_RE = re.compile(
+    r"unknown (?:flag|command|option|shorthand)|command not found|not found|No such file"
+    r"|usage:|invalid (?:argument|option|flag)|syntax error|unexpected (?:EOF|token|argument)"
+    r"|accepts \d+ arg|requires? (?:at least|exactly)|not a git repository|unrecognized",
+    re.IGNORECASE,
+)
+
+
+def condition_broken(rc, stderr):
+    """True when the first attempt shows the command itself is wrong, not the state."""
+    return rc in (126, 127) or bool(BROKEN_RE.search(stderr or ""))
+
+
+def parse_args(argv):
+    every = 30.0
+    maximum = 1800.0
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg == "--":
+            return every, maximum, argv[i + 1:]
+        if arg in ("-h", "--help"):
+            sys.stdout.write(__doc__)
+            raise SystemExit(0)
+        if arg.startswith("--every"):
+            every, i = _value(argv, i, "--every")
+            every = float(every)
+            continue
+        if arg.startswith("--max"):
+            maximum, i = _value(argv, i, "--max")
+            maximum = float(maximum)
+            continue
+        raise SystemExit("wait-for: unexpected argument %r (condition goes after --)" % arg)
+    raise SystemExit("wait-for: missing `--` before the condition command")
+
+
+def _value(argv, i, flag):
+    if argv[i].startswith(flag + "="):
+        return argv[i][len(flag) + 1:], i + 1
+    if i + 1 >= len(argv):
+        raise SystemExit("wait-for: %s needs a value" % flag)
+    return argv[i + 1], i + 2
+
+
+def run_condition(command):
+    """(exit code, combined output, stderr alone) of one attempt."""
+    proc = subprocess.run(
+        ["/bin/sh", "-c", command],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    out = proc.stdout.decode("utf-8", errors="ignore")
+    err = proc.stderr.decode("utf-8", errors="ignore")
+    return proc.returncode, out + err, err
+
+
+def report(output, elapsed, attempts, rc, command, state=None):
+    lines = [ln for ln in output.splitlines() if ln.strip()]
+    for line in lines[-TAIL_LINES:]:
+        print(line)
+    if state is None:
+        state = "satisfied" if rc == 0 else "TIMED OUT (condition never succeeded)"
+    print(
+        "wait-for: %s after %.0fs, %d attempt(s): %s" % (state, elapsed, attempts, command)
+    )
+
+
+def main(argv):
+    every, maximum, condition = parse_args(argv)
+    if not condition:
+        raise SystemExit("wait-for: empty condition command")
+    # A plain " ".join drops the caller's quoting: `sh -c '! a | b'` became
+    # `sh -c ! a | b`, so the pipe ran outside the inner shell and the
+    # condition never succeeded (2026-10-12).
+    command = shlex.join(condition)
+
+    start = time.monotonic()
+    attempts = 0
+    while True:
+        attempts += 1
+        rc, output, stderr = run_condition(command)
+        elapsed = time.monotonic() - start
+        sys.stderr.write(
+            "wait-for: attempt %d at %s, condition exit %d, %ds elapsed\n"
+            % (attempts, time.strftime("%H:%M:%SZ", time.gmtime()), rc, elapsed)
+        )
+        sys.stderr.flush()
+        if rc == 0:
+            report(output, elapsed, attempts, 0, command)
+            return 0
+        if attempts == 1 and condition_broken(rc, stderr):
+            report(output, elapsed, attempts, rc, command,
+                   state="CONDITION BROKEN (the command itself fails; fix it, do not wait)")
+            return BROKEN_EXIT
+        if elapsed + every > maximum:
+            report(output, elapsed, attempts, rc, command)
+            return TIMEOUT_EXIT
+        time.sleep(every)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

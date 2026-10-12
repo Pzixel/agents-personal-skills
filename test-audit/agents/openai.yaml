@@ -1,0 +1,4 @@
+interface:
+  display_name: "Test Audit"
+  short_description: "Audit test value at its owning behavior boundary"
+  default_prompt: "Use $test-audit to assess the requested tests and retain only justified independent contract proof."

@@ -1,0 +1,3949 @@
+=== Q9 raw log ===
+date: 2026-09-16T03:41:05+0300
+driver: q9_inventory.py
+note: every command below was actually executed against dfskill-primary; output is verbatim
+server version: df-v1.34.0 (redis_version 7.4.0), threads=4
+server flags:   ["--cache_mode=false","--maxmemory=2048Mi","--dbfilename=dump","--proactor_threads=4"]
+
+$ SCRIPT LOAD "local n=0 for i=1,100 do n=n+redis.call('EXISTS',KEYS[1]) end return n"  -> f12e2b9ff643d0eb60d9d70b840b57579495ac1b
+$ EVALSHA f12e2b9ff643d0eb60d9d70b840b57579495ac1b 1 {q9}h    (x50, to populate the histograms)
+
+--- SCRIPT HELP ---
+$ redis-cli -p 6379 SCRIPT HELP
+SCRIPT <subcommand> [<arg> [value] [opt] ...]
+Subcommands are:
+EXISTS <sha1> [<sha1> ...]
+   Return information about the existence of the scripts in the script cache.
+FLUSH
+   Flush the Lua scripts cache. Very dangerous on replicas.
+LOAD <script>
+   Load a script into the scripts cache without executing it.
+FLAGS <sha> [flags ...]
+   Set specific flags for script. Can be called before the sript is loaded.
+   The following flags are possible: 
+      - Use 'allow-undeclared-keys' to allow accessing undeclared keys
+      - Use 'disable-atomicity' to allow running scripts non-atomically
+LIST
+   Lists loaded scripts.
+LATENCY
+   Prints latency histograms in usec for every called function.
+GC
+   Invokes garbage collection on all unused interpreter instances.
+HELP
+   Prints this help.
+
+--- SCRIPT LIST ---
+$ redis-cli -p 6379 SCRIPT LIST
+1b03e735c03072284f716e56cf7272b87958129e
+return type(bit)
+542d3d604953cefcee41cc80de8861b6e13d0769
+
+local n = tonumber(ARGV[1])
+local last
+for i = 1, n do
+  last = redis.call('HGET', KEYS[(i - 1) % #KEYS + 1], 'f')
+end
+return #last
+
+-- run:a6361a91625b4a56a0705c5c52833162
+
+b0ec55534f1265b2fa31c1919b42bbd13e43bb56
+--!df flags=allow-undeclared-keys
+local n = tonumber(ARGV[1])
+local last
+for i = 1, n do
+  last = redis.call('HGET', ARGV[(i - 1) % (#ARGV - 1) + 2], 'f')
+end
+return #last
+
+-- run:904f3e1f54c347e49fac00ce23948545
+
+c3e2b5764d5be412cef4938c66a2f050e87e6b9d
+
+local n = tonumber(ARGV[1])
+local v = ARGV[2]
+for i = 1, n do
+  redis.call('HSET', KEYS[(i - 1) % #KEYS + 1], 'w' .. i, v)
+end
+return n
+
+-- run:75dd9f0a95584a35ac64f86cdf450fe9
+
+a5a869eeebb33dfa3b6cd6bec3f855f29b13aa61
+
+local n = tonumber(ARGV[1])
+local v = ARGV[2]
+for i = 1, n do
+  redis.call('HSET', KEYS[(i - 1) % #KEYS + 1], 'w' .. i, v)
+end
+return n
+
+-- run:abf20adb7a3d4e7fb5ebb42a5f72b8fb
+
+d87072dca4371175d1c10838e6178b8e5ae9f20e
+
+local n = tonumber(ARGV[1])
+local v = ARGV[2]
+local z = KEYS[#KEYS]
+for i = 1, n do
+  for f = 1, #KEYS - 1 do
+    redis.call('HSET', KEYS[f], 'item' .. i, v)
+  end
+  redis.call('ZADD', z, i, 'item' .. i)
+end
+return n
+
+-- run:26d0c062af714a25b9d49dd0342a2e75
+
+bdc327c27a10fc79cbd7e7141d8a8472272e49b6
+
+local n = tonumber(ARGV[1])
+local v = ARGV[2]
+local z = KEYS[#KEYS]
+for f = 1, #KEYS - 1 do
+  local args = {}
+  for i = 1, n do
+    args[#args + 1] = 'item' .. i
+    args[#args + 1] = v
+  end
+  redis.call('HSET', KEYS[f], unpack(args))
+end
+local zargs = {}
+for i = 1, n do
+  zargs[#zargs + 1] = i
+  zargs[#zargs + 1] = 'item' .. i
+end
+redis.call('ZADD', z, unpack(zargs))
+return n
+
+-- run:fb2562fbe51e477f94ef39d613badaef
+
+108b937e8d347ba18ed865337d899cb4b25a5d9d
+
+local target = tonumber(ARGV[1])
+local entry = ARGV[2]
+local plan = {}
+local n = math.ceil(target / (#entry + 32))
+for i = 1, n do
+  plan[i] = {op = 'deliver', idx = i, body = entry}
+end
+local blob = cjson.encode(plan)
+redis.call('HSET', KEYS[1], ARGV[3], blob)
+return #blob
+
+-- run:223f2e6de90d4555bab1faf0d56baf2b
+
+66df9b91982d244d4fd18e6d86a664bee164ebc4
+
+local zkey, vkey, lkey, pkey = KEYS[1], KEYS[2], KEYS[3], KEYS[4]
+local window = tonumber(ARGV[1])
+local want = tonumber(ARGV[3])
+local ids = redis.call('ZRANGEBYSCORE', zkey, '-inf', ARGV[2], 'LIMIT', 0, window)
+local bytes = 0
+local chosen = 0
+for i = 1, #ids do
+  local ver = redis.call('HGET', vkey, ids[i])
+  local lease = redis.call('HGET', lkey, ids[i])
+  if not lease and chosen < want then
+    local body = redis.call('HGET', pkey, ids[i])
+    if body then bytes = bytes + #body end
+    chosen = chosen + 1
+  elseif not lease then
+    chosen = chosen + 1
+  end
+end
+return {#ids, chosen, bytes}
+
+-- run:00b23b39540e42bfbe0a1dae40aca7c7
+
+dbd2a5884c8e31fcbab74cb14b75c4911f3dbf4b
+return type(cmsgpack)
+9ce8c6d7344269c23360621e709c04076d3318ab
+return type(unpack)
+70673a7cacd08e9dc36d02994764af602fb3c939
+--!df flags=disable-atomicity
+
+local n = tonumber(ARGV[1])
+local last
+for i = 1, n do
+  last = redis.call('HGET', KEYS[(i - 1) % #KEYS + 1], 'f')
+end
+return #last
+
+-- run:d4fd9214bd12429794e73d3d422ac069
+
+5f4863a8801cf0eea3a096494ef0b8e7cd3991ce
+
+local n = tonumber(ARGV[1])
+local last
+for i = 1, n do
+  last = redis.call('HGET', KEYS[(i - 1) % #KEYS + 1], 'f')
+end
+return #last
+
+-- run:da0f832ba8af499693d2798ed7b7a95e
+
+92b05231e24b87b0a9b02e2b146aac1ee2645729
+
+local n = tonumber(ARGV[1])
+local v = ARGV[2]
+for i = 1, n do
+  redis.call('HSET', KEYS[(i - 1) % #KEYS + 1], 'w' .. i, v)
+end
+return n
+
+-- run:2046d90a51714a0e9ca64ec7cc05cbc9
+
+ac4aa76df4f7e1adf6b0361c385a745cc254d72a
+
+local n = tonumber(ARGV[1])
+local v = ARGV[2]
+local z = KEYS[#KEYS]
+for f = 1, #KEYS - 1 do
+  local args = {}
+  for i = 1, n do
+    args[#args + 1] = 'item' .. i
+    args[#args + 1] = v
+  end
+  redis.call('HSET', KEYS[f], unpack(args))
+end
+local zargs = {}
+for i = 1, n do
+  zargs[#zargs + 1] = i
+  zargs[#zargs + 1] = 'item' .. i
+end
+redis.call('ZADD', z, unpack(zargs))
+return n
+
+-- run:c561dff9dc3e4551b8cb21c3d55672fd
+
+5f0f37b65f9bb693d20c3ffaf124f44f6e13a8b3
+
+local n = tonumber(ARGV[1])
+local v = ARGV[2]
+local z = KEYS[#KEYS]
+for i = 1, n do
+  for f = 1, #KEYS - 1 do
+    redis.call('HSET', KEYS[f], 'item' .. i, v)
+  end
+  redis.call('ZADD', z, i, 'item' .. i)
+end
+return n
+
+-- run:aa230d775b7b40438d11ebc044493544
+
+40dd68c7c0cf3adf5bb3cc8c25ce5287208dde70
+
+local n = tonumber(ARGV[1])
+local v = ARGV[2]
+local z = KEYS[#KEYS]
+for f = 1, #KEYS - 1 do
+  local args = {}
+  for i = 1, n do
+    args[#args + 1] = 'item' .. i
+    args[#args + 1] = v
+  end
+  redis.call('HSET', KEYS[f], unpack(args))
+end
+local zargs = {}
+for i = 1, n do
+  zargs[#zargs + 1] = i
+  zargs[#zargs + 1] = 'item' .. i
+end
+redis.call('ZADD', z, unpack(zargs))
+return n
+
+-- run:e74fc9d977584e3aa5f0f07b39266f55
+
+862cb6c19b116cf9c327a2cd48991196eb8fc2e0
+--!df flags=allow-undeclared-keys
+local n = tonumber(ARGV[1])
+local last
+for i = 1, n do
+  last = redis.call('HGET', ARGV[(i - 1) % (#ARGV - 1) + 2], 'f')
+end
+return #last
+
+-- run:7e4cb026a5064cf29eb196d5724b9d78
+
+34b920d0ef8894cfca6d52d70787ba0d6c655b0c
+
+local last
+for i = 1, #KEYS do
+  last = redis.call('GET', KEYS[i])
+end
+return #last
+
+-- run:8e52bbbb479d4eadbc014e45832911a1
+
+c644f450e47e686f7dbea61fe10d9c13dad41f7a
+
+local n = tonumber(ARGV[1])
+local last
+for i = 1, n do
+  last = redis.call('HGET', KEYS[(i - 1) % #KEYS + 1], 'f')
+end
+return #last
+
+-- run:eb3c73d7668d41729784d37ed6fab046
+
+d4395c792592cc0537cfc2629b5776b029ec202b
+
+local n = tonumber(ARGV[1])
+local v = ARGV[2]
+local z = KEYS[#KEYS]
+for i = 1, n do
+  for f = 1, #KEYS - 1 do
+    redis.call('HSET', KEYS[f], 'item' .. i, v)
+  end
+  redis.call('ZADD', z, i, 'item' .. i)
+end
+return n
+
+-- run:f47b111f5ef549ef841cddc3b2eb611a
+
+f8792191da2ede3056a876fb3416048027888400
+
+local n = tonumber(ARGV[1])
+local chunk = tonumber(ARGV[2])
+local total = 0
+local i = 1
+while i <= n do
+  local fields = {}
+  local last = math.min(i + chunk - 1, n)
+  for j = i, last do fields[#fields + 1] = 'f' .. j end
+  local vals = redis.call('HMGET', KEYS[1], unpack(fields))
+  for k = 1, #vals do
+    if vals[k] then total = total + #vals[k] end
+  end
+  i = last + 1
+end
+return total
+
+-- run:f0ea9c0412c84de3adb69032c5952e7d
+
+2436898d5613b6f59e493d77214d0db042572f85
+
+local n = tonumber(ARGV[1])
+local v = ARGV[2]
+local z = KEYS[#KEYS]
+for f = 1, #KEYS - 1 do
+  local args = {}
+  for i = 1, n do
+    args[#args + 1] = 'item' .. i
+    args[#args + 1] = v
+  end
+  redis.call('HSET', KEYS[f], unpack(args))
+end
+local zargs = {}
+for i = 1, n do
+  zargs[#zargs + 1] = i
+  zargs[#zargs + 1] = 'item' .. i
+end
+redis.call('ZADD', z, unpack(zargs))
+return n
+
+-- run:22919e812212416fbc5aba778adc67cf
+
+77a3451b70b577c826a9238021aeac9a6264a96d
+
+local n = tonumber(ARGV[1])
+local last
+for i = 1, n do
+  last = redis.call('HGET', KEYS[(i - 1) % #KEYS + 1], 'f')
+end
+return #last
+
+-- run:ff4c202c32a34444ad027488dc2a0f1c
+
+4c64abc836a615107809839a88cb0fa5fe16eb8b
+return type(table.unpack)
+d558cf0c64ce5502b5be0d14d47656202f256161
+--!df flags=allow-undeclared-keys
+local n = tonumber(ARGV[1])
+local last
+for i = 1, n do
+  last = redis.call('HGET', ARGV[(i - 1) % (#ARGV - 1) + 2], 'f')
+end
+return #last
+
+-- run:311ab56bd0b940c0af861bc03b2eec59
+
+7f1bf2194acea2cf80b3746c1555c7a64bfac2cd
+
+local n = tonumber(ARGV[1])
+local v = ARGV[2]
+for i = 1, n do
+  redis.call('HSET', KEYS[(i - 1) % #KEYS + 1], 'w' .. i, v)
+end
+return n
+
+-- run:b9aa4f5492e64def839334d5e8db2df5
+
+b604efb5acba28aec7e9f376d78d9d60c3e8fe7f
+
+return redis.call('HDEL', KEYS[1], ARGV[1])
+
+-- run:d4d087dda95145008aaf9cec4f6e491a
+
+139845367a02b33f17e5500f7e9292bd1f5f56f8
+
+local n = tonumber(ARGV[1])
+local v = ARGV[2]
+for i = 1, n do
+  redis.call('HSET', KEYS[(i - 1) % #KEYS + 1], 'w' .. i, v)
+end
+return n
+
+-- run:4b41974561f048a7883db809968e076e
+
+56f14984182b07092306d0a5aa8cf23ddd7b78f9
+
+local n = tonumber(ARGV[1])
+local v = ARGV[2]
+local z = KEYS[#KEYS]
+for i = 1, n do
+  for f = 1, #KEYS - 1 do
+    redis.call('HSET', KEYS[f], 'item' .. i, v)
+  end
+  redis.call('ZADD', z, i, 'item' .. i)
+end
+return n
+
+-- run:99f3d42cbd0849e8b97834a9df83369b
+
+2efba5976d939ab6b4d7a28741e4253091a4445d
+-- claim_mailbox_batch, HMGET variant (lab/bench/q7_real_script.py).
+-- Same KEYS arity (14), same ARGV protocol, same reply shape as
+-- claim_mailbox_batch.orig.lua. Two differences, both inside the candidate scan:
+--   1. the per-candidate `HGET versions` / `HGET leases` become one chunked
+--      HMGET per hash (chunk 512 fields);
+--   2. the ~2 KB `HGET mailbox_records` moves out of the scan and runs only for
+--      the <= batch_size candidates that are actually claimed (chunked HMGET).
+-- KNOWN semantic difference: the original returns {'PROTOCOL','record_missing'}
+-- if ANY eligible candidate in the window lacks a record, including candidates
+-- past batch_size that it would never claim; this variant only checks the
+-- claimed ones. On data where every eligible candidate has its record -- the
+-- seeded state here and the invariant the writer maintains -- the replies are
+-- identical, which is what the benchmark asserts.
+local function server_now_millis()
+  local now = redis.call('TIME')
+  return tonumber(now[1]) * 1000 + math.floor(tonumber(now[2]) / 1000)
+end
+
+local function parse_lease(raw)
+  if not raw then
+    return nil
+  end
+  local token, deadline = string.match(raw, '^([0-9a-f%-]+):(%d+)$')
+  if not token then
+    return false
+  end
+  return {token = token, deadline = tonumber(deadline)}
+end
+
+local function parse_receipt(raw)
+  if not raw then
+    return nil
+  end
+  local mailbox_id, token, deadline =
+    string.match(raw, '^([0-9a-f]+):([0-9a-f%-]+):(%d+)$')
+  if not mailbox_id then
+    return false
+  end
+  return {mailbox_id = mailbox_id, token = token, deadline = tonumber(deadline)}
+end
+
+local function delete_matching_poll_start(mailbox_id, token)
+  local poll_start = redis.call('HGET', KEYS[10], mailbox_id)
+  if poll_start and string.sub(poll_start, 1, string.len(token) + 1) == token .. ':' then
+    redis.call('HDEL', KEYS[10], mailbox_id)
+  end
+end
+
+local function delete_capture(token)
+  redis.call('HDEL', KEYS[14], token)
+end
+
+local function chunked_hmget(key, ids, first, last)
+  -- Prefetch ids[first..last] from a hash in chunks. `unpack` on Dragonfly's
+  -- Lua 5.4 takes at most 8163 arguments (8164 -> "stack overflow"), so the
+  -- chunk is kept well below that.
+  local CHUNK = 512
+  local out = {}
+  local i = first
+  while i <= last do
+    local stop = i + CHUNK - 1
+    if stop > last then stop = last end
+    local args = {}
+    for j = i, stop do
+      args[#args + 1] = ids[j]
+    end
+    local vals = redis.call('HMGET', key, unpack(args))
+    for j = 1, #vals do
+      out[i + j - 1] = vals[j]
+    end
+    i = stop + 1
+  end
+  return out
+end
+
+local function earliest_due()
+  local earliest = redis.call('ZRANGE', KEYS[6], 0, 0, 'WITHSCORES')
+  return earliest[2] or ''
+end
+
+local function resolved_response(now, batch_size, results)
+  local response = {'RESOLVED', tostring(now), earliest_due(), tostring(batch_size)}
+  for index = 1, batch_size do
+    local item = results[index]
+    if not item then
+      item = {'UNUSED', ARGV[8 + index], '', '', ''}
+    end
+    for field = 1, 5 do
+      table.insert(response, item[field])
+    end
+  end
+  return response
+end
+
+if ARGV[1] ~= '1' then
+  return {'PROTOCOL', 'schema_version'}
+end
+
+local expected_generation = ARGV[2]
+local actual_run_id = ARGV[3]
+local process_id = ARGV[4]
+local lease_ttl = tonumber(ARGV[5])
+local candidate_window = tonumber(ARGV[6])
+local freshness_limit = tonumber(ARGV[7])
+local batch_size = tonumber(ARGV[8])
+if expected_generation == '' or actual_run_id == '' or process_id == ''
+  or lease_ttl ~= 120000
+  or not candidate_window or candidate_window < 1
+  or not freshness_limit or freshness_limit < 1
+  or not batch_size or batch_size < 1 or batch_size > 32
+  or #ARGV ~= 8 + batch_size then
+  return {'PROTOCOL', 'arguments'}
+end
+for index = 1, batch_size do
+  if ARGV[8 + index] == '' then
+    return {'PROTOCOL', 'arguments'}
+  end
+end
+
+local now = server_now_millis()
+local recovered = {}
+local has_receipt = false
+for index = 1, batch_size do
+  local request_token = ARGV[8 + index]
+  local receipt = parse_receipt(redis.call('HGET', KEYS[8], request_token))
+  if receipt == false then
+    return {'PROTOCOL', 'receipt'}
+  end
+  if receipt then
+    has_receipt = true
+    if receipt.token ~= request_token then
+      return {'PROTOCOL', 'receipt_token'}
+    end
+    local lease = parse_lease(redis.call('HGET', KEYS[7], receipt.mailbox_id))
+    if lease == false then
+      return {'PROTOCOL', 'lease'}
+    end
+    if not lease or lease.token ~= receipt.token or lease.deadline ~= receipt.deadline then
+      return {'PROTOCOL', 'receipt_lease_mismatch'}
+    end
+    if receipt.deadline <= now then
+      recovered[index] = {
+        'RECEIPT_EXPIRED',
+        request_token,
+        receipt.mailbox_id,
+        tostring(receipt.deadline),
+        ''
+      }
+    else
+      local captured = redis.call('HGET', KEYS[14], request_token)
+      if not captured then
+        return {'PROTOCOL', 'record_missing'}
+      end
+      recovered[index] = {
+        'CLAIMED',
+        request_token,
+        receipt.mailbox_id,
+        tostring(receipt.deadline),
+        captured
+      }
+    end
+  end
+end
+if has_receipt then
+  return resolved_response(now, batch_size, recovered)
+end
+
+local active_generation = redis.call('GET', KEYS[1])
+if active_generation ~= expected_generation then
+  return {'FENCED', 'active_generation_changed'}
+end
+if redis.call('GET', KEYS[2]) ~= active_generation then
+  return {'FENCED', 'cursor_coverage_mismatch'}
+end
+if redis.call('GET', KEYS[3]) ~= actual_run_id then
+  return {'FENCED', 'server_run_reconciliation_required'}
+end
+local last_reconciliation = tonumber(redis.call('GET', KEYS[4]) or '')
+if not last_reconciliation or last_reconciliation > now
+  or now - last_reconciliation > freshness_limit then
+  return {'FENCED', 'catalog_not_fresh'}
+end
+
+local storage_format = redis.call('HGET', KEYS[11], 'storage_format')
+local state = redis.call('HGET', KEYS[11], 'state')
+local versions_key = KEYS[5]
+if storage_format then
+  if storage_format == 'mutable_v2' then
+    if state == 'applying' then
+      return {'FENCED', 'catalog_mutation_in_progress'}
+    end
+    if state ~= 'committed' then
+      return {'PROTOCOL', 'catalog_descriptor'}
+    end
+  else
+    return {'PROTOCOL', 'catalog_descriptor'}
+  end
+  if redis.call('HGET', KEYS[11], 'generation') ~= active_generation then
+    return {'FENCED', 'active_generation_changed'}
+  end
+  versions_key = KEYS[12]
+elseif state then
+  return {'PROTOCOL', 'catalog_descriptor'}
+end
+
+local candidates = redis.call(
+  'ZRANGEBYSCORE',
+  KEYS[6],
+  '-inf',
+  tostring(now),
+  'LIMIT',
+  0,
+  candidate_window
+)
+local saw_active = false
+local removals = {}
+local rescores = {}
+local claimable = {}
+-- HMGET PREFETCH: one chunked HMGET per hash instead of one HGET per candidate.
+local versions_all = chunked_hmget(versions_key, candidates, 1, #candidates)
+local leases_all = chunked_hmget(KEYS[7], candidates, 1, #candidates)
+for candidate_index, mailbox_id in ipairs(candidates) do
+  local version = versions_all[candidate_index]
+  local lease = parse_lease(leases_all[candidate_index])
+  if lease == false then
+    return {'PROTOCOL', 'lease'}
+  end
+  if not version then
+    if not lease then
+      table.insert(removals, mailbox_id)
+    elseif lease.deadline <= now then
+      local stale_receipt = parse_receipt(redis.call('HGET', KEYS[8], lease.token))
+      if stale_receipt == false then
+        return {'PROTOCOL', 'receipt'}
+      end
+      if not stale_receipt or stale_receipt.mailbox_id ~= mailbox_id
+        or stale_receipt.token ~= lease.token
+        or stale_receipt.deadline ~= lease.deadline then
+        return {'PROTOCOL', 'receipt_lease_mismatch'}
+      end
+      return {
+        'CLEANUP_REQUIRED',
+        tostring(now),
+        mailbox_id,
+        lease.token,
+        tostring(lease.deadline)
+      }
+    else
+      table.insert(rescores, {mailbox_id, lease.deadline})
+    end
+  else
+    saw_active = true
+    if not lease or lease.deadline <= now then
+      -- DEFERRED PAYLOAD: the ~2 KB record is fetched after the scan, only for
+      -- the <= batch_size candidates that are actually claimed.
+      local old_receipt = nil
+      if lease then
+        old_receipt = parse_receipt(redis.call('HGET', KEYS[8], lease.token))
+        if old_receipt == false then
+          return {'PROTOCOL', 'receipt'}
+        end
+        if old_receipt and (
+          old_receipt.mailbox_id ~= mailbox_id
+          or old_receipt.token ~= lease.token
+          or old_receipt.deadline ~= lease.deadline
+        ) then
+          return {'PROTOCOL', 'receipt_lease_mismatch'}
+        end
+      end
+      if #claimable < batch_size then
+        table.insert(claimable, {
+          mailbox_id = mailbox_id,
+          version = version,
+          old_lease = lease,
+          old_receipt = old_receipt
+        })
+      end
+    else
+      table.insert(rescores, {mailbox_id, lease.deadline})
+    end
+  end
+end
+
+-- Payload read for the chosen candidates only, before any write, so the write
+-- order and the 'record_missing' early return stay where the original had them.
+local claim_ids = {}
+for index, candidate in ipairs(claimable) do
+  claim_ids[index] = candidate.mailbox_id .. ':' .. candidate.version
+end
+local records = chunked_hmget(KEYS[13], claim_ids, 1, #claim_ids)
+for index, candidate in ipairs(claimable) do
+  if not records[index] then
+    return {'PROTOCOL', 'record_missing'}
+  end
+  candidate.record = records[index]
+end
+
+for _, mailbox_id in ipairs(removals) do
+  redis.call('ZREM', KEYS[6], mailbox_id)
+  redis.call('HDEL', KEYS[9], mailbox_id)
+end
+for _, rescore in ipairs(rescores) do
+  redis.call('ZADD', KEYS[6], rescore[2], rescore[1])
+end
+
+local results = {}
+for index, candidate in ipairs(claimable) do
+  local request_token = ARGV[8 + index]
+  local mailbox_id = candidate.mailbox_id
+  local old_lease = candidate.old_lease
+  if old_lease then
+    delete_matching_poll_start(mailbox_id, old_lease.token)
+    local old_receipt = candidate.old_receipt
+    if old_receipt then
+      redis.call('HDEL', KEYS[8], old_lease.token)
+    end
+    delete_capture(old_lease.token)
+  end
+  local deadline = now + lease_ttl
+  local lease_value = request_token .. ':' .. tostring(deadline)
+  local receipt_value = mailbox_id .. ':' .. request_token .. ':' .. tostring(deadline)
+  redis.call('HSET', KEYS[7], mailbox_id, lease_value)
+  redis.call('HSET', KEYS[8], request_token, receipt_value)
+  redis.call('HSET', KEYS[9], mailbox_id, request_token .. ':' .. process_id)
+  redis.call('HSET', KEYS[10], mailbox_id, request_token .. ':' .. tostring(now))
+  redis.call('HSET', KEYS[14], request_token, candidate.record)
+  redis.call('ZADD', KEYS[6], deadline, mailbox_id)
+  results[index] = {
+    'CLAIMED',
+    request_token,
+    mailbox_id,
+    tostring(deadline),
+    candidate.record
+  }
+end
+
+if #claimable > 0 then
+  return resolved_response(now, batch_size, results)
+end
+if #candidates > 0 and not saw_active then
+  return {'RETRY_IMMEDIATELY', tostring(now)}
+end
+local earliest = earliest_due()
+if earliest ~= '' and tonumber(earliest) <= now then
+  return {'RETRY_IMMEDIATELY', tostring(now)}
+end
+return {'NOT_DUE', tostring(now), earliest}
+
+-- run:bcb6619475224f459c70d5a23cedbd0f
+
+27a6d43aaa71684c618671fea8b892861329d6a0
+
+local target = tonumber(ARGV[1])
+local entry = ARGV[2]
+local plan = {}
+local n = math.ceil(target / (#entry + 32))
+for i = 1, n do
+  plan[i] = {op = 'deliver', idx = i, body = entry}
+end
+local blob = cjson.encode(plan)
+redis.call('HSET', KEYS[1], ARGV[3], blob)
+return #blob
+
+-- run:9a183d757b5f410bb9e37ed24314189b
+
+8126bfe74a121740966f7cf9838fe57fbeae1470
+
+local n = tonumber(ARGV[1])
+local v = ARGV[2]
+local z = KEYS[#KEYS]
+for f = 1, #KEYS - 1 do
+  local args = {}
+  for i = 1, n do
+    args[#args + 1] = 'item' .. i
+    args[#args + 1] = v
+  end
+  redis.call('HSET', KEYS[f], unpack(args))
+end
+local zargs = {}
+for i = 1, n do
+  zargs[#zargs + 1] = i
+  zargs[#zargs + 1] = 'item' .. i
+end
+redis.call('ZADD', z, unpack(zargs))
+return n
+
+-- run:50a08369092e45259495892dd51c00e6
+
+c6f45f21a5e89990a855031071331e06c8ed21d0
+
+local n = tonumber(ARGV[1])
+local v = ARGV[2]
+for i = 1, n do
+  redis.call('HSET', KEYS[(i - 1) % #KEYS + 1], 'w' .. i, v)
+end
+return n
+
+-- run:6d8aa7276a71406baf0bf081aa9841ac
+
+ceb5ca43dd4fd2294aef665e4e529312fb9f12e4
+
+local n = tonumber(ARGV[1])
+local last
+for i = 1, n do
+  last = redis.call('HGET', KEYS[(i - 1) % #KEYS + 1], 'f')
+end
+return #last
+
+-- run:63af497fc2db414e996c419ba5d8dc2b
+
+a180e5e1c3a92d5a256dfb67bb353708d75a51af
+--!df flags=disable-atomicity
+
+local n = tonumber(ARGV[1])
+local last
+for i = 1, n do
+  last = redis.call('HGET', KEYS[(i - 1) % #KEYS + 1], 'f')
+end
+return #last
+
+-- run:a7a0e93fdf9a4b16a60ecc142d0fa9db
+
+5b5989d85808eb64a508e617d510fd6bed539d67
+--!df flags=disable-atomicity
+
+local n = tonumber(ARGV[1])
+local last
+for i = 1, n do
+  last = redis.call('HGET', KEYS[(i - 1) % #KEYS + 1], 'f')
+end
+return #last
+
+-- run:af51bfd8282843988cf6a954c7055c2e
+
+e0e1f9fabfc9d4800c877a703b823ac0578ff8db
+return 1
+a575670142a3b199e0e28b1e5e8b1987f9247586
+
+local last
+for i = 1, #KEYS do
+  last = redis.call('GET', KEYS[i])
+end
+return #last
+
+-- run:8c38ffd8693b43e2bfc7c1496ba60e2a
+
+221a5d14843af572296c0a4409aa572ca0951d0f
+--!df flags=allow-undeclared-keys
+local n = tonumber(ARGV[1])
+local last
+for i = 1, n do
+  last = redis.call('HGET', ARGV[(i - 1) % (#ARGV - 1) + 2], 'f')
+end
+return #last
+
+-- run:a9c554dd9acd482787f8ad0ea46e998b
+
+9dbd1cddead74fa61bad48da08bd549e98c4a3d0
+--!df flags=disable-atomicity
+
+local n = tonumber(ARGV[1])
+local last
+for i = 1, n do
+  last = redis.call('HGET', KEYS[(i - 1) % #KEYS + 1], 'f')
+end
+return #last
+
+-- run:045c445f945541f1bac585e1e54a906a
+
+1731701dfddc46b5cc7faef31c10d43d62a19c27
+
+local n = tonumber(ARGV[1])
+local total = 0
+for i = 1, n do
+  local v = redis.call('HGET', KEYS[1], 'f' .. i)
+  if v then total = total + #v end
+end
+return total
+
+-- run:9e3b99da34f84cab98e5a40d09f47c47
+
+ed33d298c787e68c6c5d596e2cc85b93528c58cf
+--!df flags=disable-atomicity
+
+local n = tonumber(ARGV[1])
+local last
+for i = 1, n do
+  last = redis.call('HGET', KEYS[(i - 1) % #KEYS + 1], 'f')
+end
+return #last
+
+-- run:31d20b8c78b54da8a7b7222044f1f86e
+
+ee77811428e865b277c612691e5fa0d6f1b483a8
+--!df flags=disable-atomicity
+
+local n = tonumber(ARGV[1])
+local last
+for i = 1, n do
+  last = redis.call('HGET', KEYS[(i - 1) % #KEYS + 1], 'f')
+end
+return #last
+
+-- run:6c3e4378da2b4e7b9dd76f4542117b03
+
+c45f308980bc34793d43a1b8d1a5e87cd748ecea
+
+local n = tonumber(ARGV[1])
+local v = ARGV[2]
+local z = KEYS[#KEYS]
+for i = 1, n do
+  for f = 1, #KEYS - 1 do
+    redis.call('HSET', KEYS[f], 'item' .. i, v)
+  end
+  redis.call('ZADD', z, i, 'item' .. i)
+end
+return n
+
+-- run:58f11f92a50a4ff1a62a0c2b9da836d2
+
+a516b28fc2bed280c0a51c102b94fff3872254c6
+--!df flags=disable-atomicity
+return redis.call('GET', KEYS[1])
+e0311126b3d23d210ede4372d8e0f2fb98a812a6
+
+local last
+for i = 1, #KEYS do
+  last = redis.call('GET', KEYS[i])
+end
+return #last
+
+-- run:7035bcee9229484299f0819dbb461da3
+
+ccd62478b0da87d0643cd265feaa16733486a05b
+-- claim_mailbox_batch, HMGET variant (lab/bench/q7_real_script.py).
+-- Same KEYS arity (14), same ARGV protocol, same reply shape as
+-- claim_mailbox_batch.orig.lua. Two differences, both inside the candidate scan:
+--   1. the per-candidate `HGET versions` / `HGET leases` become one chunked
+--      HMGET per hash (chunk 512 fields);
+--   2. the ~2 KB `HGET mailbox_records` moves out of the scan and runs only for
+--      the <= batch_size candidates that are actually claimed (chunked HMGET).
+-- KNOWN semantic difference: the original returns {'PROTOCOL','record_missing'}
+-- if ANY eligible candidate in the window lacks a record, including candidates
+-- past batch_size that it would never claim; this variant only checks the
+-- claimed ones. On data where every eligible candidate has its record -- the
+-- seeded state here and the invariant the writer maintains -- the replies are
+-- identical, which is what the benchmark asserts.
+local function server_now_millis()
+  local now = redis.call('TIME')
+  return tonumber(now[1]) * 1000 + math.floor(tonumber(now[2]) / 1000)
+end
+
+local function parse_lease(raw)
+  if not raw then
+    return nil
+  end
+  local token, deadline = string.match(raw, '^([0-9a-f%-]+):(%d+)$')
+  if not token then
+    return false
+  end
+  return {token = token, deadline = tonumber(deadline)}
+end
+
+local function parse_receipt(raw)
+  if not raw then
+    return nil
+  end
+  local mailbox_id, token, deadline =
+    string.match(raw, '^([0-9a-f]+):([0-9a-f%-]+):(%d+)$')
+  if not mailbox_id then
+    return false
+  end
+  return {mailbox_id = mailbox_id, token = token, deadline = tonumber(deadline)}
+end
+
+local function delete_matching_poll_start(mailbox_id, token)
+  local poll_start = redis.call('HGET', KEYS[10], mailbox_id)
+  if poll_start and string.sub(poll_start, 1, string.len(token) + 1) == token .. ':' then
+    redis.call('HDEL', KEYS[10], mailbox_id)
+  end
+end
+
+local function delete_capture(token)
+  redis.call('HDEL', KEYS[14], token)
+end
+
+local function chunked_hmget(key, ids, first, last)
+  -- Prefetch ids[first..last] from a hash in chunks. `unpack` on Dragonfly's
+  -- Lua 5.4 takes at most 8163 arguments (8164 -> "stack overflow"), so the
+  -- chunk is kept well below that.
+  local CHUNK = 512
+  local out = {}
+  local i = first
+  while i <= last do
+    local stop = i + CHUNK - 1
+    if stop > last then stop = last end
+    local args = {}
+    for j = i, stop do
+      args[#args + 1] = ids[j]
+    end
+    local vals = redis.call('HMGET', key, unpack(args))
+    for j = 1, #vals do
+      out[i + j - 1] = vals[j]
+    end
+    i = stop + 1
+  end
+  return out
+end
+
+local function earliest_due()
+  local earliest = redis.call('ZRANGE', KEYS[6], 0, 0, 'WITHSCORES')
+  return earliest[2] or ''
+end
+
+local function resolved_response(now, batch_size, results)
+  local response = {'RESOLVED', tostring(now), earliest_due(), tostring(batch_size)}
+  for index = 1, batch_size do
+    local item = results[index]
+    if not item then
+      item = {'UNUSED', ARGV[8 + index], '', '', ''}
+    end
+    for field = 1, 5 do
+      table.insert(response, item[field])
+    end
+  end
+  return response
+end
+
+if ARGV[1] ~= '1' then
+  return {'PROTOCOL', 'schema_version'}
+end
+
+local expected_generation = ARGV[2]
+local actual_run_id = ARGV[3]
+local process_id = ARGV[4]
+local lease_ttl = tonumber(ARGV[5])
+local candidate_window = tonumber(ARGV[6])
+local freshness_limit = tonumber(ARGV[7])
+local batch_size = tonumber(ARGV[8])
+if expected_generation == '' or actual_run_id == '' or process_id == ''
+  or lease_ttl ~= 120000
+  or not candidate_window or candidate_window < 1
+  or not freshness_limit or freshness_limit < 1
+  or not batch_size or batch_size < 1 or batch_size > 32
+  or #ARGV ~= 8 + batch_size then
+  return {'PROTOCOL', 'arguments'}
+end
+for index = 1, batch_size do
+  if ARGV[8 + index] == '' then
+    return {'PROTOCOL', 'arguments'}
+  end
+end
+
+local now = server_now_millis()
+local recovered = {}
+local has_receipt = false
+for index = 1, batch_size do
+  local request_token = ARGV[8 + index]
+  local receipt = parse_receipt(redis.call('HGET', KEYS[8], request_token))
+  if receipt == false then
+    return {'PROTOCOL', 'receipt'}
+  end
+  if receipt then
+    has_receipt = true
+    if receipt.token ~= request_token then
+      return {'PROTOCOL', 'receipt_token'}
+    end
+    local lease = parse_lease(redis.call('HGET', KEYS[7], receipt.mailbox_id))
+    if lease == false then
+      return {'PROTOCOL', 'lease'}
+    end
+    if not lease or lease.token ~= receipt.token or lease.deadline ~= receipt.deadline then
+      return {'PROTOCOL', 'receipt_lease_mismatch'}
+    end
+    if receipt.deadline <= now then
+      recovered[index] = {
+        'RECEIPT_EXPIRED',
+        request_token,
+        receipt.mailbox_id,
+        tostring(receipt.deadline),
+        ''
+      }
+    else
+      local captured = redis.call('HGET', KEYS[14], request_token)
+      if not captured then
+        return {'PROTOCOL', 'record_missing'}
+      end
+      recovered[index] = {
+        'CLAIMED',
+        request_token,
+        receipt.mailbox_id,
+        tostring(receipt.deadline),
+        captured
+      }
+    end
+  end
+end
+if has_receipt then
+  return resolved_response(now, batch_size, recovered)
+end
+
+local active_generation = redis.call('GET', KEYS[1])
+if active_generation ~= expected_generation then
+  return {'FENCED', 'active_generation_changed'}
+end
+if redis.call('GET', KEYS[2]) ~= active_generation then
+  return {'FENCED', 'cursor_coverage_mismatch'}
+end
+if redis.call('GET', KEYS[3]) ~= actual_run_id then
+  return {'FENCED', 'server_run_reconciliation_required'}
+end
+local last_reconciliation = tonumber(redis.call('GET', KEYS[4]) or '')
+if not last_reconciliation or last_reconciliation > now
+  or now - last_reconciliation > freshness_limit then
+  return {'FENCED', 'catalog_not_fresh'}
+end
+
+local storage_format = redis.call('HGET', KEYS[11], 'storage_format')
+local state = redis.call('HGET', KEYS[11], 'state')
+local versions_key = KEYS[5]
+if storage_format then
+  if storage_format == 'mutable_v2' then
+    if state == 'applying' then
+      return {'FENCED', 'catalog_mutation_in_progress'}
+    end
+    if state ~= 'committed' then
+      return {'PROTOCOL', 'catalog_descriptor'}
+    end
+  else
+    return {'PROTOCOL', 'catalog_descriptor'}
+  end
+  if redis.call('HGET', KEYS[11], 'generation') ~= active_generation then
+    return {'FENCED', 'active_generation_changed'}
+  end
+  versions_key = KEYS[12]
+elseif state then
+  return {'PROTOCOL', 'catalog_descriptor'}
+end
+
+local candidates = redis.call(
+  'ZRANGEBYSCORE',
+  KEYS[6],
+  '-inf',
+  tostring(now),
+  'LIMIT',
+  0,
+  candidate_window
+)
+local saw_active = false
+local removals = {}
+local rescores = {}
+local claimable = {}
+-- HMGET PREFETCH: one chunked HMGET per hash instead of one HGET per candidate.
+local versions_all = chunked_hmget(versions_key, candidates, 1, #candidates)
+local leases_all = chunked_hmget(KEYS[7], candidates, 1, #candidates)
+for candidate_index, mailbox_id in ipairs(candidates) do
+  local version = versions_all[candidate_index]
+  local lease = parse_lease(leases_all[candidate_index])
+  if lease == false then
+    return {'PROTOCOL', 'lease'}
+  end
+  if not version then
+    if not lease then
+      table.insert(removals, mailbox_id)
+    elseif lease.deadline <= now then
+      local stale_receipt = parse_receipt(redis.call('HGET', KEYS[8], lease.token))
+      if stale_receipt == false then
+        return {'PROTOCOL', 'receipt'}
+      end
+      if not stale_receipt or stale_receipt.mailbox_id ~= mailbox_id
+        or stale_receipt.token ~= lease.token
+        or stale_receipt.deadline ~= lease.deadline then
+        return {'PROTOCOL', 'receipt_lease_mismatch'}
+      end
+      return {
+        'CLEANUP_REQUIRED',
+        tostring(now),
+        mailbox_id,
+        lease.token,
+        tostring(lease.deadline)
+      }
+    else
+      table.insert(rescores, {mailbox_id, lease.deadline})
+    end
+  else
+    saw_active = true
+    if not lease or lease.deadline <= now then
+      -- DEFERRED PAYLOAD: the ~2 KB record is fetched after the scan, only for
+      -- the <= batch_size candidates that are actually claimed.
+      local old_receipt = nil
+      if lease then
+        old_receipt = parse_receipt(redis.call('HGET', KEYS[8], lease.token))
+        if old_receipt == false then
+          return {'PROTOCOL', 'receipt'}
+        end
+        if old_receipt and (
+          old_receipt.mailbox_id ~= mailbox_id
+          or old_receipt.token ~= lease.token
+          or old_receipt.deadline ~= lease.deadline
+        ) then
+          return {'PROTOCOL', 'receipt_lease_mismatch'}
+        end
+      end
+      if #claimable < batch_size then
+        table.insert(claimable, {
+          mailbox_id = mailbox_id,
+          version = version,
+          old_lease = lease,
+          old_receipt = old_receipt
+        })
+      end
+    else
+      table.insert(rescores, {mailbox_id, lease.deadline})
+    end
+  end
+end
+
+-- Payload read for the chosen candidates only, before any write, so the write
+-- order and the 'record_missing' early return stay where the original had them.
+local claim_ids = {}
+for index, candidate in ipairs(claimable) do
+  claim_ids[index] = candidate.mailbox_id .. ':' .. candidate.version
+end
+local records = chunked_hmget(KEYS[13], claim_ids, 1, #claim_ids)
+for index, candidate in ipairs(claimable) do
+  if not records[index] then
+    return {'PROTOCOL', 'record_missing'}
+  end
+  candidate.record = records[index]
+end
+
+for _, mailbox_id in ipairs(removals) do
+  redis.call('ZREM', KEYS[6], mailbox_id)
+  redis.call('HDEL', KEYS[9], mailbox_id)
+end
+for _, rescore in ipairs(rescores) do
+  redis.call('ZADD', KEYS[6], rescore[2], rescore[1])
+end
+
+local results = {}
+for index, candidate in ipairs(claimable) do
+  local request_token = ARGV[8 + index]
+  local mailbox_id = candidate.mailbox_id
+  local old_lease = candidate.old_lease
+  if old_lease then
+    delete_matching_poll_start(mailbox_id, old_lease.token)
+    local old_receipt = candidate.old_receipt
+    if old_receipt then
+      redis.call('HDEL', KEYS[8], old_lease.token)
+    end
+    delete_capture(old_lease.token)
+  end
+  local deadline = now + lease_ttl
+  local lease_value = request_token .. ':' .. tostring(deadline)
+  local receipt_value = mailbox_id .. ':' .. request_token .. ':' .. tostring(deadline)
+  redis.call('HSET', KEYS[7], mailbox_id, lease_value)
+  redis.call('HSET', KEYS[8], request_token, receipt_value)
+  redis.call('HSET', KEYS[9], mailbox_id, request_token .. ':' .. process_id)
+  redis.call('HSET', KEYS[10], mailbox_id, request_token .. ':' .. tostring(now))
+  redis.call('HSET', KEYS[14], request_token, candidate.record)
+  redis.call('ZADD', KEYS[6], deadline, mailbox_id)
+  results[index] = {
+    'CLAIMED',
+    request_token,
+    mailbox_id,
+    tostring(deadline),
+    candidate.record
+  }
+end
+
+if #claimable > 0 then
+  return resolved_response(now, batch_size, results)
+end
+if #candidates > 0 and not saw_active then
+  return {'RETRY_IMMEDIATELY', tostring(now)}
+end
+local earliest = earliest_due()
+if earliest ~= '' and tonumber(earliest) <= now then
+  return {'RETRY_IMMEDIATELY', tostring(now)}
+end
+return {'NOT_DUE', tostring(now), earliest}
+
+-- run:2d2e7ba572f045e090e107480a9988f2
+
+a3ddf54d8ac5daff971f428e1ded569f149ca6a9
+
+local target = tonumber(ARGV[1])
+local entry = ARGV[2]
+local plan = {}
+local n = math.ceil(target / (#entry + 32))
+for i = 1, n do
+  plan[i] = {op = 'deliver', idx = i, body = entry}
+end
+local blob = cjson.encode(plan)
+redis.call('HSET', KEYS[1], ARGV[3], blob)
+return #blob
+
+-- run:fe45aecc887b4dc8a63e3da1005ed3b4
+
+98467aef3a672cec59f8751950f6f4ccc5b02a1b
+--!df flags=disable-atomicity
+
+local n = tonumber(ARGV[1])
+local last
+for i = 1, n do
+  last = redis.call('HGET', KEYS[(i - 1) % #KEYS + 1], 'f')
+end
+return #last
+
+-- run:8be6331c43e1429fa438fd3e51aa4366
+
+088df7b00a12aa0886d8a7b5ef0970e65e7edb89
+local function server_now_millis()
+  local now = redis.call('TIME')
+  return tonumber(now[1]) * 1000 + math.floor(tonumber(now[2]) / 1000)
+end
+
+local function parse_lease(raw)
+  if not raw then
+    return nil
+  end
+  local token, deadline = string.match(raw, '^([0-9a-f%-]+):(%d+)$')
+  if not token then
+    return false
+  end
+  return {token = token, deadline = tonumber(deadline)}
+end
+
+local function parse_receipt(raw)
+  if not raw then
+    return nil
+  end
+  local mailbox_id, token, deadline =
+    string.match(raw, '^([0-9a-f]+):([0-9a-f%-]+):(%d+)$')
+  if not mailbox_id then
+    return false
+  end
+  return {mailbox_id = mailbox_id, token = token, deadline = tonumber(deadline)}
+end
+
+local function delete_matching_poll_start(mailbox_id, token)
+  local poll_start = redis.call('HGET', KEYS[10], mailbox_id)
+  if poll_start and string.sub(poll_start, 1, string.len(token) + 1) == token .. ':' then
+    redis.call('HDEL', KEYS[10], mailbox_id)
+  end
+end
+
+local function delete_capture(token)
+  redis.call('HDEL', KEYS[14], token)
+end
+
+local function earliest_due()
+  local earliest = redis.call('ZRANGE', KEYS[6], 0, 0, 'WITHSCORES')
+  return earliest[2] or ''
+end
+
+local function resolved_response(now, batch_size, results)
+  local response = {'RESOLVED', tostring(now), earliest_due(), tostring(batch_size)}
+  for index = 1, batch_size do
+    local item = results[index]
+    if not item then
+      item = {'UNUSED', ARGV[8 + index], '', '', ''}
+    end
+    for field = 1, 5 do
+      table.insert(response, item[field])
+    end
+  end
+  return response
+end
+
+if ARGV[1] ~= '1' then
+  return {'PROTOCOL', 'schema_version'}
+end
+
+local expected_generation = ARGV[2]
+local actual_run_id = ARGV[3]
+local process_id = ARGV[4]
+local lease_ttl = tonumber(ARGV[5])
+local candidate_window = tonumber(ARGV[6])
+local freshness_limit = tonumber(ARGV[7])
+local batch_size = tonumber(ARGV[8])
+if expected_generation == '' or actual_run_id == '' or process_id == ''
+  or lease_ttl ~= 120000
+  or not candidate_window or candidate_window < 1
+  or not freshness_limit or freshness_limit < 1
+  or not batch_size or batch_size < 1 or batch_size > 32
+  or #ARGV ~= 8 + batch_size then
+  return {'PROTOCOL', 'arguments'}
+end
+for index = 1, batch_size do
+  if ARGV[8 + index] == '' then
+    return {'PROTOCOL', 'arguments'}
+  end
+end
+
+local now = server_now_millis()
+local recovered = {}
+local has_receipt = false
+for index = 1, batch_size do
+  local request_token = ARGV[8 + index]
+  local receipt = parse_receipt(redis.call('HGET', KEYS[8], request_token))
+  if receipt == false then
+    return {'PROTOCOL', 'receipt'}
+  end
+  if receipt then
+    has_receipt = true
+    if receipt.token ~= request_token then
+      return {'PROTOCOL', 'receipt_token'}
+    end
+    local lease = parse_lease(redis.call('HGET', KEYS[7], receipt.mailbox_id))
+    if lease == false then
+      return {'PROTOCOL', 'lease'}
+    end
+    if not lease or lease.token ~= receipt.token or lease.deadline ~= receipt.deadline then
+      return {'PROTOCOL', 'receipt_lease_mismatch'}
+    end
+    if receipt.deadline <= now then
+      recovered[index] = {
+        'RECEIPT_EXPIRED',
+        request_token,
+        receipt.mailbox_id,
+        tostring(receipt.deadline),
+        ''
+      }
+    else
+      local captured = redis.call('HGET', KEYS[14], request_token)
+      if not captured then
+        return {'PROTOCOL', 'record_missing'}
+      end
+      recovered[index] = {
+        'CLAIMED',
+        request_token,
+        receipt.mailbox_id,
+        tostring(receipt.deadline),
+        captured
+      }
+    end
+  end
+end
+if has_receipt then
+  return resolved_response(now, batch_size, recovered)
+end
+
+local active_generation = redis.call('GET', KEYS[1])
+if active_generation ~= expected_generation then
+  return {'FENCED', 'active_generation_changed'}
+end
+if redis.call('GET', KEYS[2]) ~= active_generation then
+  return {'FENCED', 'cursor_coverage_mismatch'}
+end
+if redis.call('GET', KEYS[3]) ~= actual_run_id then
+  return {'FENCED', 'server_run_reconciliation_required'}
+end
+local last_reconciliation = tonumber(redis.call('GET', KEYS[4]) or '')
+if not last_reconciliation or last_reconciliation > now
+  or now - last_reconciliation > freshness_limit then
+  return {'FENCED', 'catalog_not_fresh'}
+end
+
+local storage_format = redis.call('HGET', KEYS[11], 'storage_format')
+local state = redis.call('HGET', KEYS[11], 'state')
+local versions_key = KEYS[5]
+if storage_format then
+  if storage_format == 'mutable_v2' then
+    if state == 'applying' then
+      return {'FENCED', 'catalog_mutation_in_progress'}
+    end
+    if state ~= 'committed' then
+      return {'PROTOCOL', 'catalog_descriptor'}
+    end
+  else
+    return {'PROTOCOL', 'catalog_descriptor'}
+  end
+  if redis.call('HGET', KEYS[11], 'generation') ~= active_generation then
+    return {'FENCED', 'active_generation_changed'}
+  end
+  versions_key = KEYS[12]
+elseif state then
+  return {'PROTOCOL', 'catalog_descriptor'}
+end
+
+local candidates = redis.call(
+  'ZRANGEBYSCORE',
+  KEYS[6],
+  '-inf',
+  tostring(now),
+  'LIMIT',
+  0,
+  candidate_window
+)
+local saw_active = false
+local removals = {}
+local rescores = {}
+local claimable = {}
+for _, mailbox_id in ipairs(candidates) do
+  local version = redis.call('HGET', versions_key, mailbox_id)
+  local lease = parse_lease(redis.call('HGET', KEYS[7], mailbox_id))
+  if lease == false then
+    return {'PROTOCOL', 'lease'}
+  end
+  if not version then
+    if not lease then
+      table.insert(removals, mailbox_id)
+    elseif lease.deadline <= now then
+      local stale_receipt = parse_receipt(redis.call('HGET', KEYS[8], lease.token))
+      if stale_receipt == false then
+        return {'PROTOCOL', 'receipt'}
+      end
+      if not stale_receipt or stale_receipt.mailbox_id ~= mailbox_id
+        or stale_receipt.token ~= lease.token
+        or stale_receipt.deadline ~= lease.deadline then
+        return {'PROTOCOL', 'receipt_lease_mismatch'}
+      end
+      return {
+        'CLEANUP_REQUIRED',
+        tostring(now),
+        mailbox_id,
+        lease.token,
+        tostring(lease.deadline)
+      }
+    else
+      table.insert(rescores, {mailbox_id, lease.deadline})
+    end
+  else
+    saw_active = true
+    if not lease or lease.deadline <= now then
+      local record = redis.call('HGET', KEYS[13], mailbox_id .. ':' .. version)
+      if not record then
+        return {'PROTOCOL', 'record_missing'}
+      end
+      local old_receipt = nil
+      if lease then
+        old_receipt = parse_receipt(redis.call('HGET', KEYS[8], lease.token))
+        if old_receipt == false then
+          return {'PROTOCOL', 'receipt'}
+        end
+        if old_receipt and (
+          old_receipt.mailbox_id ~= mailbox_id
+          or old_receipt.token ~= lease.token
+          or old_receipt.deadline ~= lease.deadline
+        ) then
+          return {'PROTOCOL', 'receipt_lease_mismatch'}
+        end
+      end
+      if #claimable < batch_size then
+        table.insert(claimable, {
+          mailbox_id = mailbox_id,
+          old_lease = lease,
+          old_receipt = old_receipt,
+          record = record
+        })
+      end
+    else
+      table.insert(rescores, {mailbox_id, lease.deadline})
+    end
+  end
+end
+
+for _, mailbox_id in ipairs(removals) do
+  redis.call('ZREM', KEYS[6], mailbox_id)
+  redis.call('HDEL', KEYS[9], mailbox_id)
+end
+for _, rescore in ipairs(rescores) do
+  redis.call('ZADD', KEYS[6], rescore[2], rescore[1])
+end
+
+local results = {}
+for index, candidate in ipairs(claimable) do
+  local request_token = ARGV[8 + index]
+  local mailbox_id = candidate.mailbox_id
+  local old_lease = candidate.old_lease
+  if old_lease then
+    delete_matching_poll_start(mailbox_id, old_lease.token)
+    local old_receipt = candidate.old_receipt
+    if old_receipt then
+      redis.call('HDEL', KEYS[8], old_lease.token)
+    end
+    delete_capture(old_lease.token)
+  end
+  local deadline = now + lease_ttl
+  local lease_value = request_token .. ':' .. tostring(deadline)
+  local receipt_value = mailbox_id .. ':' .. request_token .. ':' .. tostring(deadline)
+  redis.call('HSET', KEYS[7], mailbox_id, lease_value)
+  redis.call('HSET', KEYS[8], request_token, receipt_value)
+  redis.call('HSET', KEYS[9], mailbox_id, request_token .. ':' .. process_id)
+  redis.call('HSET', KEYS[10], mailbox_id, request_token .. ':' .. tostring(now))
+  redis.call('HSET', KEYS[14], request_token, candidate.record)
+  redis.call('ZADD', KEYS[6], deadline, mailbox_id)
+  results[index] = {
+    'CLAIMED',
+    request_token,
+    mailbox_id,
+    tostring(deadline),
+    candidate.record
+  }
+end
+
+if #claimable > 0 then
+  return resolved_response(now, batch_size, results)
+end
+if #candidates > 0 and not saw_active then
+  return {'RETRY_IMMEDIATELY', tostring(now)}
+end
+local earliest = earliest_due()
+if earliest ~= '' and tonumber(earliest) <= now then
+  return {'RETRY_IMMEDIATELY', tostring(now)}
+end
+return {'NOT_DUE', tostring(now), earliest}
+
+-- run:b6330a7760cc4da7a62553e77bc99266
+
+9ce87dc76b4d11d084df1d752d92d2c30c7da565
+
+return redis.call('HDEL', KEYS[1], ARGV[1])
+
+-- run:92f5e5c0fdf34ace9f8ec5524b0252d3
+
+8617c811c9dcadf94c0dadae0bb8ae8daff14bdc
+local function server_now_millis()
+  local now = redis.call('TIME')
+  return tonumber(now[1]) * 1000 + math.floor(tonumber(now[2]) / 1000)
+end
+
+local function parse_lease(raw)
+  if not raw then
+    return nil
+  end
+  local token, deadline = string.match(raw, '^([0-9a-f%-]+):(%d+)$')
+  if not token then
+    return false
+  end
+  return {token = token, deadline = tonumber(deadline)}
+end
+
+local function parse_receipt(raw)
+  if not raw then
+    return nil
+  end
+  local mailbox_id, token, deadline =
+    string.match(raw, '^([0-9a-f]+):([0-9a-f%-]+):(%d+)$')
+  if not mailbox_id then
+    return false
+  end
+  return {mailbox_id = mailbox_id, token = token, deadline = tonumber(deadline)}
+end
+
+local function delete_matching_poll_start(mailbox_id, token)
+  local poll_start = redis.call('HGET', KEYS[10], mailbox_id)
+  if poll_start and string.sub(poll_start, 1, string.len(token) + 1) == token .. ':' then
+    redis.call('HDEL', KEYS[10], mailbox_id)
+  end
+end
+
+local function delete_capture(token)
+  redis.call('HDEL', KEYS[14], token)
+end
+
+local function earliest_due()
+  local earliest = redis.call('ZRANGE', KEYS[6], 0, 0, 'WITHSCORES')
+  return earliest[2] or ''
+end
+
+local function resolved_response(now, batch_size, results)
+  local response = {'RESOLVED', tostring(now), earliest_due(), tostring(batch_size)}
+  for index = 1, batch_size do
+    local item = results[index]
+    if not item then
+      item = {'UNUSED', ARGV[8 + index], '', '', ''}
+    end
+    for field = 1, 5 do
+      table.insert(response, item[field])
+    end
+  end
+  return response
+end
+
+if ARGV[1] ~= '1' then
+  return {'PROTOCOL', 'schema_version'}
+end
+
+local expected_generation = ARGV[2]
+local actual_run_id = ARGV[3]
+local process_id = ARGV[4]
+local lease_ttl = tonumber(ARGV[5])
+local candidate_window = tonumber(ARGV[6])
+local freshness_limit = tonumber(ARGV[7])
+local batch_size = tonumber(ARGV[8])
+if expected_generation == '' or actual_run_id == '' or process_id == ''
+  or lease_ttl ~= 120000
+  or not candidate_window or candidate_window < 1
+  or not freshness_limit or freshness_limit < 1
+  or not batch_size or batch_size < 1 or batch_size > 32
+  or #ARGV ~= 8 + batch_size then
+  return {'PROTOCOL', 'arguments'}
+end
+for index = 1, batch_size do
+  if ARGV[8 + index] == '' then
+    return {'PROTOCOL', 'arguments'}
+  end
+end
+
+local now = server_now_millis()
+local recovered = {}
+local has_receipt = false
+for index = 1, batch_size do
+  local request_token = ARGV[8 + index]
+  local receipt = parse_receipt(redis.call('HGET', KEYS[8], request_token))
+  if receipt == false then
+    return {'PROTOCOL', 'receipt'}
+  end
+  if receipt then
+    has_receipt = true
+    if receipt.token ~= request_token then
+      return {'PROTOCOL', 'receipt_token'}
+    end
+    local lease = parse_lease(redis.call('HGET', KEYS[7], receipt.mailbox_id))
+    if lease == false then
+      return {'PROTOCOL', 'lease'}
+    end
+    if not lease or lease.token ~= receipt.token or lease.deadline ~= receipt.deadline then
+      return {'PROTOCOL', 'receipt_lease_mismatch'}
+    end
+    if receipt.deadline <= now then
+      recovered[index] = {
+        'RECEIPT_EXPIRED',
+        request_token,
+        receipt.mailbox_id,
+        tostring(receipt.deadline),
+        ''
+      }
+    else
+      local captured = redis.call('HGET', KEYS[14], request_token)
+      if not captured then
+        return {'PROTOCOL', 'record_missing'}
+      end
+      recovered[index] = {
+        'CLAIMED',
+        request_token,
+        receipt.mailbox_id,
+        tostring(receipt.deadline),
+        captured
+      }
+    end
+  end
+end
+if has_receipt then
+  return resolved_response(now, batch_size, recovered)
+end
+
+local active_generation = redis.call('GET', KEYS[1])
+if active_generation ~= expected_generation then
+  return {'FENCED', 'active_generation_changed'}
+end
+if redis.call('GET', KEYS[2]) ~= active_generation then
+  return {'FENCED', 'cursor_coverage_mismatch'}
+end
+if redis.call('GET', KEYS[3]) ~= actual_run_id then
+  return {'FENCED', 'server_run_reconciliation_required'}
+end
+local last_reconciliation = tonumber(redis.call('GET', KEYS[4]) or '')
+if not last_reconciliation or last_reconciliation > now
+  or now - last_reconciliation > freshness_limit then
+  return {'FENCED', 'catalog_not_fresh'}
+end
+
+local storage_format = redis.call('HGET', KEYS[11], 'storage_format')
+local state = redis.call('HGET', KEYS[11], 'state')
+local versions_key = KEYS[5]
+if storage_format then
+  if storage_format == 'mutable_v2' then
+    if state == 'applying' then
+      return {'FENCED', 'catalog_mutation_in_progress'}
+    end
+    if state ~= 'committed' then
+      return {'PROTOCOL', 'catalog_descriptor'}
+    end
+  else
+    return {'PROTOCOL', 'catalog_descriptor'}
+  end
+  if redis.call('HGET', KEYS[11], 'generation') ~= active_generation then
+    return {'FENCED', 'active_generation_changed'}
+  end
+  versions_key = KEYS[12]
+elseif state then
+  return {'PROTOCOL', 'catalog_descriptor'}
+end
+
+local candidates = redis.call(
+  'ZRANGEBYSCORE',
+  KEYS[6],
+  '-inf',
+  tostring(now),
+  'LIMIT',
+  0,
+  candidate_window
+)
+local saw_active = false
+local removals = {}
+local rescores = {}
+local claimable = {}
+for _, mailbox_id in ipairs(candidates) do
+  local version = redis.call('HGET', versions_key, mailbox_id)
+  local lease = parse_lease(redis.call('HGET', KEYS[7], mailbox_id))
+  if lease == false then
+    return {'PROTOCOL', 'lease'}
+  end
+  if not version then
+    if not lease then
+      table.insert(removals, mailbox_id)
+    elseif lease.deadline <= now then
+      local stale_receipt = parse_receipt(redis.call('HGET', KEYS[8], lease.token))
+      if stale_receipt == false then
+        return {'PROTOCOL', 'receipt'}
+      end
+      if not stale_receipt or stale_receipt.mailbox_id ~= mailbox_id
+        or stale_receipt.token ~= lease.token
+        or stale_receipt.deadline ~= lease.deadline then
+        return {'PROTOCOL', 'receipt_lease_mismatch'}
+      end
+      return {
+        'CLEANUP_REQUIRED',
+        tostring(now),
+        mailbox_id,
+        lease.token,
+        tostring(lease.deadline)
+      }
+    else
+      table.insert(rescores, {mailbox_id, lease.deadline})
+    end
+  else
+    saw_active = true
+    if not lease or lease.deadline <= now then
+      local record = redis.call('HGET', KEYS[13], mailbox_id .. ':' .. version)
+      if not record then
+        return {'PROTOCOL', 'record_missing'}
+      end
+      local old_receipt = nil
+      if lease then
+        old_receipt = parse_receipt(redis.call('HGET', KEYS[8], lease.token))
+        if old_receipt == false then
+          return {'PROTOCOL', 'receipt'}
+        end
+        if old_receipt and (
+          old_receipt.mailbox_id ~= mailbox_id
+          or old_receipt.token ~= lease.token
+          or old_receipt.deadline ~= lease.deadline
+        ) then
+          return {'PROTOCOL', 'receipt_lease_mismatch'}
+        end
+      end
+      if #claimable < batch_size then
+        table.insert(claimable, {
+          mailbox_id = mailbox_id,
+          old_lease = lease,
+          old_receipt = old_receipt,
+          record = record
+        })
+      end
+    else
+      table.insert(rescores, {mailbox_id, lease.deadline})
+    end
+  end
+end
+
+for _, mailbox_id in ipairs(removals) do
+  redis.call('ZREM', KEYS[6], mailbox_id)
+  redis.call('HDEL', KEYS[9], mailbox_id)
+end
+for _, rescore in ipairs(rescores) do
+  redis.call('ZADD', KEYS[6], rescore[2], rescore[1])
+end
+
+local results = {}
+for index, candidate in ipairs(claimable) do
+  local request_token = ARGV[8 + index]
+  local mailbox_id = candidate.mailbox_id
+  local old_lease = candidate.old_lease
+  if old_lease then
+    delete_matching_poll_start(mailbox_id, old_lease.token)
+    local old_receipt = candidate.old_receipt
+    if old_receipt then
+      redis.call('HDEL', KEYS[8], old_lease.token)
+    end
+    delete_capture(old_lease.token)
+  end
+  local deadline = now + lease_ttl
+  local lease_value = request_token .. ':' .. tostring(deadline)
+  local receipt_value = mailbox_id .. ':' .. request_token .. ':' .. tostring(deadline)
+  redis.call('HSET', KEYS[7], mailbox_id, lease_value)
+  redis.call('HSET', KEYS[8], request_token, receipt_value)
+  redis.call('HSET', KEYS[9], mailbox_id, request_token .. ':' .. process_id)
+  redis.call('HSET', KEYS[10], mailbox_id, request_token .. ':' .. tostring(now))
+  redis.call('HSET', KEYS[14], request_token, candidate.record)
+  redis.call('ZADD', KEYS[6], deadline, mailbox_id)
+  results[index] = {
+    'CLAIMED',
+    request_token,
+    mailbox_id,
+    tostring(deadline),
+    candidate.record
+  }
+end
+
+if #claimable > 0 then
+  return resolved_response(now, batch_size, results)
+end
+if #candidates > 0 and not saw_active then
+  return {'RETRY_IMMEDIATELY', tostring(now)}
+end
+local earliest = earliest_due()
+if earliest ~= '' and tonumber(earliest) <= now then
+  return {'RETRY_IMMEDIATELY', tostring(now)}
+end
+return {'NOT_DUE', tostring(now), earliest}
+
+-- run:c7e5a0fdf4654250a9278759adf9148b
+
+9fd0b4625585d4aba9b279dddf4cd4bd2eda0453
+
+local n = tonumber(ARGV[1])
+local last
+for i = 1, n do
+  last = redis.call('HGET', KEYS[(i - 1) % #KEYS + 1], 'f')
+end
+return #last
+
+-- run:675537615de34119810f47471098066f
+
+8500c80c9663e788d3ee650f629800ffe9746422
+
+local n = tonumber(ARGV[1])
+local v = ARGV[2]
+local z = KEYS[#KEYS]
+for i = 1, n do
+  for f = 1, #KEYS - 1 do
+    redis.call('HSET', KEYS[f], 'item' .. i, v)
+  end
+  redis.call('ZADD', z, i, 'item' .. i)
+end
+return n
+
+-- run:59d40bfa0b9145e89c47253ce73c1af6
+
+f12e2b9ff643d0eb60d9d70b840b57579495ac1b
+local n=0 for i=1,100 do n=n+redis.call('EXISTS',KEYS[1]) end return n
+da127d946c2ce324ddf00cf2f248683bdf63fe57
+return type(struct)
+663073e92535224e33a34d0c09a3eb3f9a341a47
+
+local zkey, vkey, lkey, pkey = KEYS[1], KEYS[2], KEYS[3], KEYS[4]
+local window = tonumber(ARGV[1])
+local want = tonumber(ARGV[3])
+local ids = redis.call('ZRANGEBYSCORE', zkey, '-inf', ARGV[2], 'LIMIT', 0, window)
+local bytes = 0
+local chosen = 0
+for i = 1, #ids do
+  local ver = redis.call('HGET', vkey, ids[i])
+  local lease = redis.call('HGET', lkey, ids[i])
+  if not lease and chosen < want then
+    local body = redis.call('HGET', pkey, ids[i])
+    if body then bytes = bytes + #body end
+    chosen = chosen + 1
+  elseif not lease then
+    chosen = chosen + 1
+  end
+end
+return {#ids, chosen, bytes}
+
+-- run:145bd3b95c60450799fac1435d9d0f30
+
+74675e0a622bc7ae1dc7c495c95b26af64ffe6f4
+
+local n = tonumber(ARGV[1])
+local v = ARGV[2]
+local z = KEYS[#KEYS]
+for f = 1, #KEYS - 1 do
+  local args = {}
+  for i = 1, n do
+    args[#args + 1] = 'item' .. i
+    args[#args + 1] = v
+  end
+  redis.call('HSET', KEYS[f], unpack(args))
+end
+local zargs = {}
+for i = 1, n do
+  zargs[#zargs + 1] = i
+  zargs[#zargs + 1] = 'item' .. i
+end
+redis.call('ZADD', z, unpack(zargs))
+return n
+
+-- run:c3d5e6803edf4512a2d8419f638e50db
+
+1c06ad26f1e562e80fb8556625deab63315964fe
+
+return redis.call('HDEL', KEYS[1], ARGV[1])
+
+-- run:58c802d136714e6ca18857faff790be6
+
+cc2ce0dfe6bdbf25683ecc6c264e531318c4d582
+return _VERSION
+9e165ce5797883f292ba37f4f0721d89a74f8caa
+--!df flags=allow-undeclared-keys
+local n = tonumber(ARGV[1])
+local last
+for i = 1, n do
+  last = redis.call('HGET', ARGV[(i - 1) % (#ARGV - 1) + 2], 'f')
+end
+return #last
+
+-- run:b4a4f2b14f504af88231aaf6d0c76a04
+
+efb1d70e9455c7c0dd63394747ccae84503cbe01
+--!df flags=allow-undeclared-keys
+return redis.call('GET', '{q9}undeclared')
+b64faebee058b50307a7262f281772c4e2f2e7cf
+
+local n = tonumber(ARGV[1])
+local last
+for i = 1, n do
+  last = redis.call('HGET', KEYS[(i - 1) % #KEYS + 1], 'f')
+end
+return #last
+
+-- run:c8aa93d56faf47709246eab0496eecb2
+
+8fc8cb21855c90ed154b10031f69ec0c2a484f3b
+
+local n = tonumber(ARGV[1])
+local v = ARGV[2]
+for i = 1, n do
+  redis.call('HSET', KEYS[(i - 1) % #KEYS + 1], 'w' .. i, v)
+end
+return n
+
+-- run:ab2b1a6c4b7e4a56be9ae44fc8d67ce6
+
+ff81cbac218ad43c374be7e001d55d352830ab84
+
+local n = tonumber(ARGV[1])
+local last
+for i = 1, n do
+  last = redis.call('HGET', KEYS[(i - 1) % #KEYS + 1], 'f')
+end
+return #last
+
+-- run:973296fce64d42fabcdc3b6eea3d473a
+
+daeb9c6fc110503cc87d4baa341ffa17942d5973
+
+local n = tonumber(ARGV[1])
+local chunk = tonumber(ARGV[2])
+local total = 0
+local i = 1
+while i <= n do
+  local fields = {}
+  local last = math.min(i + chunk - 1, n)
+  for j = i, last do fields[#fields + 1] = 'f' .. j end
+  local vals = redis.call('HMGET', KEYS[1], unpack(fields))
+  for k = 1, #vals do
+    if vals[k] then total = total + #vals[k] end
+  end
+  i = last + 1
+end
+return total
+
+-- run:da929884079242c79272897c5c11b8cb
+
+12e46fde60b3848da895ef62abeb84b4ae28c18c
+
+local n = tonumber(ARGV[1])
+local v = ARGV[2]
+local z = KEYS[#KEYS]
+for f = 1, #KEYS - 1 do
+  local args = {}
+  for i = 1, n do
+    args[#args + 1] = 'item' .. i
+    args[#args + 1] = v
+  end
+  redis.call('HSET', KEYS[f], unpack(args))
+end
+local zargs = {}
+for i = 1, n do
+  zargs[#zargs + 1] = i
+  zargs[#zargs + 1] = 'item' .. i
+end
+redis.call('ZADD', z, unpack(zargs))
+return n
+
+-- run:7ae7c48c9bd14b868cb5b494658fbc0e
+
+2aa70d08df031ccd6ac6224a60c0840f115ec162
+
+local n = tonumber(ARGV[1])
+local chunk = tonumber(ARGV[2])
+local total = 0
+local i = 1
+while i <= n do
+  local fields = {}
+  local last = math.min(i + chunk - 1, n)
+  for j = i, last do fields[#fields + 1] = 'f' .. j end
+  local vals = redis.call('HMGET', KEYS[1], unpack(fields))
+  for k = 1, #vals do
+    if vals[k] then total = total + #vals[k] end
+  end
+  i = last + 1
+end
+return total
+
+-- run:26d291da3fa94a9cb3d64f8eb57e8889
+
+4287ce2af058d2a47f5de233f5331c7b1ac54740
+
+local n = tonumber(ARGV[1])
+local last
+for i = 1, n do
+  last = redis.call('HGET', KEYS[(i - 1) % #KEYS + 1], 'f')
+end
+return #last
+
+-- run:8bd3e06da76d43c8a94042b6ba17c573
+
+1724317837ba411e0ee32d42f785dfbec8ebdfa7
+return type(redis.sha1hex)
+908ac803ed42f37e6d87a800423a88857cbdc8c7
+
+local n = tonumber(ARGV[1])
+local last
+for i = 1, n do
+  last = redis.call('HGET', KEYS[(i - 1) % #KEYS + 1], 'f')
+end
+return #last
+
+-- run:67519d0499c743bb8b7982c77b24296a
+
+d98966210c256be726d79dbd61adcc7db7601d46
+
+local zkey, vkey, lkey, pkey = KEYS[1], KEYS[2], KEYS[3], KEYS[4]
+local window = tonumber(ARGV[1])
+local want = tonumber(ARGV[3])
+local ids = redis.call('ZRANGEBYSCORE', zkey, '-inf', ARGV[2], 'LIMIT', 0, window)
+local bytes = 0
+local chosen = 0
+for i = 1, #ids do
+  local ver = redis.call('HGET', vkey, ids[i])
+  local lease = redis.call('HGET', lkey, ids[i])
+  if not lease and chosen < want then
+    local body = redis.call('HGET', pkey, ids[i])
+    if body then bytes = bytes + #body end
+    chosen = chosen + 1
+  elseif not lease then
+    chosen = chosen + 1
+  end
+end
+return {#ids, chosen, bytes}
+
+-- run:523459310e5e46e6866ce94d86520168
+
+b9b984ac7c48b481e627aef105b83c47e3058559
+
+local last
+for i = 1, #KEYS do
+  last = redis.call('GET', KEYS[i])
+end
+return #last
+
+-- run:3854c095aed84a31a410c355a7954533
+
+a8adf3b5f597f94444c76f308fc72b12b36aeb73
+local x=0 for i=1,50 do x=x+redis.call('EXISTS',KEYS[1]) end return x
+7e62b3a43db87eec970b514dc72caffbff79fddf
+return type(redis.setresp)
+c11f5d41ada38b8e8b941e887d107f8fadbb3349
+
+local target = tonumber(ARGV[1])
+local entry = ARGV[2]
+local plan = {}
+local n = math.ceil(target / (#entry + 32))
+for i = 1, n do
+  plan[i] = {op = 'deliver', idx = i, body = entry}
+end
+local blob = cjson.encode(plan)
+redis.call('HSET', KEYS[1], ARGV[3], blob)
+return #blob
+
+-- run:636a43dc322444889a5476d84058e568
+
+944e224effc5486fa8247d64f32b4999682ebe72
+local function server_now_millis()
+  local now = redis.call('TIME')
+  return tonumber(now[1]) * 1000 + math.floor(tonumber(now[2]) / 1000)
+end
+
+local function parse_lease(raw)
+  if not raw then
+    return nil
+  end
+  local token, deadline = string.match(raw, '^([0-9a-f%-]+):(%d+)$')
+  if not token then
+    return false
+  end
+  return {token = token, deadline = tonumber(deadline)}
+end
+
+local function parse_receipt(raw)
+  if not raw then
+    return nil
+  end
+  local mailbox_id, token, deadline =
+    string.match(raw, '^([0-9a-f]+):([0-9a-f%-]+):(%d+)$')
+  if not mailbox_id then
+    return false
+  end
+  return {mailbox_id = mailbox_id, token = token, deadline = tonumber(deadline)}
+end
+
+local function delete_matching_poll_start(mailbox_id, token)
+  local poll_start = redis.call('HGET', KEYS[10], mailbox_id)
+  if poll_start and string.sub(poll_start, 1, string.len(token) + 1) == token .. ':' then
+    redis.call('HDEL', KEYS[10], mailbox_id)
+  end
+end
+
+local function delete_capture(token)
+  redis.call('HDEL', KEYS[14], token)
+end
+
+local function earliest_due()
+  local earliest = redis.call('ZRANGE', KEYS[6], 0, 0, 'WITHSCORES')
+  return earliest[2] or ''
+end
+
+local function resolved_response(now, batch_size, results)
+  local response = {'RESOLVED', tostring(now), earliest_due(), tostring(batch_size)}
+  for index = 1, batch_size do
+    local item = results[index]
+    if not item then
+      item = {'UNUSED', ARGV[8 + index], '', '', ''}
+    end
+    for field = 1, 5 do
+      table.insert(response, item[field])
+    end
+  end
+  return response
+end
+
+if ARGV[1] ~= '1' then
+  return {'PROTOCOL', 'schema_version'}
+end
+
+local expected_generation = ARGV[2]
+local actual_run_id = ARGV[3]
+local process_id = ARGV[4]
+local lease_ttl = tonumber(ARGV[5])
+local candidate_window = tonumber(ARGV[6])
+local freshness_limit = tonumber(ARGV[7])
+local batch_size = tonumber(ARGV[8])
+if expected_generation == '' or actual_run_id == '' or process_id == ''
+  or lease_ttl ~= 120000
+  or not candidate_window or candidate_window < 1
+  or not freshness_limit or freshness_limit < 1
+  or not batch_size or batch_size < 1 or batch_size > 32
+  or #ARGV ~= 8 + batch_size then
+  return {'PROTOCOL', 'arguments'}
+end
+for index = 1, batch_size do
+  if ARGV[8 + index] == '' then
+    return {'PROTOCOL', 'arguments'}
+  end
+end
+
+local now = server_now_millis()
+local recovered = {}
+local has_receipt = false
+for index = 1, batch_size do
+  local request_token = ARGV[8 + index]
+  local receipt = parse_receipt(redis.call('HGET', KEYS[8], request_token))
+  if receipt == false then
+    return {'PROTOCOL', 'receipt'}
+  end
+  if receipt then
+    has_receipt = true
+    if receipt.token ~= request_token then
+      return {'PROTOCOL', 'receipt_token'}
+    end
+    local lease = parse_lease(redis.call('HGET', KEYS[7], receipt.mailbox_id))
+    if lease == false then
+      return {'PROTOCOL', 'lease'}
+    end
+    if not lease or lease.token ~= receipt.token or lease.deadline ~= receipt.deadline then
+      return {'PROTOCOL', 'receipt_lease_mismatch'}
+    end
+    if receipt.deadline <= now then
+      recovered[index] = {
+        'RECEIPT_EXPIRED',
+        request_token,
+        receipt.mailbox_id,
+        tostring(receipt.deadline),
+        ''
+      }
+    else
+      local captured = redis.call('HGET', KEYS[14], request_token)
+      if not captured then
+        return {'PROTOCOL', 'record_missing'}
+      end
+      recovered[index] = {
+        'CLAIMED',
+        request_token,
+        receipt.mailbox_id,
+        tostring(receipt.deadline),
+        captured
+      }
+    end
+  end
+end
+if has_receipt then
+  return resolved_response(now, batch_size, recovered)
+end
+
+local active_generation = redis.call('GET', KEYS[1])
+if active_generation ~= expected_generation then
+  return {'FENCED', 'active_generation_changed'}
+end
+if redis.call('GET', KEYS[2]) ~= active_generation then
+  return {'FENCED', 'cursor_coverage_mismatch'}
+end
+if redis.call('GET', KEYS[3]) ~= actual_run_id then
+  return {'FENCED', 'server_run_reconciliation_required'}
+end
+local last_reconciliation = tonumber(redis.call('GET', KEYS[4]) or '')
+if not last_reconciliation or last_reconciliation > now
+  or now - last_reconciliation > freshness_limit then
+  return {'FENCED', 'catalog_not_fresh'}
+end
+
+local storage_format = redis.call('HGET', KEYS[11], 'storage_format')
+local state = redis.call('HGET', KEYS[11], 'state')
+local versions_key = KEYS[5]
+if storage_format then
+  if storage_format == 'mutable_v2' then
+    if state == 'applying' then
+      return {'FENCED', 'catalog_mutation_in_progress'}
+    end
+    if state ~= 'committed' then
+      return {'PROTOCOL', 'catalog_descriptor'}
+    end
+  else
+    return {'PROTOCOL', 'catalog_descriptor'}
+  end
+  if redis.call('HGET', KEYS[11], 'generation') ~= active_generation then
+    return {'FENCED', 'active_generation_changed'}
+  end
+  versions_key = KEYS[12]
+elseif state then
+  return {'PROTOCOL', 'catalog_descriptor'}
+end
+
+local candidates = redis.call(
+  'ZRANGEBYSCORE',
+  KEYS[6],
+  '-inf',
+  tostring(now),
+  'LIMIT',
+  0,
+  candidate_window
+)
+local saw_active = false
+local removals = {}
+local rescores = {}
+local claimable = {}
+for _, mailbox_id in ipairs(candidates) do
+  local version = redis.call('HGET', versions_key, mailbox_id)
+  local lease = parse_lease(redis.call('HGET', KEYS[7], mailbox_id))
+  if lease == false then
+    return {'PROTOCOL', 'lease'}
+  end
+  if not version then
+    if not lease then
+      table.insert(removals, mailbox_id)
+    elseif lease.deadline <= now then
+      local stale_receipt = parse_receipt(redis.call('HGET', KEYS[8], lease.token))
+      if stale_receipt == false then
+        return {'PROTOCOL', 'receipt'}
+      end
+      if not stale_receipt or stale_receipt.mailbox_id ~= mailbox_id
+        or stale_receipt.token ~= lease.token
+        or stale_receipt.deadline ~= lease.deadline then
+        return {'PROTOCOL', 'receipt_lease_mismatch'}
+      end
+      return {
+        'CLEANUP_REQUIRED',
+        tostring(now),
+        mailbox_id,
+        lease.token,
+        tostring(lease.deadline)
+      }
+    else
+      table.insert(rescores, {mailbox_id, lease.deadline})
+    end
+  else
+    saw_active = true
+    if not lease or lease.deadline <= now then
+      local record = redis.call('HGET', KEYS[13], mailbox_id .. ':' .. version)
+      if not record then
+        return {'PROTOCOL', 'record_missing'}
+      end
+      local old_receipt = nil
+      if lease then
+        old_receipt = parse_receipt(redis.call('HGET', KEYS[8], lease.token))
+        if old_receipt == false then
+          return {'PROTOCOL', 'receipt'}
+        end
+        if old_receipt and (
+          old_receipt.mailbox_id ~= mailbox_id
+          or old_receipt.token ~= lease.token
+          or old_receipt.deadline ~= lease.deadline
+        ) then
+          return {'PROTOCOL', 'receipt_lease_mismatch'}
+        end
+      end
+      if #claimable < batch_size then
+        table.insert(claimable, {
+          mailbox_id = mailbox_id,
+          old_lease = lease,
+          old_receipt = old_receipt,
+          record = record
+        })
+      end
+    else
+      table.insert(rescores, {mailbox_id, lease.deadline})
+    end
+  end
+end
+
+for _, mailbox_id in ipairs(removals) do
+  redis.call('ZREM', KEYS[6], mailbox_id)
+  redis.call('HDEL', KEYS[9], mailbox_id)
+end
+for _, rescore in ipairs(rescores) do
+  redis.call('ZADD', KEYS[6], rescore[2], rescore[1])
+end
+
+local results = {}
+for index, candidate in ipairs(claimable) do
+  local request_token = ARGV[8 + index]
+  local mailbox_id = candidate.mailbox_id
+  local old_lease = candidate.old_lease
+  if old_lease then
+    delete_matching_poll_start(mailbox_id, old_lease.token)
+    local old_receipt = candidate.old_receipt
+    if old_receipt then
+      redis.call('HDEL', KEYS[8], old_lease.token)
+    end
+    delete_capture(old_lease.token)
+  end
+  local deadline = now + lease_ttl
+  local lease_value = request_token .. ':' .. tostring(deadline)
+  local receipt_value = mailbox_id .. ':' .. request_token .. ':' .. tostring(deadline)
+  redis.call('HSET', KEYS[7], mailbox_id, lease_value)
+  redis.call('HSET', KEYS[8], request_token, receipt_value)
+  redis.call('HSET', KEYS[9], mailbox_id, request_token .. ':' .. process_id)
+  redis.call('HSET', KEYS[10], mailbox_id, request_token .. ':' .. tostring(now))
+  redis.call('HSET', KEYS[14], request_token, candidate.record)
+  redis.call('ZADD', KEYS[6], deadline, mailbox_id)
+  results[index] = {
+    'CLAIMED',
+    request_token,
+    mailbox_id,
+    tostring(deadline),
+    candidate.record
+  }
+end
+
+if #claimable > 0 then
+  return resolved_response(now, batch_size, results)
+end
+if #candidates > 0 and not saw_active then
+  return {'RETRY_IMMEDIATELY', tostring(now)}
+end
+local earliest = earliest_due()
+if earliest ~= '' and tonumber(earliest) <= now then
+  return {'RETRY_IMMEDIATELY', tostring(now)}
+end
+return {'NOT_DUE', tostring(now), earliest}
+
+-- run:280ca1fead764496bac162392bc48e01
+
+b90510c39a653e6b484bb43f2a02bb0a891203de
+-- claim_mailbox_batch, HMGET variant (lab/bench/q7_real_script.py).
+-- Same KEYS arity (14), same ARGV protocol, same reply shape as
+-- claim_mailbox_batch.orig.lua. Two differences, both inside the candidate scan:
+--   1. the per-candidate `HGET versions` / `HGET leases` become one chunked
+--      HMGET per hash (chunk 512 fields);
+--   2. the ~2 KB `HGET mailbox_records` moves out of the scan and runs only for
+--      the <= batch_size candidates that are actually claimed (chunked HMGET).
+-- KNOWN semantic difference: the original returns {'PROTOCOL','record_missing'}
+-- if ANY eligible candidate in the window lacks a record, including candidates
+-- past batch_size that it would never claim; this variant only checks the
+-- claimed ones. On data where every eligible candidate has its record -- the
+-- seeded state here and the invariant the writer maintains -- the replies are
+-- identical, which is what the benchmark asserts.
+local function server_now_millis()
+  local now = redis.call('TIME')
+  return tonumber(now[1]) * 1000 + math.floor(tonumber(now[2]) / 1000)
+end
+
+local function parse_lease(raw)
+  if not raw then
+    return nil
+  end
+  local token, deadline = string.match(raw, '^([0-9a-f%-]+):(%d+)$')
+  if not token then
+    return false
+  end
+  return {token = token, deadline = tonumber(deadline)}
+end
+
+local function parse_receipt(raw)
+  if not raw then
+    return nil
+  end
+  local mailbox_id, token, deadline =
+    string.match(raw, '^([0-9a-f]+):([0-9a-f%-]+):(%d+)$')
+  if not mailbox_id then
+    return false
+  end
+  return {mailbox_id = mailbox_id, token = token, deadline = tonumber(deadline)}
+end
+
+local function delete_matching_poll_start(mailbox_id, token)
+  local poll_start = redis.call('HGET', KEYS[10], mailbox_id)
+  if poll_start and string.sub(poll_start, 1, string.len(token) + 1) == token .. ':' then
+    redis.call('HDEL', KEYS[10], mailbox_id)
+  end
+end
+
+local function delete_capture(token)
+  redis.call('HDEL', KEYS[14], token)
+end
+
+local function chunked_hmget(key, ids, first, last)
+  -- Prefetch ids[first..last] from a hash in chunks. `unpack` on Dragonfly's
+  -- Lua 5.4 takes at most 8163 arguments (8164 -> "stack overflow"), so the
+  -- chunk is kept well below that.
+  local CHUNK = 512
+  local out = {}
+  local i = first
+  while i <= last do
+    local stop = i + CHUNK - 1
+    if stop > last then stop = last end
+    local args = {}
+    for j = i, stop do
+      args[#args + 1] = ids[j]
+    end
+    local vals = redis.call('HMGET', key, unpack(args))
+    for j = 1, #vals do
+      out[i + j - 1] = vals[j]
+    end
+    i = stop + 1
+  end
+  return out
+end
+
+local function earliest_due()
+  local earliest = redis.call('ZRANGE', KEYS[6], 0, 0, 'WITHSCORES')
+  return earliest[2] or ''
+end
+
+local function resolved_response(now, batch_size, results)
+  local response = {'RESOLVED', tostring(now), earliest_due(), tostring(batch_size)}
+  for index = 1, batch_size do
+    local item = results[index]
+    if not item then
+      item = {'UNUSED', ARGV[8 + index], '', '', ''}
+    end
+    for field = 1, 5 do
+      table.insert(response, item[field])
+    end
+  end
+  return response
+end
+
+if ARGV[1] ~= '1' then
+  return {'PROTOCOL', 'schema_version'}
+end
+
+local expected_generation = ARGV[2]
+local actual_run_id = ARGV[3]
+local process_id = ARGV[4]
+local lease_ttl = tonumber(ARGV[5])
+local candidate_window = tonumber(ARGV[6])
+local freshness_limit = tonumber(ARGV[7])
+local batch_size = tonumber(ARGV[8])
+if expected_generation == '' or actual_run_id == '' or process_id == ''
+  or lease_ttl ~= 120000
+  or not candidate_window or candidate_window < 1
+  or not freshness_limit or freshness_limit < 1
+  or not batch_size or batch_size < 1 or batch_size > 32
+  or #ARGV ~= 8 + batch_size then
+  return {'PROTOCOL', 'arguments'}
+end
+for index = 1, batch_size do
+  if ARGV[8 + index] == '' then
+    return {'PROTOCOL', 'arguments'}
+  end
+end
+
+local now = server_now_millis()
+local recovered = {}
+local has_receipt = false
+for index = 1, batch_size do
+  local request_token = ARGV[8 + index]
+  local receipt = parse_receipt(redis.call('HGET', KEYS[8], request_token))
+  if receipt == false then
+    return {'PROTOCOL', 'receipt'}
+  end
+  if receipt then
+    has_receipt = true
+    if receipt.token ~= request_token then
+      return {'PROTOCOL', 'receipt_token'}
+    end
+    local lease = parse_lease(redis.call('HGET', KEYS[7], receipt.mailbox_id))
+    if lease == false then
+      return {'PROTOCOL', 'lease'}
+    end
+    if not lease or lease.token ~= receipt.token or lease.deadline ~= receipt.deadline then
+      return {'PROTOCOL', 'receipt_lease_mismatch'}
+    end
+    if receipt.deadline <= now then
+      recovered[index] = {
+        'RECEIPT_EXPIRED',
+        request_token,
+        receipt.mailbox_id,
+        tostring(receipt.deadline),
+        ''
+      }
+    else
+      local captured = redis.call('HGET', KEYS[14], request_token)
+      if not captured then
+        return {'PROTOCOL', 'record_missing'}
+      end
+      recovered[index] = {
+        'CLAIMED',
+        request_token,
+        receipt.mailbox_id,
+        tostring(receipt.deadline),
+        captured
+      }
+    end
+  end
+end
+if has_receipt then
+  return resolved_response(now, batch_size, recovered)
+end
+
+local active_generation = redis.call('GET', KEYS[1])
+if active_generation ~= expected_generation then
+  return {'FENCED', 'active_generation_changed'}
+end
+if redis.call('GET', KEYS[2]) ~= active_generation then
+  return {'FENCED', 'cursor_coverage_mismatch'}
+end
+if redis.call('GET', KEYS[3]) ~= actual_run_id then
+  return {'FENCED', 'server_run_reconciliation_required'}
+end
+local last_reconciliation = tonumber(redis.call('GET', KEYS[4]) or '')
+if not last_reconciliation or last_reconciliation > now
+  or now - last_reconciliation > freshness_limit then
+  return {'FENCED', 'catalog_not_fresh'}
+end
+
+local storage_format = redis.call('HGET', KEYS[11], 'storage_format')
+local state = redis.call('HGET', KEYS[11], 'state')
+local versions_key = KEYS[5]
+if storage_format then
+  if storage_format == 'mutable_v2' then
+    if state == 'applying' then
+      return {'FENCED', 'catalog_mutation_in_progress'}
+    end
+    if state ~= 'committed' then
+      return {'PROTOCOL', 'catalog_descriptor'}
+    end
+  else
+    return {'PROTOCOL', 'catalog_descriptor'}
+  end
+  if redis.call('HGET', KEYS[11], 'generation') ~= active_generation then
+    return {'FENCED', 'active_generation_changed'}
+  end
+  versions_key = KEYS[12]
+elseif state then
+  return {'PROTOCOL', 'catalog_descriptor'}
+end
+
+local candidates = redis.call(
+  'ZRANGEBYSCORE',
+  KEYS[6],
+  '-inf',
+  tostring(now),
+  'LIMIT',
+  0,
+  candidate_window
+)
+local saw_active = false
+local removals = {}
+local rescores = {}
+local claimable = {}
+-- HMGET PREFETCH: one chunked HMGET per hash instead of one HGET per candidate.
+local versions_all = chunked_hmget(versions_key, candidates, 1, #candidates)
+local leases_all = chunked_hmget(KEYS[7], candidates, 1, #candidates)
+for candidate_index, mailbox_id in ipairs(candidates) do
+  local version = versions_all[candidate_index]
+  local lease = parse_lease(leases_all[candidate_index])
+  if lease == false then
+    return {'PROTOCOL', 'lease'}
+  end
+  if not version then
+    if not lease then
+      table.insert(removals, mailbox_id)
+    elseif lease.deadline <= now then
+      local stale_receipt = parse_receipt(redis.call('HGET', KEYS[8], lease.token))
+      if stale_receipt == false then
+        return {'PROTOCOL', 'receipt'}
+      end
+      if not stale_receipt or stale_receipt.mailbox_id ~= mailbox_id
+        or stale_receipt.token ~= lease.token
+        or stale_receipt.deadline ~= lease.deadline then
+        return {'PROTOCOL', 'receipt_lease_mismatch'}
+      end
+      return {
+        'CLEANUP_REQUIRED',
+        tostring(now),
+        mailbox_id,
+        lease.token,
+        tostring(lease.deadline)
+      }
+    else
+      table.insert(rescores, {mailbox_id, lease.deadline})
+    end
+  else
+    saw_active = true
+    if not lease or lease.deadline <= now then
+      -- DEFERRED PAYLOAD: the ~2 KB record is fetched after the scan, only for
+      -- the <= batch_size candidates that are actually claimed.
+      local old_receipt = nil
+      if lease then
+        old_receipt = parse_receipt(redis.call('HGET', KEYS[8], lease.token))
+        if old_receipt == false then
+          return {'PROTOCOL', 'receipt'}
+        end
+        if old_receipt and (
+          old_receipt.mailbox_id ~= mailbox_id
+          or old_receipt.token ~= lease.token
+          or old_receipt.deadline ~= lease.deadline
+        ) then
+          return {'PROTOCOL', 'receipt_lease_mismatch'}
+        end
+      end
+      if #claimable < batch_size then
+        table.insert(claimable, {
+          mailbox_id = mailbox_id,
+          version = version,
+          old_lease = lease,
+          old_receipt = old_receipt
+        })
+      end
+    else
+      table.insert(rescores, {mailbox_id, lease.deadline})
+    end
+  end
+end
+
+-- Payload read for the chosen candidates only, before any write, so the write
+-- order and the 'record_missing' early return stay where the original had them.
+local claim_ids = {}
+for index, candidate in ipairs(claimable) do
+  claim_ids[index] = candidate.mailbox_id .. ':' .. candidate.version
+end
+local records = chunked_hmget(KEYS[13], claim_ids, 1, #claim_ids)
+for index, candidate in ipairs(claimable) do
+  if not records[index] then
+    return {'PROTOCOL', 'record_missing'}
+  end
+  candidate.record = records[index]
+end
+
+for _, mailbox_id in ipairs(removals) do
+  redis.call('ZREM', KEYS[6], mailbox_id)
+  redis.call('HDEL', KEYS[9], mailbox_id)
+end
+for _, rescore in ipairs(rescores) do
+  redis.call('ZADD', KEYS[6], rescore[2], rescore[1])
+end
+
+local results = {}
+for index, candidate in ipairs(claimable) do
+  local request_token = ARGV[8 + index]
+  local mailbox_id = candidate.mailbox_id
+  local old_lease = candidate.old_lease
+  if old_lease then
+    delete_matching_poll_start(mailbox_id, old_lease.token)
+    local old_receipt = candidate.old_receipt
+    if old_receipt then
+      redis.call('HDEL', KEYS[8], old_lease.token)
+    end
+    delete_capture(old_lease.token)
+  end
+  local deadline = now + lease_ttl
+  local lease_value = request_token .. ':' .. tostring(deadline)
+  local receipt_value = mailbox_id .. ':' .. request_token .. ':' .. tostring(deadline)
+  redis.call('HSET', KEYS[7], mailbox_id, lease_value)
+  redis.call('HSET', KEYS[8], request_token, receipt_value)
+  redis.call('HSET', KEYS[9], mailbox_id, request_token .. ':' .. process_id)
+  redis.call('HSET', KEYS[10], mailbox_id, request_token .. ':' .. tostring(now))
+  redis.call('HSET', KEYS[14], request_token, candidate.record)
+  redis.call('ZADD', KEYS[6], deadline, mailbox_id)
+  results[index] = {
+    'CLAIMED',
+    request_token,
+    mailbox_id,
+    tostring(deadline),
+    candidate.record
+  }
+end
+
+if #claimable > 0 then
+  return resolved_response(now, batch_size, results)
+end
+if #candidates > 0 and not saw_active then
+  return {'RETRY_IMMEDIATELY', tostring(now)}
+end
+local earliest = earliest_due()
+if earliest ~= '' and tonumber(earliest) <= now then
+  return {'RETRY_IMMEDIATELY', tostring(now)}
+end
+return {'NOT_DUE', tostring(now), earliest}
+
+-- run:6f3eed4f5d2c4628aafe729e5d2999a4
+
+121c3c74263e338b2b91d67d2f6f1f2469aff30e
+local last
+for i=1,tonumber(ARGV[1]) do last=redis.call('HGET',KEYS[(i-1)%#KEYS+1],'f') end
+return #last
+
+-- run:2d44aa6b02fc40c182915335d86776b1
+
+3747385f16b8bcde06adab9d47170692f0b76020
+
+local n = tonumber(ARGV[1])
+local last
+for i = 1, n do
+  last = redis.call('HGET', KEYS[(i - 1) % #KEYS + 1], 'f')
+end
+return #last
+
+-- run:2077b60755854ef7be7ab14bd03842ad
+
+998af670075ef9af2f413061418d6baf3524dfa7
+
+return redis.call('HDEL', KEYS[1], ARGV[1])
+
+-- run:af5c960de5844ffb89d2efa03de4d979
+
+9b630daeed8927fe639c2f4852e014cbeb29226a
+
+local zkey, vkey, lkey, pkey = KEYS[1], KEYS[2], KEYS[3], KEYS[4]
+local window = tonumber(ARGV[1])
+local ids = redis.call('ZRANGEBYSCORE', zkey, '-inf', ARGV[2], 'LIMIT', 0, window)
+local bytes = 0
+local chosen = 0
+for i = 1, #ids do
+  local ver = redis.call('HGET', vkey, ids[i])
+  local lease = redis.call('HGET', lkey, ids[i])
+  local body = redis.call('HGET', pkey, ids[i])
+  if body then bytes = bytes + #body end
+  if not lease then chosen = chosen + 1 end
+end
+return {#ids, chosen, bytes}
+
+-- run:93349350a432476f9bf69335ef9f0b42
+
+2aa867fc33efd9977839acae841ddc15b4c5d35c
+--!df flags=disable-atomicity
+
+local n = tonumber(ARGV[1])
+local last
+for i = 1, n do
+  last = redis.call('HGET', KEYS[(i - 1) % #KEYS + 1], 'f')
+end
+return #last
+
+-- run:c49276b9319240a6be94dd8465b50ae0
+
+0b9167df29f6a7ed744c7cb1641f7d0a0c7212eb
+--!df flags=allow-undeclared-keys
+local n = tonumber(ARGV[1])
+local last
+for i = 1, n do
+  last = redis.call('HGET', ARGV[(i - 1) % (#ARGV - 1) + 2], 'f')
+end
+return #last
+
+-- run:e9ced0555f2c4f94beb867e5e7e5510a
+
+b3ecb7cdc5c89ea9acd10800690fc8832b7e1de9
+--!df flags=disable-atomicity
+
+local n = tonumber(ARGV[1])
+local last
+for i = 1, n do
+  last = redis.call('HGET', KEYS[(i - 1) % #KEYS + 1], 'f')
+end
+return #last
+
+-- run:f7ba1b8c57a7472795c2ec498ce5a4d4
+
+209c97bacee9b08d2e294c8f5ea682a5cb615161
+
+local last
+for i = 1, #KEYS do
+  last = redis.call('GET', KEYS[i])
+end
+return #last
+
+-- run:ab5ca4354e4e4672bf58c6d3a42fa0d5
+
+2ea8e16f521afe727eff32aa1dc0eddec5a5338e
+
+local n = tonumber(ARGV[1])
+local last
+for i = 1, n do
+  last = redis.call('HGET', KEYS[(i - 1) % #KEYS + 1], 'f')
+end
+return #last
+
+-- run:f584a9b216ac45bba1d6e4e3a6b59c49
+
+9a1ef043ca2e53155495d97484d6a0673d0df130
+
+local n = tonumber(ARGV[1])
+local t = {}
+for i = 1, n do t[i] = 'f' .. i end
+local up = unpack or table.unpack
+local vals = redis.call('HMGET', KEYS[1], up(t))
+return #vals
+
+63acb4034440884c4a370a3399e2fa1a073e66c1
+
+local n = tonumber(ARGV[1])
+local last
+for i = 1, n do
+  last = redis.call('HGET', KEYS[(i - 1) % #KEYS + 1], 'f')
+end
+return #last
+
+-- run:cc9904cd5ea44952aa2117aa292f10b0
+
+7a60430b5328c39131d5629b567f83fda1eb923e
+
+local target = tonumber(ARGV[1])
+local entry = ARGV[2]
+local plan = {}
+local n = math.ceil(target / (#entry + 32))
+for i = 1, n do
+  plan[i] = {op = 'deliver', idx = i, body = entry}
+end
+local blob = cjson.encode(plan)
+redis.call('HSET', KEYS[1], ARGV[3], blob)
+return #blob
+
+-- run:832f7422fee04590881420fdf3548688
+
+d17c2f300e6867348ee3d294decbd1cb0dfe203e
+--!df flags=disable-atomicity
+
+local n = tonumber(ARGV[1])
+local last
+for i = 1, n do
+  last = redis.call('HGET', KEYS[(i - 1) % #KEYS + 1], 'f')
+end
+return #last
+
+-- run:dda399f82e22472d8e40c4e6c40b3d9b
+
+0c558b08b738f3c7f55ff283024ad6f8233d9578
+
+local last
+for i = 1, #KEYS do
+  last = redis.call('GET', KEYS[i])
+end
+return #last
+
+-- run:85947d8f9f394168814d70ec6b9f2a1e
+
+cb3cb9f0f1207b1c4f39eae3676debd8edcbfb60
+
+local target = tonumber(ARGV[1])
+local entry = ARGV[2]
+local plan = {}
+local n = math.ceil(target / (#entry + 32))
+for i = 1, n do
+  plan[i] = {op = 'deliver', idx = i, body = entry}
+end
+local blob = cjson.encode(plan)
+redis.call('HSET', KEYS[1], ARGV[3], blob)
+return #blob
+
+-- run:4216d96483bf42648f23340562f0b932
+
+04339084b532a105dc79156026659961fb1f15c7
+--!df flags=allow-undeclared-keys
+local n = tonumber(ARGV[1])
+local last
+for i = 1, n do
+  last = redis.call('HGET', ARGV[(i - 1) % (#ARGV - 1) + 2], 'f')
+end
+return #last
+
+-- run:2ac18241bb0b42c2b4e19015713799cb
+
+814eec62b81af7614bac711359747d733096b3f9
+
+local n = tonumber(ARGV[1])
+local total = 0
+for i = 1, n do
+  local v = redis.call('HGET', KEYS[1], 'f' .. i)
+  if v then total = total + #v end
+end
+return total
+
+-- run:12b5c7687a3349e2a60a3029c152cdae
+
+99e771ff038b5133204869e94a5e9468a8b1849a
+
+local n = tonumber(ARGV[1])
+local last
+for i = 1, n do
+  last = redis.call('HGET', KEYS[(i - 1) % #KEYS + 1], 'f')
+end
+return #last
+
+-- run:7881f95a0dd44e99b7e1f0d38356e656
+
+17f482840d2283b4f52b6faba734e8ff9e74d849
+
+local n = tonumber(ARGV[1])
+local total = 0
+for i = 1, n do
+  local v = redis.call('HGET', KEYS[1], 'f' .. i)
+  if v then total = total + #v end
+end
+return total
+
+-- run:cf1b0a1fa2174e23b7888897d3c42a0d
+
+fd2a943aac9e73e65de5be8093aacbdb8359c635
+return type(cjson)
+0abc5540eb9bbf90df742d8955df15d4d354c029
+
+local n = tonumber(ARGV[1])
+local v = ARGV[2]
+for i = 1, n do
+  redis.call('HSET', KEYS[(i - 1) % #KEYS + 1], 'w' .. i, v)
+end
+return n
+
+-- run:8da7d8fd17874dbb8efc70c08baa8c11
+
+ae658ec95f20b34be4a657eb2ca8fce91281c367
+--!df flags=disable-atomicity
+
+local n = tonumber(ARGV[1])
+local last
+for i = 1, n do
+  last = redis.call('HGET', KEYS[(i - 1) % #KEYS + 1], 'f')
+end
+return #last
+
+-- run:7c21e169f85742ab97ddaff8f4119215
+
+48161eed73e44e08253ff31970656fd2be86fecc
+
+local last
+for i = 1, #KEYS do
+  last = redis.call('GET', KEYS[i])
+end
+return #last
+
+-- run:b677fe39b2034556b28e54d74a5b00ba
+
+dd2bd349168ff3b801c7e1c46f692bb2be97dc3e
+--!df flags=allow-undeclared-keys
+local n = tonumber(ARGV[1])
+local last
+for i = 1, n do
+  last = redis.call('HGET', ARGV[(i - 1) % (#ARGV - 1) + 2], 'f')
+end
+return #last
+
+-- run:0b63faccc1a4426eb17992af71a4baae
+
+d0cb1762d4cce9aec160f0f4eab572ae6455976d
+
+local n = tonumber(ARGV[1])
+local v = ARGV[2]
+local z = KEYS[#KEYS]
+for i = 1, n do
+  for f = 1, #KEYS - 1 do
+    redis.call('HSET', KEYS[f], 'item' .. i, v)
+  end
+  redis.call('ZADD', z, i, 'item' .. i)
+end
+return n
+
+-- run:d4d52c25c9394cc18e8040ea2638f0c2
+
+c6e6cdfb4998f6e62d0b819db865806996ae0e20
+
+return redis.call('HDEL', KEYS[1], ARGV[1])
+
+-- run:7a65e27e3d4b4746be90e18bcdea282f
+
+c4b564b13bcedc81ec9d9d3c41cdf17c95adf82e
+
+local zkey, vkey, lkey, pkey = KEYS[1], KEYS[2], KEYS[3], KEYS[4]
+local window = tonumber(ARGV[1])
+local ids = redis.call('ZRANGEBYSCORE', zkey, '-inf', ARGV[2], 'LIMIT', 0, window)
+local bytes = 0
+local chosen = 0
+for i = 1, #ids do
+  local ver = redis.call('HGET', vkey, ids[i])
+  local lease = redis.call('HGET', lkey, ids[i])
+  local body = redis.call('HGET', pkey, ids[i])
+  if body then bytes = bytes + #body end
+  if not lease then chosen = chosen + 1 end
+end
+return {#ids, chosen, bytes}
+
+-- run:ad03024a0a594d63a5664f33aec59117
+
+3ea8d56bdf970b8e3f25a12b27d4480dbfdfade9
+
+return redis.call('HDEL', KEYS[1], ARGV[1])
+
+-- run:d2a6b8698284479bac58b041b6fb7de8
+
+dea22ec229c58145094e5999e886f03890639f44
+redis.setresp(3) return 'ok'
+d6df02531d8df1c6720374c9d008a000bff3efba
+
+local zkey, vkey, lkey, pkey = KEYS[1], KEYS[2], KEYS[3], KEYS[4]
+local window = tonumber(ARGV[1])
+local ids = redis.call('ZRANGEBYSCORE', zkey, '-inf', ARGV[2], 'LIMIT', 0, window)
+local bytes = 0
+local chosen = 0
+for i = 1, #ids do
+  local ver = redis.call('HGET', vkey, ids[i])
+  local lease = redis.call('HGET', lkey, ids[i])
+  local body = redis.call('HGET', pkey, ids[i])
+  if body then bytes = bytes + #body end
+  if not lease then chosen = chosen + 1 end
+end
+return {#ids, chosen, bytes}
+
+-- run:efd0d5c5f94e4fc28b1f16f2f482df20
+
+e18095c6492411f9f71c40f31d3e79821f9ce41b
+
+local n = tonumber(ARGV[1])
+local last
+for i = 1, n do
+  last = redis.call('HGET', KEYS[(i - 1) % #KEYS + 1], 'f')
+end
+return #last
+
+-- run:b9bbc98f122d4ab1aee331f6d079ec33
+
+6fe9235cacb10a261bdbc02467317a5b3d86c50e
+--!df flags=disable-atomicity
+
+local n = tonumber(ARGV[1])
+local last
+for i = 1, n do
+  last = redis.call('HGET', KEYS[(i - 1) % #KEYS + 1], 'f')
+end
+return #last
+
+-- run:a54b861499c04af4b752f2e4dfbc197a
+
+40b8b8f77191973178d3420f861841e3c4d9f1fa
+
+local last
+for i = 1, #KEYS do
+  last = redis.call('GET', KEYS[i])
+end
+return #last
+
+-- run:e0b5e63fcbc0415b87d0a8ac3b51f3f5
+
+
+--- SCRIPT EXISTS f12e2b9ff643d0eb60d9d70b840b57579495ac1b 0000000000000000000000000000000000000000 ---
+$ redis-cli -p 6379 SCRIPT EXISTS f12e2b9ff643d0eb60d9d70b840b57579495ac1b 0000000000000000000000000000000000000000
+1
+0
+
+--- SCRIPT LATENCY ---
+$ redis-cli -p 6379 SCRIPT LATENCY
+98467aef3a672cec59f8751950f6f4ccc5b02a1b
+Count: 221 Average: 240.8145  StdDev: 29.82
+Min: 207.0000  Median: 233.5366  Max: 514.0000
+------------------------------------------------------
+[     200,     250 ) 163  73.756%  73.756% ###############
+[     250,     300 ) 54  24.434%  98.190% #####
+[     350,     400 ) 3   1.357%  99.548% 
+[     500,     600 ) 1   0.452% 100.000% 
+
+0b9167df29f6a7ed744c7cb1641f7d0a0c7212eb
+Count: 221 Average: 6667.6878  StdDev: 921.33
+Min: 3286.0000  Median: 6547.7707  Max: 11981.0000
+------------------------------------------------------
+[    3000,    3500 ) 4   1.810%   1.810% 
+[    3500,    4000 ) 6   2.715%   4.525% #
+[    4500,    5000 ) 2   0.905%   5.430% 
+[    5000,    6000 ) 12   5.430%  10.860% #
+[    6000,    7000 ) 156  70.588%  81.448% ##############
+[    7000,    8000 ) 34  15.385%  96.833% ###
+[    8000,    9000 ) 5   2.262%  99.095% 
+[    9000,   10000 ) 1   0.452%  99.548% 
+[   10000,   12000 ) 1   0.452% 100.000% 
+
+48161eed73e44e08253ff31970656fd2be86fecc
+Count: 221 Average: 6213.4706  StdDev: 1580.65
+Min: 2845.0000  Median: 5911.7647  Max: 17032.0000
+------------------------------------------------------
+[    2500,    3000 ) 2   0.905%   0.905% 
+[    3000,    3500 ) 4   1.810%   2.715% 
+[    4000,    4500 ) 7   3.167%   5.882% #
+[    4500,    5000 ) 4   1.810%   7.692% 
+[    5000,    6000 ) 101  45.701%  53.394% #########
+[    6000,    7000 ) 83  37.557%  90.950% ########
+[    7000,    8000 ) 8   3.620%  94.570% #
+[    8000,    9000 ) 4   1.810%  96.380% 
+[    9000,   10000 ) 3   1.357%  97.738% 
+[   12000,   14000 ) 1   0.452%  98.190% 
+[   14000,   16000 ) 3   1.357%  99.548% 
+[   16000,   18000 ) 1   0.452% 100.000% 
+
+e18095c6492411f9f71c40f31d3e79821f9ce41b
+Count: 221 Average: 170.2262  StdDev: 15.27
+Min: 137.0000  Median: 170.1538  Max: 237.0000
+------------------------------------------------------
+[     120,     140 ) 2   0.905%   0.905% 
+[     140,     160 ) 42  19.005%  19.910% ####
+[     160,     180 ) 129  58.371%  78.281% ############
+[     180,     200 ) 40  18.100%  96.380% ####
+[     200,     250 ) 8   3.620% 100.000% #
+
+70673a7cacd08e9dc36d02994764af602fb3c939
+Count: 221 Average: 6925.6018  StdDev: 884.19
+Min: 3422.0000  Median: 6927.0833  Max: 12373.0000
+------------------------------------------------------
+[    3000,    3500 ) 1   0.452%   0.452% 
+[    3500,    4000 ) 2   0.905%   1.357% 
+[    4000,    4500 ) 2   0.905%   2.262% 
+[    4500,    5000 ) 3   1.357%   3.620% 
+[    5000,    6000 ) 13   5.882%   9.502% #
+[    6000,    7000 ) 95  42.986%  52.489% #########
+[    7000,    8000 ) 97  43.891%  96.380% #########
+[    8000,    9000 ) 5   2.262%  98.643% 
+[   10000,   12000 ) 2   0.905%  99.548% 
+[   12000,   14000 ) 1   0.452% 100.000% 
+
+2436898d5613b6f59e493d77214d0db042572f85
+Count: 884 Average: 344.0486  StdDev: 221.83
+Min: 142.0000  Median: 288.4848  Max: 2421.0000
+------------------------------------------------------
+[     140,     160 ) 5   0.566%   0.566% 
+[     160,     180 ) 14   1.584%   2.149% 
+[     180,     200 ) 13   1.471%   3.620% 
+[     200,     250 ) 283  32.014%  35.633% ######
+[     250,     300 ) 164  18.552%  54.186% ####
+[     300,     350 ) 160  18.100%  72.285% ####
+[     350,     400 ) 93  10.520%  82.805% ##
+[     400,     450 ) 44   4.977%  87.783% #
+[     450,     500 ) 30   3.394%  91.176% #
+[     500,     600 ) 23   2.602%  93.778% #
+[     600,     700 ) 9   1.018%  94.796% 
+[     700,     800 ) 15   1.697%  96.493% 
+[     800,     900 ) 9   1.018%  97.511% 
+[     900,    1000 ) 5   0.566%  98.077% 
+[    1000,    1200 ) 4   0.452%  98.529% 
+[    1200,    1400 ) 5   0.566%  99.095% 
+[    1400,    1600 ) 3   0.339%  99.434% 
+[    1800,    2000 ) 1   0.113%  99.548% 
+[    2000,    2500 ) 4   0.452% 100.000% 
+
+2efba5976d939ab6b4d7a28741e4253091a4445d
+Count: 221 Average: 7791.7964  StdDev: 1992.41
+Min: 4163.0000  Median: 7500.0000  Max: 21201.0000
+------------------------------------------------------
+[    4000,    4500 ) 1   0.452%   0.452% 
+[    4500,    5000 ) 2   0.905%   1.357% 
+[    5000,    6000 ) 7   3.167%   4.525% #
+[    6000,    7000 ) 28  12.670%  17.195% ###
+[    7000,    8000 ) 143  64.706%  81.900% #############
+[    8000,    9000 ) 19   8.597%  90.498% ##
+[    9000,   10000 ) 3   1.357%  91.855% 
+[   10000,   12000 ) 9   4.072%  95.928% #
+[   12000,   14000 ) 2   0.905%  96.833% 
+[   14000,   16000 ) 4   1.810%  98.643% 
+[   16000,   18000 ) 2   0.905%  99.548% 
+[   20000,   25000 ) 1   0.452% 100.000% 
+
+088df7b00a12aa0886d8a7b5ef0970e65e7edb89
+Count: 221 Average: 39033.5520  StdDev: 5535.97
+Min: 20525.0000  Median: 41046.5116  Max: 52606.0000
+------------------------------------------------------
+[   20000,   25000 ) 12   5.430%   5.430% #
+[   25000,   30000 ) 7   3.167%   8.597% #
+[   30000,   35000 ) 11   4.977%  13.575% #
+[   35000,   40000 ) 53  23.982%  37.557% #####
+[   40000,   45000 ) 128  57.919%  95.475% ############
+[   45000,   50000 ) 8   3.620%  99.095% #
+[   50000,   60000 ) 2   0.905% 100.000% 
+
+b64faebee058b50307a7262f281772c4e2f2e7cf
+Count: 221 Average: 6927.4253  StdDev: 1083.27
+Min: 3303.0000  Median: 6706.3492  Max: 13115.0000
+------------------------------------------------------
+[    3000,    3500 ) 1   0.452%   0.452% 
+[    3500,    4000 ) 5   2.262%   2.715% 
+[    4000,    4500 ) 1   0.452%   3.167% 
+[    4500,    5000 ) 2   0.905%   4.072% 
+[    5000,    6000 ) 12   5.430%   9.502% #
+[    6000,    7000 ) 125  56.561%  66.063% ###########
+[    7000,    8000 ) 66  29.864%  95.928% ######
+[    8000,    9000 ) 1   0.452%  96.380% 
+[    9000,   10000 ) 1   0.452%  96.833% 
+[   10000,   12000 ) 5   2.262%  99.095% 
+[   12000,   14000 ) 2   0.905% 100.000% 
+
+f12e2b9ff643d0eb60d9d70b840b57579495ac1b
+Count: 50 Average: 39.8400  StdDev: 7.64
+Min: 32.0000  Median: 38.5185  Max: 78.0000
+------------------------------------------------------
+[      30,      35 ) 6  12.000%  12.000% ##
+[      35,      40 ) 26  52.000%  64.000% ##########
+[      40,      45 ) 12  24.000%  88.000% #####
+[      45,      50 ) 2   4.000%  92.000% #
+[      50,      60 ) 3   6.000%  98.000% #
+[      70,      80 ) 1   2.000% 100.000% 
+
+77a3451b70b577c826a9238021aeac9a6264a96d
+Count: 18168 Average: 11958.7631  StdDev: 2644.52
+Min: 1006.0000  Median: 11498.5098  Max: 55925.0000
+------------------------------------------------------
+[    1000,    1200 ) 6   0.033%   0.033% 
+[    1200,    1400 ) 5   0.028%   0.061% 
+[    1400,    1600 ) 2   0.011%   0.072% 
+[    1600,    1800 ) 31   0.171%   0.242% 
+[    1800,    2000 ) 26   0.143%   0.385% 
+[    2000,    2500 ) 13   0.072%   0.457% 
+[    2500,    3000 ) 4   0.022%   0.479% 
+[    3000,    3500 ) 2   0.011%   0.490% 
+[    3500,    4000 ) 3   0.017%   0.506% 
+[    4000,    4500 ) 4   0.022%   0.528% 
+[    4500,    5000 ) 2   0.011%   0.539% 
+[    5000,    6000 ) 65   0.358%   0.897% 
+[    6000,    7000 ) 368   2.026%   2.923% 
+[    7000,    8000 ) 239   1.315%   4.238% 
+[    8000,    9000 ) 322   1.772%   6.011% 
+[    9000,   10000 ) 450   2.477%   8.487% 
+[   10000,   12000 ) 10065  55.400%  63.887% ###########
+[   12000,   14000 ) 5359  29.497%  93.384% ######
+[   14000,   16000 ) 428   2.356%  95.740% 
+[   16000,   18000 ) 230   1.266%  97.006% 
+[   18000,   20000 ) 172   0.947%  97.952% 
+[   20000,   25000 ) 245   1.349%  99.301% 
+[   25000,   30000 ) 83   0.457%  99.758% 
+[   30000,   35000 ) 32   0.176%  99.934% 
+[   35000,   40000 ) 8   0.044%  99.978% 
+[   40000,   45000 ) 2   0.011%  99.989% 
+[   50000,   60000 ) 2   0.011% 100.000% 
+
+c3e2b5764d5be412cef4938c66a2f050e87e6b9d
+Count: 221 Average: 6776.7873  StdDev: 1303.18
+Min: 3529.0000  Median: 7311.6883  Max: 15190.0000
+------------------------------------------------------
+[    3500,    4000 ) 18   8.145%   8.145% ##
+[    4000,    4500 ) 7   3.167%  11.312% #
+[    4500,    5000 ) 6   2.715%  14.027% #
+[    5000,    6000 ) 6   2.715%  16.742% #
+[    6000,    7000 ) 25  11.312%  28.054% ##
+[    7000,    8000 ) 153  69.231%  97.285% ##############
+[    8000,    9000 ) 4   1.810%  99.095% 
+[    9000,   10000 ) 1   0.452%  99.548% 
+[   14000,   16000 ) 1   0.452% 100.000% 
+
+d4395c792592cc0537cfc2629b5776b029ec202b
+Count: 884 Average: 4388.8790  StdDev: 819.98
+Min: 2087.0000  Median: 4306.7993  Max: 16637.0000
+------------------------------------------------------
+[    2000,    2500 ) 5   0.566%   0.566% 
+[    2500,    3000 ) 17   1.923%   2.489% 
+[    3000,    3500 ) 17   1.923%   4.412% 
+[    3500,    4000 ) 33   3.733%   8.145% #
+[    4000,    4500 ) 602  68.100%  76.244% ##############
+[    4500,    5000 ) 139  15.724%  91.968% ###
+[    5000,    6000 ) 56   6.335%  98.303% #
+[    6000,    7000 ) 8   0.905%  99.208% 
+[    7000,    8000 ) 1   0.113%  99.321% 
+[    9000,   10000 ) 1   0.113%  99.434% 
+[   10000,   12000 ) 3   0.339%  99.774% 
+[   12000,   14000 ) 1   0.113%  99.887% 
+[   16000,   18000 ) 1   0.113% 100.000% 
+
+a5a869eeebb33dfa3b6cd6bec3f855f29b13aa61
+Count: 221 Average: 7306.5837  StdDev: 1063.41
+Min: 4031.0000  Median: 7440.2516  Max: 13875.0000
+------------------------------------------------------
+[    4000,    4500 ) 3   1.357%   1.357% 
+[    5000,    6000 ) 13   5.882%   7.240% #
+[    6000,    7000 ) 24  10.860%  18.100% ##
+[    7000,    8000 ) 158  71.493%  89.593% ##############
+[    8000,    9000 ) 14   6.335%  95.928% #
+[    9000,   10000 ) 3   1.357%  97.285% 
+[   10000,   12000 ) 4   1.810%  99.095% 
+[   12000,   14000 ) 2   0.905% 100.000% 
+
+6fe9235cacb10a261bdbc02467317a5b3d86c50e
+Count: 221 Average: 7327.8235  StdDev: 1611.40
+Min: 3671.0000  Median: 6795.2756  Max: 18923.0000
+------------------------------------------------------
+[    3500,    4000 ) 1   0.452%   0.452% 
+[    5000,    6000 ) 8   3.620%   4.072% #
+[    6000,    7000 ) 126  57.014%  61.086% ###########
+[    7000,    8000 ) 57  25.792%  86.878% #####
+[    8000,    9000 ) 10   4.525%  91.403% #
+[    9000,   10000 ) 9   4.072%  95.475% #
+[   10000,   12000 ) 5   2.262%  97.738% 
+[   12000,   14000 ) 2   0.905%  98.643% 
+[   14000,   16000 ) 1   0.452%  99.095% 
+[   16000,   18000 ) 1   0.452%  99.548% 
+[   18000,   20000 ) 1   0.452% 100.000% 
+
+b0ec55534f1265b2fa31c1919b42bbd13e43bb56
+Count: 221 Average: 7623.6833  StdDev: 1788.87
+Min: 3395.0000  Median: 7085.7143  Max: 17543.0000
+------------------------------------------------------
+[    3000,    3500 ) 1   0.452%   0.452% 
+[    3500,    4000 ) 2   0.905%   1.357% 
+[    5000,    6000 ) 7   3.167%   4.525% #
+[    6000,    7000 ) 94  42.534%  47.059% #########
+[    7000,    8000 ) 69  31.222%  78.281% ######
+[    8000,    9000 ) 23  10.407%  88.688% ##
+[    9000,   10000 ) 8   3.620%  92.308% #
+[   10000,   12000 ) 5   2.262%  94.570% 
+[   12000,   14000 ) 8   3.620%  98.190% #
+[   14000,   16000 ) 3   1.357%  99.548% 
+[   16000,   18000 ) 1   0.452% 100.000% 
+
+c6e6cdfb4998f6e62d0b819db865806996ae0e20
+Count: 44 Average: 48.0455  StdDev: 35.28
+Min: 15.0000  Median: 36.4286  Max: 124.0000
+------------------------------------------------------
+[      14,      16 ) 1   2.273%   2.273% 
+[      16,      18 ) 5  11.364%  13.636% ##
+[      18,      20 ) 5  11.364%  25.000% ##
+[      20,      25 ) 8  18.182%  43.182% ####
+[      30,      35 ) 1   2.273%  45.455% 
+[      35,      40 ) 6  13.636%  59.091% ###
+[      40,      45 ) 4   9.091%  68.182% ##
+[      45,      50 ) 3   6.818%  75.000% #
+[      90,     100 ) 2   4.545%  79.545% #
+[     100,     120 ) 7  15.909%  95.455% ###
+[     120,     140 ) 2   4.545% 100.000% #
+
+c644f450e47e686f7dbea61fe10d9c13dad41f7a
+Count: 221 Average: 6084.4706  StdDev: 1322.00
+Min: 3190.0000  Median: 6307.6923  Max: 9895.0000
+------------------------------------------------------
+[    3000,    3500 ) 13   5.882%   5.882% #
+[    3500,    4000 ) 16   7.240%  13.122% #
+[    4000,    4500 ) 12   5.430%  18.552% #
+[    4500,    5000 ) 5   2.262%  20.814% 
+[    5000,    6000 ) 32  14.480%  35.294% ###
+[    6000,    7000 ) 103  46.606%  81.900% #########
+[    7000,    8000 ) 37  16.742%  98.643% ###
+[    8000,    9000 ) 1   0.452%  99.095% 
+[    9000,   10000 ) 2   0.905% 100.000% 
+
+209c97bacee9b08d2e294c8f5ea682a5cb615161
+Count: 221 Average: 5995.3846  StdDev: 1693.88
+Min: 2970.0000  Median: 5602.5641  Max: 21239.0000
+------------------------------------------------------
+[    2500,    3000 ) 1   0.452%   0.452% 
+[    3000,    3500 ) 3   1.357%   1.810% 
+[    3500,    4000 ) 2   0.905%   2.715% 
+[    4000,    4500 ) 4   1.810%   4.525% 
+[    4500,    5000 ) 6   2.715%   7.240% #
+[    5000,    6000 ) 155  70.136%  77.376% ##############
+[    6000,    7000 ) 31  14.027%  91.403% ###
+[    7000,    8000 ) 5   2.262%  93.665% 
+[    8000,    9000 ) 5   2.262%  95.928% 
+[    9000,   10000 ) 3   1.357%  97.285% 
+[   10000,   12000 ) 4   1.810%  99.095% 
+[   16000,   18000 ) 1   0.452%  99.548% 
+[   20000,   25000 ) 1   0.452% 100.000% 
+
+a3ddf54d8ac5daff971f428e1ded569f149ca6a9
+Count: 203 Average: 21631.8424  StdDev: 23689.57
+Min: 1576.0000  Median: 14600.0000  Max: 86336.0000
+------------------------------------------------------
+[    1400,    1600 ) 2   0.985%   0.985% 
+[    1600,    1800 ) 34  16.749%  17.734% ###
+[    1800,    2000 ) 35  17.241%  34.975% ###
+[    2000,    2500 ) 5   2.463%  37.438% 
+[   12000,   14000 ) 7   3.448%  40.887% #
+[   14000,   16000 ) 59  29.064%  69.951% ######
+[   16000,   18000 ) 6   2.956%  72.906% #
+[   18000,   20000 ) 3   1.478%  74.384% 
+[   20000,   25000 ) 1   0.493%  74.877% 
+[   35000,   40000 ) 1   0.493%  75.369% 
+[   50000,   60000 ) 18   8.867%  84.236% ##
+[   60000,   70000 ) 30  14.778%  99.015% ###
+[   70000,   80000 ) 1   0.493%  99.507% 
+[   80000,   90000 ) 1   0.493% 100.000% 
+
+
+--- SCRIPT GC ---
+$ redis-cli -p 6379 SCRIPT GC
+OK
+
+--- SCRIPT FLAGS f12e2b9ff643d0eb60d9d70b840b57579495ac1b ---
+$ redis-cli -p 6379 SCRIPT FLAGS f12e2b9ff643d0eb60d9d70b840b57579495ac1b
+ResponseError: Unknown subcommand or wrong number of arguments for 'FLAGS'. Try SCRIPT HELP.
+
+--- SCRIPT FLAGS f12e2b9ff643d0eb60d9d70b840b57579495ac1b allow-undeclared-keys ---
+$ redis-cli -p 6379 SCRIPT FLAGS f12e2b9ff643d0eb60d9d70b840b57579495ac1b allow-undeclared-keys
+OK
+
+--- SCRIPT FLAGS f12e2b9ff643d0eb60d9d70b840b57579495ac1b disable-atomicity ---
+$ redis-cli -p 6379 SCRIPT FLAGS f12e2b9ff643d0eb60d9d70b840b57579495ac1b disable-atomicity
+OK
+
+--- SCRIPT FLAGS f12e2b9ff643d0eb60d9d70b840b57579495ac1b bogus-flag ---
+$ redis-cli -p 6379 SCRIPT FLAGS f12e2b9ff643d0eb60d9d70b840b57579495ac1b bogus-flag
+ResponseError: Invalid config format: Invalid flag: bogus-flag
+
+--- SCRIPT STATS ---
+$ redis-cli -p 6379 SCRIPT STATS
+ResponseError: Unknown subcommand or wrong number of arguments for 'STATS'. Try SCRIPT HELP.
+
+--- DEBUG OBJHIST ---
+$ redis-cli -p 6379 DEBUG OBJHIST
+___begin object histogram___
+
+OBJECT:zset
+________________________________________________________________
+Key memory used:
+Count: 2 Average: 16.0000  StdDev: 16.00
+Min: 0.0000  Median: 0.5000  Max: 32.0000
+------------------------------------------------------
+[       0,       1 ) 1  50.000%  50.000% ##########
+[      30,      35 ) 1  50.000% 100.000% ##########
+
+Values - Total Memory used:
+Count: 2 Average: 36120.0000  StdDev: 35800.00
+Min: 320.0000  Median: 325.0000  Max: 71920.0000
+------------------------------------------------------
+[     300,     350 ) 1  50.000%  50.000% ##########
+[   70000,   80000 ) 1  50.000% 100.000% ##########
+
+Cardinality histogram (number of elements in sets):
+Count: 2 Average: 528.0000  StdDev: 496.00
+Min: 32.0000  Median: 32.5000  Max: 1024.0000
+------------------------------------------------------
+[      30,      35 ) 1  50.000%  50.000% ##########
+[    1000,    1200 ) 1  50.000% 100.000% ##########
+
+Items length histogram:
+Count: 1056 Average: 31.2036  StdDev: 4.51
+Min: 5.0000  Median: 32.0000  Max: 32.0000
+------------------------------------------------------
+[       5,       6 ) 9   0.852%   0.852% 
+[       6,       7 ) 23   2.178%   3.030% 
+[      30,      35 ) 1024  96.970% 100.000% ###################
+
+Listpack histogram:
+Count: 1 Average: 320.0000  StdDev: 0.00
+Min: 320.0000  Median: 320.0000  Max: 320.0000
+------------------------------------------------------
+[     300,     350 ) 1 100.000% 100.000% ####################
+
+OBJECT:string
+________________________________________________________________
+Key memory used:
+Count: 519 Average: 0.3391  StdDev: 3.90
+Min: 0.0000  Median: 0.5019  Max: 48.0000
+------------------------------------------------------
+[       0,       1 ) 515  99.229%  99.229% ####################
+[      30,      35 ) 1   0.193%  99.422% 
+[      45,      50 ) 3   0.578% 100.000% 
+
+Values - Total Memory used:
+Count: 519 Average: 47.4143  StdDev: 5.18
+Min: 0.0000  Median: 47.4561  Max: 48.0000
+------------------------------------------------------
+[       0,       1 ) 6   1.156%   1.156% 
+[      30,      35 ) 1   0.193%   1.349% 
+[      45,      50 ) 512  98.651% 100.000% ####################
+
+Items length histogram:
+Count: 0 Average: 0.0000  StdDev: 0.00
+Min: 0.0000  Median: 0.0000  Max: 0.0000
+------------------------------------------------------
+
+OBJECT:hash
+________________________________________________________________
+Key memory used:
+Count: 38 Average: 6.3158  StdDev: 13.51
+Min: 0.0000  Median: 0.5938  Max: 48.0000
+------------------------------------------------------
+[       0,       1 ) 31  81.579%  81.579% ################
+[      30,      35 ) 6  15.789%  97.368% ###
+[      45,      50 ) 1   2.632% 100.000% #
+
+Values - Total Memory used:
+Count: 38 Average: 78925.8947  StdDev: 428353.61
+Min: 2688.0000  Median: 5500.0000  Max: 2682624.0000
+------------------------------------------------------
+[    2500,    3000 ) 10  26.316%  26.316% #####
+[    3500,    4000 ) 5  13.158%  39.474% ###
+[    4000,    4500 ) 3   7.895%  47.368% ##
+[    5000,    6000 ) 1   2.632%  50.000% #
+[    6000,    7000 ) 16  42.105%  92.105% ########
+[   60000,   70000 ) 1   2.632%  94.737% #
+[   80000,   90000 ) 1   2.632%  97.368% #
+[ 2500000, 3000000 ) 1   2.632% 100.000% #
+
+Cardinality histogram (number of elements in sets):
+Count: 38 Average: 76.4737  StdDev: 223.76
+Min: 1.0000  Median: 31.6667  Max: 1024.0000
+------------------------------------------------------
+[       1,       2 ) 10  26.316%  26.316% #####
+[      30,      35 ) 26  68.421%  94.737% ##############
+[    1000,    1200 ) 2   5.263% 100.000% #
+
+Items length histogram:
+Count: 2906 Average: 806.2839  StdDev: 982.12
+Min: 33.0000  Median: 67.6882  Max: 2084.0000
+------------------------------------------------------
+[      30,      35 ) 1024  35.237%  35.237% #######
+[      60,      70 ) 557  19.167%  54.405% ####
+[      70,      80 ) 147   5.058%  59.463% #
+[      80,      90 ) 64   2.202%  61.666% 
+[     100,     120 ) 32   1.101%  62.767% 
+[    2000,    2500 ) 1082  37.233% 100.000% #######
+
+___end object histogram___
+
+
+--- MEMORY USAGE {q9}h ---
+$ redis-cli -p 6379 MEMORY USAGE {q9}h
+2688
+
+--- MEMORY USAGE {q9}absent ---
+$ redis-cli -p 6379 MEMORY USAGE {q9}absent
+None
+
+--- MEMORY DOCTOR ---
+$ redis-cli -p 6379 MEMORY DOCTOR
+ResponseError: Unknown subcommand or wrong number of arguments for 'DOCTOR'. Try MEMORY HELP.
+
+--- LATENCY HISTORY command ---
+$ redis-cli -p 6379 LATENCY HISTORY command
+ResponseError: Unknown subcommand or wrong number of arguments for 'HISTORY'. Try LATENCY HELP.
+
+--- INFO ALL — script/tx/lua/squash counters (verbatim lines) ---
+$ redis-cli -p 6379 INFO ALL
+# Server           multiplexing_api:epoll
+# Memory           used_memory_lua:424424
+# Memory           commands_squashing_replies_bytes:0
+# Stats            lua_interpreter_cnt:8
+# Stats            lua_blocked_total:0
+# Stats            lua_interpreter_return:23448
+# Stats            lua_force_gc_calls:127
+# Stats            lua_gc_freed_memory_total:2737996800
+# Stats            lua_gc_duration_total_sec:0.0662762
+# Transaction      tx_shard_polls:2703564
+# Transaction      tx_shard_optimistic_total:243174
+# Transaction      tx_shard_ooo_total:0
+# Transaction      tx_global_total:451
+# Transaction      tx_normal_total:265325
+# Transaction      tx_inline_runs_total:32302
+# Transaction      tx_schedule_cancel_total:3
+# Transaction      tx_batch_scheduled_items_total:240048
+# Transaction      tx_batch_schedule_calls_total:240047
+# Transaction      tx_with_freq:243177,0,442,22157
+# Transaction      squash_with_freq:443,0,0,2
+# Transaction      tx_queue_len:0
+# Transaction      eval_io_coordination_total:22809
+# Transaction      eval_shardlocal_coordination_total:518
+# Transaction      eval_squashed_flushes:0
+# Commandstats     cmdstat_multi:calls=445,usec=86,usec_per_call=0.193258
+# Commandstats     cmdstat_script:calls=35,usec=6998,usec_per_call=199.943
+# Errorstats       script_error:1
+
+--- dragonfly --helpfull | grep -iE 'lua|script|lock_on|squash|interpreter' ---
+$ docker exec dfskill-primary dragonfly --helpfull
+  Flags from [0;32mcore/interpreter.cc[m:
+    --lua_enable_redis_log (Enable redis.log to write logs from lua script.);
+    --lua_mem_gc_threshold (Specifies Lua interpreter's per thread memory limit
+    --luagc (Specifies Lua garabage collector preferences. By default used
+      default lua GC parameters.Format should be 'inc/200/100/13' or
+      https://www.lua.org/manual/5.4/manual.html#2.5); default: ;
+      pipeline squashing); default: false;
+      only supported for Lua script invocations, and can happen at most once per
+    --pipeline_squash (Number of queued pipelined commands above which squashing
+    --pipeline_squash_limit (Limit on the size of a squashed pipeline. );
+    --squashed_reply_size_limit (Max bytes allowed for
+      squashing_current_reply_size. If this limit is reached, connections
+      dispatching pipelines won't squash them.); default: 0;
+      read description in
+    --lock_on_hashtags (When true, locks are done in the {hashtag} level instead
+      extraction is done (with {}). Must be used with --lock_on_hashtags);
+      pipeline_squash does not work well with tiered storage, so it's advised to
+    --lua_resp2_legacy_float (Return rounded down integers instead of floats for
+      lua scripts with RESP2); default: false;
+    --multi_eval_squash_buffer (Max buffer for squashed commands per script);
+    --multi_exec_squash (Whether multi exec will squash single shard commands to
+    --squash_stats_latency_lower_limit (If set, will not track latency stats
+  Flags from [0;32mserver/multi_command_squasher.cc[m:
+    --log_squash_info_threshold_usec (Threshold in microseconds above which to
+      log squashing timings.); default: 2147483648;
+    --max_busy_squash_usec (Maximum time in microseconds to execute squashed
+  Flags from [0;32mserver/script_mgr.cc[m:
+    --default_lua_flags (Configure default flags for running Lua scripts:
+      - Use 'disable-atomicity' to allow running scripts non-atomically.
+      'allow-undeclared-keys disable-atomicity' runs scripts non-atomically and
+    --lua_allow_undeclared_auto_correct (If enabled, when a script that is not
+      automaticaly set the script flag to be able to run with undeclared key.);
+    --lua_auto_async (If enabled, call/pcall with discarded values are
+    --lua_force_atomicity_shas (Comma-separated list of Lua script SHAs which
+      are forced to run in atomic mode, even if the script specifies
+    --lua_undeclared_keys_shas (Comma-separated list of Lua script SHAs which
+      loading the script, and new values do not affect already-loaded script.);
+    --interpreter_per_thread (Lua interpreters per thread); default: 10;
+    --max_squashed_cmd_num (Max number of commands squashed in a single shard
+      during squash optimizaiton); default: 100;
+flags which include specified substring in either in the name, or description or
+
+--- flag names extracted ---
+--default_lua_flags
+--interpreter_per_thread
+--lock_on_hashtags
+--log_squash_info_threshold_usec
+--lua_allow_undeclared_auto_correct
+--lua_auto_async
+--lua_enable_redis_log
+--lua_force_atomicity_shas
+--lua_mem_gc_threshold
+--lua_resp2_legacy_float
+--lua_undeclared_keys_shas
+--luagc
+--max_busy_squash_usec
+--max_squashed_cmd_num
+--multi_eval_squash_buffer
+--multi_exec_squash
+--pipeline_squash
+--pipeline_squash_limit
+--squash_stats_latency_lower_limit
+--squashed_reply_size_limit
+
+--- === Lua dialect (Dragonfly runs Lua 5.4; Redis runs 5.1) === ---
+$ EVAL "return type(unpack)" 0
+
+--- lua: global unpack defined? ---
+function
+$ EVAL "return type(table.unpack)" 0
+
+--- lua: table.unpack defined? ---
+function
+$ EVAL "return type(bit)" 0
+
+--- lua: bit library present? ---
+table
+$ EVAL "return type(cjson)" 0
+
+--- lua: cjson present? ---
+table
+$ EVAL "return type(cmsgpack)" 0
+
+--- lua: cmsgpack present? ---
+table
+$ EVAL "return type(struct)" 0
+
+--- lua: struct present? ---
+table
+$ EVAL "return type(redis.sha1hex)" 0
+
+--- lua: redis.sha1hex present? ---
+function
+$ EVAL "return type(redis.setresp)" 0
+
+--- lua: redis.setresp present? ---
+nil
+$ EVAL "redis.setresp(3) return 'ok'" 0
+
+--- lua: redis.setresp(3) call ---
+ResponseError: Error running script (call to dea22ec229c58145094e5999e886f03890639f44): @user_script:2: user_script:2: attempt to call a nil value (field 'setresp')
+$ EVAL "return _VERSION" 0
+
+--- lua: _VERSION ---
+Lua 5.4
+
+--- === unpack() arity ceiling for redis.call('HMGET', k, unpack(t)) === ---
+$ SCRIPT LOAD <HMGET with unpack(t) of N fields> -> 9a1ef043ca2e53155495d97484d6a0673d0df130
+$ EVALSHA 9a1ef043ca2e53155495d97484d6a0673d0df130 1 {q9}arity 256
+
+--- unpack arity N=256 ---
+256
+$ EVALSHA 9a1ef043ca2e53155495d97484d6a0673d0df130 1 {q9}arity 1000
+
+--- unpack arity N=1000 ---
+1000
+$ EVALSHA 9a1ef043ca2e53155495d97484d6a0673d0df130 1 {q9}arity 4000
+
+--- unpack arity N=4000 ---
+4000
+$ EVALSHA 9a1ef043ca2e53155495d97484d6a0673d0df130 1 {q9}arity 8000
+
+--- unpack arity N=8000 ---
+8000
+$ EVALSHA 9a1ef043ca2e53155495d97484d6a0673d0df130 1 {q9}arity 8163
+
+--- unpack arity N=8163 ---
+8163
+$ EVALSHA 9a1ef043ca2e53155495d97484d6a0673d0df130 1 {q9}arity 8164
+
+--- unpack arity N=8164 ---
+ResponseError: Error running script (call to 9a1ef043ca2e53155495d97484d6a0673d0df130): @user_script:7: user_script:7: stack overflow
+$ EVALSHA 9a1ef043ca2e53155495d97484d6a0673d0df130 1 {q9}arity 16000
+
+--- unpack arity N=16000 ---
+ResponseError: Error running script (call to 9a1ef043ca2e53155495d97484d6a0673d0df130): @user_script:7: user_script:7: too many results to unpack
+
+FIRST FAILING SIZE: (8164, 'ResponseError: Error running script (call to 9a1ef043ca2e53155495d97484d6a0673')
+
+--- === commands expected to be absent === ---
+$ redis-cli -p 6379 SCRIPT KILL
+
+--- SCRIPT KILL ---
+ResponseError: Unknown subcommand or wrong number of arguments for 'KILL'. Try SCRIPT HELP.
+$ redis-cli -p 6379 FUNCTION LIST
+
+--- FUNCTION LIST ---
+ResponseError: Unknown subcommand or wrong number of arguments for 'LIST'. Try FUNCTION HELP.
+$ redis-cli -p 6379 FCALL f 0
+
+--- FCALL f 0 ---
+ResponseError: unknown command `FCALL`
+$ redis-cli -p 6379 EVAL_RO return 1 0
+
+--- EVAL_RO ---
+1
+$ redis-cli -p 6379 EVALSHA_RO 0000000000000000000000000000000000000000 0
+
+--- EVALSHA_RO ---
+NoScriptError: No matching script. Please use EVAL.
+
+--- === script flag directive: `#!lua` (Redis) vs `--!df` (Dragonfly) === ---
+$ SCRIPT LOAD <#!lua flags=allow-undeclared-keys reading an undeclared key>
+SCRIPT LOAD failed: ResponseError: user_script:2: unexpected symbol near '#'
+$ SCRIPT LOAD <--!df flags=allow-undeclared-keys reading an undeclared key>
+loaded -> efb1d70e9455c7c0dd63394747ccae84503cbe01
+$ EVALSHA efb1d70e9455c7c0dd63394747ccae84503cbe01 0 
+
+--- directive: --!df flags=allow-undeclared-keys reading an undeclared key ---
+present
+$ SCRIPT LOAD <#!lua flags=disable-atomicity>
+SCRIPT LOAD failed: ResponseError: user_script:2: unexpected symbol near '#'
+$ SCRIPT LOAD <--!df flags=disable-atomicity>
+loaded -> a516b28fc2bed280c0a51c102b94fff3872254c6
+$ EVALSHA a516b28fc2bed280c0a51c102b94fff3872254c6 1 {q9}declared
+
+--- directive: --!df flags=disable-atomicity ---
+present
+
+--- inventory ---
+| probe                                                                                           | verdict | first line of reply                                                            |
+|-------------------------------------------------------------------------------------------------|---------|--------------------------------------------------------------------------------|
+| SCRIPT HELP                                                                                     | EXISTS  | SCRIPT <subcommand> [<arg> [value] [opt] ...]                                  |
+| SCRIPT LIST                                                                                     | EXISTS  | 1b03e735c03072284f716e56cf7272b87958129e                                       |
+| SCRIPT EXISTS f12e2b9ff643d0eb60d9d70b840b57579495ac1b 0000000000000000000000000000000000000000 | EXISTS  | 1                                                                              |
+| SCRIPT LATENCY                                                                                  | EXISTS  | 98467aef3a672cec59f8751950f6f4ccc5b02a1b                                       |
+| SCRIPT GC                                                                                       | EXISTS  | OK                                                                             |
+| SCRIPT FLAGS f12e2b9ff643d0eb60d9d70b840b57579495ac1b                                           | ERRORS  | ResponseError: Unknown subcommand or wrong number of arguments for 'FLAGS'. Tr |
+| SCRIPT FLAGS f12e2b9ff643d0eb60d9d70b840b57579495ac1b allow-undeclared-keys                     | EXISTS  | OK                                                                             |
+| SCRIPT FLAGS f12e2b9ff643d0eb60d9d70b840b57579495ac1b disable-atomicity                         | EXISTS  | OK                                                                             |
+| SCRIPT FLAGS f12e2b9ff643d0eb60d9d70b840b57579495ac1b bogus-flag                                | ERRORS  | ResponseError: Invalid config format: Invalid flag: bogus-flag                 |
+| SCRIPT STATS                                                                                    | ERRORS  | ResponseError: Unknown subcommand or wrong number of arguments for 'STATS'. Tr |
+| DEBUG OBJHIST                                                                                   | EXISTS  | ___begin object histogram___                                                   |
+| MEMORY USAGE {q9}h                                                                              | EXISTS  | 2688                                                                           |
+| MEMORY USAGE <missing key>                                                                      | EXISTS  | None                                                                           |
+| MEMORY DOCTOR                                                                                   | ERRORS  | ResponseError: Unknown subcommand or wrong number of arguments for 'DOCTOR'. T |
+| LATENCY HISTORY                                                                                 | ERRORS  | ResponseError: Unknown subcommand or wrong number of arguments for 'HISTORY'.  |
+| INFO ALL (lua_*/tx_*/eval_*/squash_*)                                                           | EXISTS  | 27 matching lines                                                              |
+| dragonfly --helpfull (lua/script/lock_on/squash/interpreter)                                    | EXISTS  | 20 flags                                                                       |
+| lua: global unpack defined?                                                                     | EXISTS  | function                                                                       |
+| lua: table.unpack defined?                                                                      | EXISTS  | function                                                                       |
+| lua: bit library present?                                                                       | EXISTS  | table                                                                          |
+| lua: cjson present?                                                                             | EXISTS  | table                                                                          |
+| lua: cmsgpack present?                                                                          | EXISTS  | table                                                                          |
+| lua: struct present?                                                                            | EXISTS  | table                                                                          |
+| lua: redis.sha1hex present?                                                                     | EXISTS  | function                                                                       |
+| lua: redis.setresp present?                                                                     | EXISTS  | nil                                                                            |
+| lua: redis.setresp(3) call                                                                      | ERRORS  | ResponseError: Error running script (call to dea22ec229c58145094e5999e886f0389 |
+| lua: _VERSION                                                                                   | EXISTS  | Lua 5.4                                                                        |
+| unpack arity N=256                                                                              | EXISTS  | 256                                                                            |
+| unpack arity N=1000                                                                             | EXISTS  | 1000                                                                           |
+| unpack arity N=4000                                                                             | EXISTS  | 4000                                                                           |
+| unpack arity N=8000                                                                             | EXISTS  | 8000                                                                           |
+| unpack arity N=8163                                                                             | EXISTS  | 8163                                                                           |
+| unpack arity N=8164                                                                             | ERRORS  | ResponseError: Error running script (call to 9a1ef043ca2e53155495d97484d6a0673 |
+| unpack arity N=16000                                                                            | ERRORS  | ResponseError: Error running script (call to 9a1ef043ca2e53155495d97484d6a0673 |
+| SCRIPT KILL                                                                                     | ERRORS  | ResponseError: Unknown subcommand or wrong number of arguments for 'KILL'. Try |
+| FUNCTION LIST                                                                                   | ERRORS  | ResponseError: Unknown subcommand or wrong number of arguments for 'LIST'. Try |
+| FCALL f 0                                                                                       | ERRORS  | ResponseError: unknown command `FCALL`                                         |
+| EVAL_RO                                                                                         | EXISTS  | 1                                                                              |
+| EVALSHA_RO                                                                                      | ERRORS  | NoScriptError: No matching script. Please use EVAL.                            |
+| directive: #!lua flags=allow-undeclared-keys reading an undeclared key                          | ERRORS  | ResponseError: user_script:2: unexpected symbol near '#'                       |
+| directive: --!df flags=allow-undeclared-keys reading an undeclared key                          | EXISTS  | present                                                                        |
+| directive: #!lua flags=disable-atomicity                                                        | ERRORS  | ResponseError: user_script:2: unexpected symbol near '#'                       |
+| directive: --!df flags=disable-atomicity                                                        | EXISTS  | present                                                                        |

@@ -1,0 +1,55 @@
+{
+  "expectations": [
+    {
+      "text": "finds-per-grant-hget-loop-453: a finding names the per-grant HGET loop at or around line 453 and proposes batching it (HMGET)",
+      "passed": true,
+      "evidence": "REVIEW.md:38-55 '## 1. Line 453 — HGET KEYS[7] once per old grant field (highest impact)' quotes the call and proposes 'one chunked_call('HMGET', KEYS[7], old_grant_fields)', '8192 calls -> 32 calls at the current chunk size, 9 at 1000'. It also spots the duplicate read of the same hash at line 410 and proposes one HMGET over the deduplicated union (REVIEW.md:57-62)."
+    },
+    {
+      "text": "finds-cjson-plan-encode-673: a finding names the cjson.encode of the replay plan at or around lines 673-674 on the success path",
+      "passed": true,
+      "evidence": "REVIEW.md:101-118 '## 3. Lines 673-674, 692-699 — cjson.encode(plan) and the 32 MiB plan blob' quotes both encodes and notes the plan is 'a second full copy of every grant payload, record JSON and cursor value', HSET into KEYS[4] at :692 and HDEL at :702."
+    },
+    {
+      "text": "chunked-call-recognized-correct: the chunked_call helper around lines 134-150 is recognized as the right idiom, not reported as a defect",
+      "passed": true,
+      "evidence": "chunked_call is prescribed as the fix, not flagged: REVIEW.md:54 'one chunked_call('HMGET', KEYS[7], old_grant_fields)' and REVIEW.md:307-308 'These already read the whole window via chunked HMGET; keep that shape'. The only related finding is a tuning of NATIVE_CHUNK_ITEMS (REVIEW.md:214-220), which raises the chunk size inside the helper's idiom rather than calling the helper wrong."
+    },
+    {
+      "text": "findings-have-line-numbers-and-impact-order: every finding carries a concrete line number and the list is explicitly ordered by expected impact",
+      "passed": true,
+      "evidence": "Every section heading carries lines (§1 'Line 453', §2 'Line 553', §3 'Lines 673-674, 692-699', §4 'Lines 403-415 and 612-616', §5 'Lines 113-129, 255-262, 334', §6 'Lines 216-227', §7 'Lines 217-221', §8 'Line 1', §9/§10). Ordering is stated explicitly at REVIEW.md:16-17 'the dominant cost term is the number of redis.call ... Everything below is ordered on that basis', backed by the per-site call-budget table at REVIEW.md:23-31."
+    },
+    {
+      "text": "names-recovery-contract-no-change: the review states what it would NOT change because it belongs to the recovery contract",
+      "passed": true,
+      "evidence": "REVIEW.md:285-319 '## What I would NOT change: the recovery contract' lists 9 items with lines: the receipt protocol (:255-264, :692-699, :702), NX on cursor writes (:220) and ZADD_NX (:223), the key-index restriction (:19-30, :687), HDEL 7 / ZREM 8 adjacency (:445-451), the hoisted TIME at :638, whole-window conflict checks (:403-415), KEYS[]-only dispatch, budget caps, and the flat reply at :704."
+    },
+    {
+      "text": "addresses-multikey-coordination-cost: the review addresses the coordination cost of this 14-key script on default flags (io vs shard-local) and the --lock_on_hashtags trade-off",
+      "passed": true,
+      "evidence": "REVIEW.md:8-17 'A shared hashtag does not co-locate keys on one shard on default flags. It is a lock/placement unit only under --lock_on_hashtags ... io-coordinated regime (a) ... 26.95 µs/call ... versus 1.01 µs on the shard-local path [lab Q5]'. The trade-off is worked through at REVIEW.md:276-281: lock_on_hashtags 'would move this script to ~1.5 µs/call' but 'serialises all unrelated work behind {inbound}'s shard', with the distinct-tags>=shard-count rule and 'Batching ... is the change that pays in both regimes; do this before touching flags.'"
+    },
+    {
+      "text": "claims-carry-dragonfly-evidence: every performance claim names Dragonfly-specific evidence (a measurement run, INFO/eval coordination counters, SCRIPT LATENCY, or a Dragonfly v1.34.0 doc/source citation)",
+      "passed": true,
+      "evidence": "Each cost claim is tied to a cited measurement: 26.95 vs 1.01 µs/call [lab Q5] (:13-14), HGET->HMGET p50 41183->7814 µs, p99 52222->17150 µs [lab Q7] and 7.6x [lab Q10] (:47-48), plan encode p50 1905 µs at 1 MiB / 15070 µs at 8 MiB and the 32 MiB OOM [lab Q4] (:114-116), replica write cost +4.3%/+41.6% [lab Q6] (:138-139), acall 28.05->2.93 µs/call [lab Q5] (:192), unpack limit 8163 [lab Q9] (:216). Verification names eval_io_coordination_total vs eval_shardlocal_coordination_total (:252), total_commands_processed deltas (:256) and scripts/script_latency.py (:273)."
+    },
+    {
+      "text": "no-unverified-redis-only-advice: no Redis Functions/FUNCTION migration, no '#!lua flags=no-writes' shebang, no disable-atomicity-for-speed, no client pipelining as the fix for in-script calls, no redis.setresp(3) -- unless backed by Dragonfly evidence",
+      "passed": true,
+      "evidence": "No FUNCTION, no setresp, no pipelining-as-fix anywhere. Shebang-style directives appear only as an explicit warning backed by evidence: REVIEW.md:201-202 'Do not reach for --lua_auto_async here ... the --!df flags= directives are not an optimisation — both real flags remove the fast path, and no-writes is parsed and ignored [lab Q5]'. The atomicity-relevant suggestion (redis.acall for discarded replies, :188-199) is Dragonfly-specific and measured, and it explicitly requires verifying ordering barriers and error surfacing."
+    },
+    {
+      "text": "flags-redundant-writes: the review flags as redundant writes both the delete-and-reinsert of unchanged grants at apply_new_mutable_mailbox_page.lua:612-616 (HDEL/ZREM of grant fields followed by HSET/ZADD of the same rows) and the rewrite at apply_new_mutable_mailbox_page.lua:403-415 of records and grants the script has already compared and proven identical, and states that these writes still cost shard mutations, journal bytes and replica bytes",
+      "passed": true,
+      "evidence": "REVIEW.md:135-150 '## 4. Lines 403-415 and 612-616 — writes the script has already proven redundant' covers both: ':403-409 existing_records proves every already-present record_field is byte-identical ... Line 618 then HSETs all of record_rows back anyway', ':410-415 identically for grants', and ':612-616 HDEL 7 + ZREM 8 ... immediately followed by HSET 7 ... and ZADD 8 ... deleted and re-inserted with the same value and the same score. Same key, same field, same bytes, two mutations plus two journal records.' The cost statement is explicit at :137-139: 'a write whose value does not change still costs a shard mutation, journal bytes and replica bytes; Q6 measured a write script at +4.3% (per-call) / +41.6% (batched) p50 with a replica attached versus standalone [lab Q6]'. Matches the input at :612-616 and :403-415."
+    }
+  ],
+  "summary": {
+    "passed": 9,
+    "failed": 0,
+    "total": 9,
+    "pass_rate": 1.0
+  }
+}

@@ -1,0 +1,11 @@
+evals/**/fixtures/
+!evals/fixtures/
+evals/**/history/
+evals/results/
+evals/NOTES-private.md
+evals/**/mock-recordings/
+__pycache__/
+*.bak-*
+*.pyc
+evals/private/*
+!evals/private/README.md

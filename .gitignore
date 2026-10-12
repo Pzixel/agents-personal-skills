@@ -1,0 +1,15 @@
+.DS_Store
+__pycache__/
+*.pyc
+.venv/
+.superpowers/
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+dragonfly-scripting-workbench/lab/data/
+dragonfly-scripting-workbench/**/iteration-*/**/outputs/
+.tokensave
+/.worktrees/

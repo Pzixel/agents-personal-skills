@@ -1,0 +1,16 @@
+title = "gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Known false positives"
+regexTarget = "match"
+paths = [
+  # Fixtures of secret-shaped strings for the redaction tests; values are fake.
+  '''orch/tools/tests/test_gate_policy\.py''',
+]
+regexes = [
+  # Lua script filename `getCounts-1.lua` (BullMQ job-counts script), not a credential.
+  '''getCounts-1\.lua''',
+]

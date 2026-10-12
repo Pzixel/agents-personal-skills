@@ -1,0 +1,7 @@
+interface:
+  display_name: "Superpowers: Request Code Review (psilon)"
+  short_description: "Review high-risk integrated changes once"
+  default_prompt: "Use $superpowers-requesting-code-review-psilon for one independent, applicability-first review of this high-risk integrated change."
+
+policy:
+  allow_implicit_invocation: true

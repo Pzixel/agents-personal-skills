@@ -1,0 +1,155 @@
+{
+  "_doc": "Single home of the orchestration thresholds. Hooks read this file; gate_policy.DEFAULT_PARAMS holds identical built-in defaults, so a missing or unreadable file changes no behaviour. Edit values here, not in code.",
+  "work_agent_types": [
+    "builder",
+    "reviewer"
+  ],
+  "_doc_work_agents": "Work agents are budgeted by context size and cumulative cost, never by tool-call count: a turn gets dearer only through context, and late turns are the productive ones.",
+  "context_soft": 150000,
+  "context_hard": 220000,
+  "cost_ceiling_usd": {
+    "default": 6,
+    "builder": 25
+  },
+  "call_caps": {
+    "_doc": "Search/probe agents keep tool-call caps: their cost is the call, not the context. A type absent here and absent from work_agent_types is uncapped (watcher, currently).",
+    "Explore": {
+      "soft": 12,
+      "hard": 18
+    },
+    "prod-probe": {
+      "soft": 25,
+      "hard": 40
+    }
+  },
+  "poll_sleep_min_seconds": 5,
+  "_comment_poll_sleep_min_seconds": "no-poll-gate: a `sleep` shorter than this many seconds paces requests and is allowed anywhere; this long or longer is polling and is refused in the foreground.",
+  "wait_for_max_seconds": 570,
+  "bash_timeout_max_ms": 600000,
+  "_comment_wait_for_limits": "no-poll-gate: a subagent's foreground wait-for must pass --max <= wait_for_max_seconds and set a Bash timeout >= (--max + 30) s, at most bash_timeout_max_ms; a call reaching its timeout (default 120000 ms) is moved to the background by the harness.",
+  "skill_bytes_threshold": 40000,
+  "process_skills": [
+    "orchestrate",
+    "workflow-authoring",
+    "artifact-design",
+    "artifact-capabilities"
+  ],
+  "process_skill_globs": [
+    "orchestrate-*",
+    "process-*",
+    "*-process",
+    "workflow-*"
+  ],
+  "_doc_process_skills": "Process skills tell the main session how to run the loop, so the main session may load them at any size. Expert skills are loaded by the agent that does the work. Add a process skill by name in process_skills, or by naming convention in process_skill_globs (fnmatch patterns on the skill name) - no code edit either way.",
+  "spawn_rights": {
+    "_doc": "Who may spawn whom, keyed by the type of the SPAWNING agent ('main' = the main session, which has no agent type). A list names the allowed types; \"*\" means everything the gate otherwise allows; {\"allow\": ..., \"deny\": {type: reason}} refuses the listed types with that reason; a type absent from this map gets the 'default' entry. Untyped requests (general-purpose/claude/empty) are refused for everyone. Escape hatch for both refusals: the literal AGENT_TYPE_OVERRIDE in the spawn prompt. Adding an agent type needs an entry here, not a code edit.",
+    "main": [
+      "builder",
+      "reviewer",
+      "Explore",
+      "prod-probe",
+      "watcher",
+      "claude-code-guide"
+    ],
+    "builder": [
+      "Explore"
+    ],
+    "reviewer": [
+      "Explore"
+    ],
+    "default": []
+  },
+  "model_override_rights": {
+    "_doc": "An agent's model comes from its definition in ~/.claude/agents. Only the main session (no agent type) may pass `model` to the Agent tool freely; every other spawner needs the exact (spawning type -> requested type -> model) triple listed here. A call without a `model` parameter is always allowed. Granting an exception is an entry here, not a code edit."
+  },
+  "build": {
+    "_doc": "Read by the orchestrate skill: at most fix_rounds_max fix rounds per task, and the number of independent reviewers per candidate.",
+    "fix_rounds_max": 2,
+    "reviewers": 2
+  },
+  "_doc_offline": "Offline experiment gate (hooks/offline-gate.py + gate_policy.offline_decision). A session named in ~/.claude/offline-sessions.json may not run a command that writes beyond this machine or touches a deployment control plane. denied_heads are refused whatever they do; denied_subcommands name the writing subcommands of a client that is otherwise fine (gh is inverted: only allow_only reads pass, and `gh api` passes until it carries a write flag); db_clients and http_clients are refused only for a host outside local_hosts, HTTP only when the call carries a write method or a body. A name without a dot counts as local.",
+  "offline": {
+    "denied_heads": [
+      "kubectl",
+      "helm",
+      "flux",
+      "argocd",
+      "ssh",
+      "scp",
+      "sftp",
+      "terraform",
+      "aws",
+      "gcloud",
+      "az",
+      "vercel",
+      "supabase",
+      "doctl"
+    ],
+    "denied_subcommands": {
+      "git": [
+        "push"
+      ],
+      "docker": [
+        "push",
+        "login"
+      ],
+      "gh": {
+        "allow_only": [
+          "pr view",
+          "pr list",
+          "pr checks",
+          "pr diff",
+          "run view",
+          "run list",
+          "issue view",
+          "issue list",
+          "repo view",
+          "api"
+        ]
+      }
+    },
+    "gh_api_write_flags": [
+      "-X",
+      "--method",
+      "-f",
+      "-F"
+    ],
+    "db_clients": [
+      "clickhouse-client",
+      "clickhouse",
+      "psql",
+      "redis-cli",
+      "kcat",
+      "mysql",
+      "mongosh"
+    ],
+    "db_host_flags": [
+      "--host",
+      "-h",
+      "-b",
+      "--broker-list"
+    ],
+    "http_clients": [
+      "curl",
+      "wget",
+      "http",
+      "https",
+      "httpie"
+    ],
+    "local_hosts": [
+      "localhost",
+      "127.0.0.1",
+      "::1",
+      "host.docker.internal"
+    ]
+  },
+  "_doc_bash_clamp": "bash-output-clamp hook: for the listed agent types, Bash output goes to a file under $CLAUDE_CODE_TMPDIR/orch-out and the agent sees head_lines + tail_lines when it exceeds max_bytes.",
+  "bash_clamp": {
+    "types": [
+      "builder"
+    ],
+    "head_lines": 40,
+    "tail_lines": 120,
+    "max_bytes": 8000
+  }
+}

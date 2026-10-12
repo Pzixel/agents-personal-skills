@@ -1,0 +1,61 @@
+# Local Dragonfly lab, shaped like the production operator deployment:
+# 1 primary + 2 replicas, --cache_mode=false --maxmemory=2048Mi, no cluster mode.
+# Here we run 1 primary + 1 replica (a second replica adds no measurable signal
+# for the scripting questions and costs 3g of the 8 GiB budget).
+name: dfskill
+
+x-df-args: &df-args
+  - "--cache_mode=false"
+  - "--maxmemory=2048Mi"
+  - "--dbfilename=dump"
+  - "--proactor_threads=4"
+
+services:
+  primary:
+    image: docker.dragonflydb.io/dragonflydb/dragonfly@sha256:366e34f415c22983dc1c4a1d575fa2d9c22b9a3998a9934bf1cc6d16c17695db
+    container_name: dfskill-primary
+    command: *df-args
+    ports:
+      - "6379:6379"
+    mem_limit: 3g
+    ulimits:
+      memlock: -1
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "6379", "PING"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  replica:
+    image: docker.dragonflydb.io/dragonflydb/dragonfly@sha256:366e34f415c22983dc1c4a1d575fa2d9c22b9a3998a9934bf1cc6d16c17695db
+    container_name: dfskill-replica
+    command:
+      - "--cache_mode=false"
+      - "--maxmemory=2048Mi"
+      - "--dbfilename=dump"
+      - "--proactor_threads=4"
+      - "--replicaof=primary:6379"
+    ports:
+      - "6380:6379"
+    mem_limit: 3g
+    ulimits:
+      memlock: -1
+    depends_on:
+      primary:
+        condition: service_healthy
+
+  # Q8 (part B) needs a single-shard node: `docker compose --profile single up -d`
+  single:
+    profiles: ["single"]
+    image: docker.dragonflydb.io/dragonflydb/dragonfly@sha256:366e34f415c22983dc1c4a1d575fa2d9c22b9a3998a9934bf1cc6d16c17695db
+    container_name: dfskill-single
+    command:
+      - "--cache_mode=false"
+      - "--maxmemory=2048Mi"
+      - "--dbfilename=dump"
+      - "--proactor_threads=1"
+    ports:
+      - "6381:6379"
+    mem_limit: 3g
+    ulimits:
+      memlock: -1

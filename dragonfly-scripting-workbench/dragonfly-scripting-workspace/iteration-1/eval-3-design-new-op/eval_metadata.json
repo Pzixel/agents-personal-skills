@@ -1,0 +1,18 @@
+{
+  "eval_id": 3,
+  "name": "design-new-op",
+  "skill_name": "dragonfly-scripting",
+  "prompt": "Design a Dragonfly (v1.34.0) Lua operation renew_leases_batch that renews up to 64 leases at once. Data: hash {t}:leases with field=mailbox_id and value 'token:deadline_ms'; zset {t}:due with member=mailbox_id score=deadline_ms. A lease renews only if the caller's token matches the stored token and the stored deadline is still in the future; on success the new deadline is now+ttl_ms (server time), both the hash and the zset are updated; the reply reports a per-item status (renewed / token_mismatch / expired / missing). Deliver renew_leases_batch.lua and DESIGN.md: KEYS/ARGV contract, reply shape, why the script is bounded and how, and exactly how you would measure its cost on Dragonfly before shipping.",
+  "expected_output": "All keys declared in KEYS (two keys, one hashtag); one HMGET for the batch, one multi-field HSET and one multi-member ZADD for the successes (or acall for discarded results); explicit 64 bound and unpack chunking awareness; flat reply with constant arity and integer/string status codes; measurement plan names the eval coordination counters or SCRIPT LATENCY, identical-seed comparison, p50 and p99; no Redis-only advice.",
+  "files": [],
+  "assertions": [
+    "both-keys-declared-in-keys: {t}:leases and {t}:due are both passed in KEYS, not constructed inside the script body",
+    "single-hmget-for-batch: the batch of up to 64 lease fields is read with one HMGET rather than per-item HGET",
+    "batched-hset-and-zadd-for-successes: successful renewals are written with one multi-field HSET and one multi-member ZADD (or equivalent single batched calls)",
+    "explicit-64-bound-and-chunking-awareness: the script enforces an explicit bound of 64 items and shows awareness of unpack/argument-count chunking limits",
+    "per-item-status-stable-protocol: the reply carries a per-item status covering renewed/token_mismatch/expired/missing with a stable constant-arity protocol",
+    "server-time-used-for-deadline: the new deadline is computed from server time obtained on the server, per the stated contract",
+    "measurement-plan-names-script-latency-and-equal-seed: the verification note names SCRIPT LATENCY or the eval coordination counters, an identical-seed comparison, and p50 plus p99",
+    "no-unverified-redis-only-advice: the design contains no Redis-origin performance advice presented without Dragonfly evidence"
+  ]
+}

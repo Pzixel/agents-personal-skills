@@ -1,0 +1,101 @@
+=== Q8 raw log ===
+date: 2026-09-16T03:40:07+0300
+driver: q8_head_of_line.py
+note: 8 loader PROCESSES running a ~2000us script in a loop; 9th client measures 300 plain GETs; proactor_threads 1 vs 4; probe key in the same hashtag as the script keys vs a different one
+server version: df-v1.34.0 (redis_version 7.4.0), threads=4
+server flags:   ["--cache_mode=false","--maxmemory=2048Mi","--dbfilename=dump","--proactor_threads=4"]
+
+
+--- threads=1 (:6381) ---
+server version: df-v1.34.0 (redis_version 7.4.0), threads=1
+server flags:   ["--cache_mode=false","--maxmemory=2048Mi","--dbfilename=dump","--proactor_threads=1"]
+$ SCRIPT LOAD <N x HGET over 8 keys in {q8s}> -> 724a7ceeaaa97be3792d8082d9e2989ef5851ab4
+[threads=1] calibration: 64 calls -> 167us, 1024 calls -> 666us => 0.520us/call + 133us fixed; chose n=3590 -> p50 1881us (target 2000us)
+$ EVALSHA 724a7ceeaaa97be3792d8082d9e2989ef5851ab4 8 {q8s}k0 {q8s}k1 {q8s}k2 {q8s}k3 {q8s}k4 {q8s}k5 {q8s}k6 {q8s}k7 3590   # x8 loader processes in a loop
+$ GET {q8s}probe   # 300 probes, no load
+$ GET {q8p}probe   # 300 probes, no load
+$ GET {q8s}probe   # 300 probes while 8 loaders run the 1881us script
+    [threads=1 | 8 loaders, probe SAME hashtag ({q8s}probe)] counters during the loaded window: eval_shardlocal_coordination=+7494 eval_io_coordination=+0 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+7494 tx_inline_runs_total=+7824 tx_normal_total=+7824 tx_shard_optimistic_total=+7824 tx_with_freq=+7824
+$ GET {q8p}probe   # 300 probes while 8 loaders run the 1881us script
+    [threads=1 | 8 loaders, probe DIFFERENT hashtag ({q8p}probe)] counters during the loaded window: eval_shardlocal_coordination=+7456 eval_io_coordination=+0 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+7456 tx_inline_runs_total=+7786 tx_normal_total=+7786 tx_shard_optimistic_total=+7786 tx_with_freq=+7786 used_memory_lua=-25600
+[threads=1] SCRIPT LATENCY n=15070 avg=1844.4757us median=1866.2633us max=8695.0us buckets=21
+Count: 15070 Average: 1844.4757  StdDev: 189.40
+Min: 35.0000  Median: 1866.2633  Max: 8695.0000
+------------------------------------------------------
+[      35,      40 ) 8   0.053%   0.053% 
+[      40,      45 ) 12   0.080%   0.133% 
+[      45,      50 ) 8   0.053%   0.186% 
+[      50,      60 ) 8   0.053%   0.239% 
+[      60,      70 ) 3   0.020%   0.259% 
+[     100,     120 ) 1   0.007%   0.265% 
+[     450,     500 ) 4   0.027%   0.292% 
+[     500,     600 ) 35   0.232%   0.524% 
+[     600,     700 ) 1   0.007%   0.531% 
+[    1400,    1600 ) 10   0.066%   0.597% 
+[    1600,    1800 ) 4050  26.875%  27.472% #####
+[    1800,    2000 ) 10246  67.989%  95.461% ##############
+[    2000,    2500 ) 659   4.373%  99.834% #
+[    2500,    3000 ) 9   0.060%  99.894% 
+[    3000,    3500 ) 3   0.020%  99.914% 
+[    3500,    4000 ) 3   0.020%  99.934% 
+[    4000,    4500 ) 2   0.013%  99.947% 
+[    4500,    5000 ) 2   0.013%  99.960% 
+[    6000,    7000 ) 3   0.020%  99.980% 
+[    7000,    8000 ) 1   0.007%  99.987% 
+[    8000,    9000 ) 2   0.013% 100.000%
+
+--- threads=4 (:6379) ---
+server version: df-v1.34.0 (redis_version 7.4.0), threads=4
+server flags:   ["--cache_mode=false","--maxmemory=2048Mi","--dbfilename=dump","--proactor_threads=4"]
+$ SCRIPT LOAD <N x HGET over 8 keys in {q8s}> -> 77a3451b70b577c826a9238021aeac9a6264a96d
+[threads=4] calibration: 64 calls -> 1982us, 1024 calls -> 29654us => 28.825us/call + 137us fixed; chose n=64 -> p50 2043us (target 2000us)
+$ EVALSHA 77a3451b70b577c826a9238021aeac9a6264a96d 8 {q8s}k0 {q8s}k1 {q8s}k2 {q8s}k3 {q8s}k4 {q8s}k5 {q8s}k6 {q8s}k7 64   # x8 loader processes in a loop
+$ GET {q8s}probe   # 300 probes, no load
+$ GET {q8p}probe   # 300 probes, no load
+$ GET {q8s}probe   # 300 probes while 8 loaders run the 2043us script
+    [threads=4 | 8 loaders, probe SAME hashtag ({q8s}probe)] counters during the loaded window: eval_shardlocal_coordination=+0 eval_io_coordination=+8989 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_cnt=+4 lua_interpreter_return=+8989 tx_batch_schedule_calls_total=+330 tx_batch_scheduled_items_total=+330 tx_normal_total=+9319 tx_schedule_cancel_total=+1 tx_shard_optimistic_total=+330 tx_shard_polls=+611252 used_memory_lua=-1108864
+$ GET {q8p}probe   # 300 probes while 8 loaders run the 2043us script
+    [threads=4 | 8 loaders, probe DIFFERENT hashtag ({q8p}probe)] counters during the loaded window: eval_shardlocal_coordination=+0 eval_io_coordination=+9059 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+9059 tx_batch_schedule_calls_total=+330 tx_batch_scheduled_items_total=+330 tx_normal_total=+9389 tx_schedule_cancel_total=+2 tx_shard_optimistic_total=+330 tx_shard_polls=+616012 used_memory_lua=+97280
+[threads=4] SCRIPT LATENCY n=18168 avg=11958.7631us median=11498.5098us max=55925.0us buckets=27
+Count: 18168 Average: 11958.7631  StdDev: 2644.52
+Min: 1006.0000  Median: 11498.5098  Max: 55925.0000
+------------------------------------------------------
+[    1000,    1200 ) 6   0.033%   0.033% 
+[    1200,    1400 ) 5   0.028%   0.061% 
+[    1400,    1600 ) 2   0.011%   0.072% 
+[    1600,    1800 ) 31   0.171%   0.242% 
+[    1800,    2000 ) 26   0.143%   0.385% 
+[    2000,    2500 ) 13   0.072%   0.457% 
+[    2500,    3000 ) 4   0.022%   0.479% 
+[    3000,    3500 ) 2   0.011%   0.490% 
+[    3500,    4000 ) 3   0.017%   0.506% 
+[    4000,    4500 ) 4   0.022%   0.528% 
+[    4500,    5000 ) 2   0.011%   0.539% 
+[    5000,    6000 ) 65   0.358%   0.897% 
+[    6000,    7000 ) 368   2.026%   2.923% 
+[    7000,    8000 ) 239   1.315%   4.238% 
+[    8000,    9000 ) 322   1.772%   6.011% 
+[    9000,   10000 ) 450   2.477%   8.487% 
+[   10000,   12000 ) 10065  55.400%  63.887% ###########
+[   12000,   14000 ) 5359  29.497%  93.384% ######
+[   14000,   16000 ) 428   2.356%  95.740% 
+[   16000,   18000 ) 230   1.266%  97.006% 
+[   18000,   20000 ) 172   0.947%  97.952% 
+[   20000,   25000 ) 245   1.349%  99.301% 
+[   25000,   30000 ) 83   0.457%  99.758% 
+[   30000,   35000 ) 32   0.176%  99.934% 
+[   35000,   40000 ) 8   0.044%  99.978% 
+[   40000,   45000 ) 2   0.011%  99.989% 
+[   50000,   60000 ) 2   0.011% 100.000%
+
+--- GET probe latency ---
+| variant                                                     | n   | p50_us  | p95_us  | p99_us  | min_us  | max_us  | mean_us | total_us  | script_us(p50) | calls/script |
+|-------------------------------------------------------------|-----|---------|---------|---------|---------|---------|---------|-----------|----------------|--------------|
+| threads=1 | baseline, no load, probe {q8s}probe             | 300 | 104.4   | 135.2   | 201.0   | 53.3    | 221.3   | 104.7   | 31407.3   | 1881           | 3590         |
+| threads=1 | baseline, no load, probe {q8p}probe             | 300 | 66.0    | 82.0    | 147.2   | 50.1    | 184.9   | 67.5    | 20251.1   | 1881           | 3590         |
+| threads=1 | 8 loaders, probe SAME hashtag ({q8s}probe)      | 300 | 29474.2 | 31408.1 | 33218.8 | 24721.7 | 34584.5 | 29630.9 | 8889257.1 | 1881           | 3590         |
+| threads=1 | 8 loaders, probe DIFFERENT hashtag ({q8p}probe) | 300 | 29497.0 | 31518.3 | 33084.5 | 26920.8 | 36508.8 | 29751.8 | 8925533.2 | 1881           | 3590         |
+| threads=4 | baseline, no load, probe {q8s}probe             | 300 | 113.6   | 136.0   | 197.8   | 59.1    | 246.9   | 109.0   | 32702.8   | 2043           | 64           |
+| threads=4 | baseline, no load, probe {q8p}probe             | 300 | 81.5    | 104.3   | 193.2   | 68.7    | 198.7   | 85.0    | 25509.8   | 2043           | 64           |
+| threads=4 | 8 loaders, probe SAME hashtag ({q8s}probe)      | 300 | 111.8   | 139.8   | 169.0   | 63.0    | 220.8   | 108.9   | 32672.5   | 2043           | 64           |
+| threads=4 | 8 loaders, probe DIFFERENT hashtag ({q8p}probe) | 300 | 113.9   | 173.5   | 191.2   | 68.2    | 199.8   | 118.9   | 35676.0   | 2043           | 64           |

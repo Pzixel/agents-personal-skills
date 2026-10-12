@@ -1,0 +1,7 @@
+interface:
+  display_name: "Superpowers: Systematic Debugging (psilon)"
+  short_description: "Investigate uncertain failures from evidence"
+  default_prompt: "Use $superpowers-systematic-debugging-psilon to establish the root cause of this uncertain failure before proposing a fix."
+
+policy:
+  allow_implicit_invocation: true

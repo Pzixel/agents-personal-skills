@@ -1,0 +1,7 @@
+interface:
+  display_name: "Superpowers: Writing Plans (psilon)"
+  short_description: "Write evidence-backed rolling-horizon plans"
+  default_prompt: "Use $superpowers-writing-plans-psilon to produce an evidence-backed rolling-horizon plan for this complex task."
+
+policy:
+  allow_implicit_invocation: true

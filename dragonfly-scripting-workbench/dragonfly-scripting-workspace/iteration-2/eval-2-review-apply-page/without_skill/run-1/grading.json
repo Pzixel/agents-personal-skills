@@ -1,0 +1,55 @@
+{
+  "expectations": [
+    {
+      "text": "finds-per-grant-hget-loop-453: a finding names the per-grant HGET loop at or around line 453 and proposes batching it (HMGET)",
+      "passed": true,
+      "evidence": "REVIEW.md:16-28 '### 1. Per-field HGET inside the old-grant loop — line 453' quotes redis.call('HGET', KEYS[7], field), bounds it by MAX_OLD_GRANTS = 8192, and proposes 'issue one chunked HMGET on KEYS[7] ... 8192 calls become 32', noting the reads all precede the first write so batching changes nothing observable."
+    },
+    {
+      "text": "finds-cjson-plan-encode-673: a finding names the cjson.encode of the replay plan at or around lines 673-674 on the success path",
+      "passed": true,
+      "evidence": "REVIEW.md:74-78 '### 5. The plan is a full second copy of the page, encoded, written, journalled, and deleted — lines 656-674, 693-702', naming 'cjson.encode(plan) at line 674' and the MAX_PLAN_BYTES = 32 MB vs MAX_REQUEST_BYTES = 16 MB asymmetry, plus the HSET at :693 and HDEL at :702."
+    },
+    {
+      "text": "chunked-call-recognized-correct: the chunked_call helper around lines 134-150 is recognized as the right idiom, not reported as a defect",
+      "passed": false,
+      "evidence": "The helper is itself filed as a finding in the impact-ordered list: REVIEW.md:94-104 '### 7. chunked_call / mget_dynamic copy every chunk before unpacking — lines 134-150, 152-167', asserting 'The current form allocates a 256-slot table per chunk and does 256 #chunk + 1 length operations ... plus the GC pressure' and that chunked_call 'does not' need its copy. That is precisely the lines the assertion says must not be reported as a defect; the countervailing line 26 ('The script already owns the right tool: chunked_call ... (line 134)') does not cancel finding 7. The micro-claim is also unmeasured, and the attached advice 'NATIVE_CHUNK_ITEMS = 256 is also conservative for Dragonfly, which handles wide argument vectors fine' (:104) carries no Dragonfly evidence and ignores the unpack argument-count ceiling."
+    },
+    {
+      "text": "findings-have-line-numbers-and-impact-order: every finding carries a concrete line number and the list is explicitly ordered by expected impact",
+      "passed": true,
+      "evidence": "REVIEW.md:14 '## Findings, ordered by expected impact', and every heading carries lines (#1 line 453, #2 line 553, #3 lines 403-414 vs 612-618, #4 lines 92-100/456/605, #5 lines 656-674/693-702, #6 lines 113-131/255/334, #7 lines 134-150, #8 lines 102-111, #9 minor items each with lines). REVIEW.md:123 restates 'The findings above are ordered by expected impact.'"
+    },
+    {
+      "text": "names-recovery-contract-no-change: the review states what it would NOT change because it belongs to the recovery contract",
+      "passed": true,
+      "evidence": "REVIEW.md:135-148 '## What I would NOT change, because it is part of the recovery contract' lists the receipt write/delete (:693, :702), the scope-patch/receipt/commands/commit ordering (:687-702), execute_commands as a separate pass over a materialised list, HDEL 7 / ZREM 8 adjacency (:612-613), ZADD_NX vs ZADD and SET NX cursors (:381, :630, :634, :220), deterministic table.sort (:509, :547, :587), the receipt_pending early return (:255-263), authorized() as a fence (:113-131, :306), the budget caps (:1-9), and the record_conflict comparisons (:404-414)."
+    },
+    {
+      "text": "addresses-multikey-coordination-cost: the review addresses the coordination cost of this 14-key script on default flags (io vs shard-local) and the --lock_on_hashtags trade-off",
+      "passed": false,
+      "evidence": "--lock_on_hashtags is never mentioned (grep returns nothing), so the trade-off is absent. The review's foundational claim inverts the actual default-flag behaviour: REVIEW.md:7 'One hashtag = one shard = one proactor thread. Every key this script touches hashes to the same slot, so all of its work runs on 1 of the 4 proactor threads.' On Dragonfly v1.34.0 default flags a hashtag is not a placement/lock unit, so a 24+n-key script is io-coordinated across shards, not shard-local; findings 1-9 and measurement item 4 ('one proactor pinned, three idle', :128) are all built on that unevidenced premise. The io vs shard-local distinction is never named."
+    },
+    {
+      "text": "claims-carry-dragonfly-evidence: every performance claim names Dragonfly-specific evidence (a measurement run, INFO/eval coordination counters, SCRIPT LATENCY, or a Dragonfly v1.34.0 doc/source citation)",
+      "passed": false,
+      "evidence": "The quantitative claims are asserted with no measurement, counter or citation: 'At a conservative 3-6 µs of dispatch overhead per call, that alone is 25-50 ms of locked-catalog time' (:24), the squashing/flush-point model in 'Platform facts' (:9), the one-hashtag-one-thread claim (:7), the listpack-vs-skiplist O(N)-per-ZCOUNT branch (:39), and Lua 5.1 string-interning cost (:70). None cites a v1.34.0 run, doc or source. The measurement section proposes counters only after the fact (INFO commandstats, SLOWLOG, ZCARD/OBJECT ENCODING, :125-131), and its premise that 'Dragonfly counts commands dispatched from inside Lua' in commandstats (:125) is itself unverified. No eval coordination counters and no SCRIPT LATENCY."
+    },
+    {
+      "text": "no-unverified-redis-only-advice: no Redis Functions/FUNCTION migration, no '#!lua flags=no-writes' shebang, no disable-atomicity-for-speed, no client pipelining as the fix for in-script calls, no redis.setresp(3) -- unless backed by Dragonfly evidence",
+      "passed": true,
+      "evidence": "Grep for FUNCTION, setresp, '#!lua', 'no-writes' and 'pipelin' finds none of the prohibited recommendations. The single occurrence of pipelining is a comparison, not a proposed fix: 'far more so than the equivalent loop in a pipeline' (:9). No atomicity relaxation is proposed; :28 only argues hoisting the reads loses no ordering or atomicity property."
+    },
+    {
+      "text": "flags-redundant-writes: the review flags as redundant writes both the delete-and-reinsert of unchanged grants at apply_new_mutable_mailbox_page.lua:612-616 (HDEL/ZREM of grant fields followed by HSET/ZADD of the same rows) and the rewrite at apply_new_mutable_mailbox_page.lua:403-415 of records and grants the script has already compared and proven identical, and states that these writes still cost shard mutations, journal bytes and replica bytes",
+      "passed": true,
+      "evidence": "REVIEW.md:45-61 '### 3. Unconditional re-write of grants and records that are already identical — lines 403-414 vs 612-618' covers both halves: 'lines 615 and 618 unconditionally HSET every grant payload and every record JSON back — including the entries the script has just confirmed are byte-identical' and 'the command list does HDEL 7 (line 612) -> ZREM 8 (line 613) -> HSET 7 (line 615) -> ZADD 8 (line 616): a delete-then-reinsert of an unchanged entry'. Costs are stated as 'Four dispatched mutations per unchanged grant instead of zero', dense-hash/zset delete+reinsert churn, and 'Four journal records per unchanged grant replicated to every replica' (:52-55), consistent with platform fact 4 at :10. Matches the input at :612-616 and :403-415; it additionally preserves the half-removed-mailbox reasoning."
+    }
+  ],
+  "summary": {
+    "passed": 6,
+    "failed": 3,
+    "total": 9,
+    "pass_rate": 0.667
+  }
+}

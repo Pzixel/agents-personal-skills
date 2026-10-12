@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# Generate a review package: stat summary, net diff, and objective commit IDs
+# diff with extended context, written to a file the reviewer reads in one
+# call. Using the recorded per-task BASE (not HEAD~1) keeps multi-commit
+# tasks intact.
+#
+# BASE and HEAD may be commits or tree IDs returned by worktree-snapshot.
+# Usage: review-package PLAN_FILE BASE HEAD [OUTFILE]
+# Default OUTFILE: <repo-root>/.superpowers/sdd/<plan-key>/review-<base7>..<head7>.diff
+# (named per range, so a re-review after fixes gets a distinct fresh file).
+set -euo pipefail
+
+if [ $# -lt 3 ] || [ $# -gt 4 ]; then
+  echo "usage: review-package PLAN_FILE BASE HEAD [OUTFILE]" >&2
+  exit 2
+fi
+
+plan=$1
+base=$2
+head=$3
+[ -f "$plan" ] || { echo "no such plan file: $plan" >&2; exit 2; }
+
+git rev-parse --verify --quiet "$base^{tree}" >/dev/null || { echo "bad BASE tree-ish: $base" >&2; exit 2; }
+git rev-parse --verify --quiet "$head^{tree}" >/dev/null || { echo "bad HEAD tree-ish: $head" >&2; exit 2; }
+
+# Commit ranges must contain work descended from BASE. Tree snapshots have no
+# ancestry; they remain valid diff boundaries and skip these commit guards.
+base_commit=
+head_commit=
+if [ "$(git cat-file -t "$base^{}")" = commit ] && [ "$(git cat-file -t "$head^{}")" = commit ]; then
+  base_commit=$(git rev-parse "$base^{commit}")
+  head_commit=$(git rev-parse "$head^{commit}")
+  git merge-base --is-ancestor "$base_commit" "$head_commit" || {
+    echo "HEAD is not a descendant of BASE: ${base}..${head}" >&2
+    exit 3
+  }
+  [ "$base_commit" != "$head_commit" ] || {
+    echo "empty commit range: ${base}..${head}" >&2
+    exit 3
+  }
+fi
+
+if [ $# -eq 4 ]; then
+  out=$4
+else
+  dir=$("$(cd "$(dirname "$0")" && pwd)/sdd-workspace" "$plan")
+  out="$dir/review-$(git rev-parse --short "$base")..$(git rev-parse --short "$head").diff"
+fi
+
+{
+  echo "# Review package: ${base}..${head}"
+  echo
+  echo "## Files changed"
+  git diff --stat "$base" "$head"
+  echo
+  echo "## Diff"
+  git diff -U10 "$base" "$head"
+  echo
+  echo "## Commit IDs"
+  if [ -n "$base_commit" ] && [ -n "$head_commit" ]; then
+    git rev-list --reverse "${base_commit}..${head_commit}"
+  else
+    echo "Working-tree snapshots; no commit range."
+  fi
+} > "$out"
+
+if [ -n "$base_commit" ] && [ -n "$head_commit" ]; then
+  commits=$(git rev-list --count "${base_commit}..${head_commit}")
+else
+  commits=0
+fi
+echo "wrote ${out}: ${commits} commit(s), $(wc -c < "$out" | tr -d ' ') bytes"

@@ -1,0 +1,60 @@
+{
+  "expectations": [
+    {
+      "text": "reply-equality-with-original: the optimized script returns replies byte-identical to the original on the same seeded state, proven by running scripts/bench_script.py --compare (clock-bearing reply positions excluded)",
+      "passed": true,
+      "evidence": "Grader ran, on container eval-1-grader (df-v1.34.0, threads=4, port 32821): bench_script.py --spec claim_mailbox_batch_spec.json --seed claim_mailbox_batch_seed.py --reseed --compare <original> <with_skill>. Output: 'replies identical on this seed (164 fields, ignored [1,7,12,...,162])', exit code 0. A head-to-head --compare of with_skill vs without_skill also reported identical replies."
+    },
+    {
+      "text": "p50-improved-on-same-seed: the measured p50 of the optimized script is lower than the original's p50 measured on the same seed and the same container",
+      "passed": true,
+      "evidence": "Grader-measured p50 on one container (eval-1-grader), same seed, --reseed, 30 timed iters. Paired run A: original 100114.0 us vs with_skill 6424.0 us (ratio 0.064). Paired run B (same container, same seed): original 41852.1 us vs without_skill 6045.7 us (ratio 0.144). Head-to-head third run: with_skill 5995.3 us vs without_skill 6284.0 us. THREE SCRIPTS: original p50 = 100114.0 us / 41852.1 us (two paired runs; absolute varies with host load), with_skill = 6424.0 us (5995.3 us head-to-head), without_skill = 6045.7 us (6284.0 us head-to-head). with_skill is 15.6x faster than the original it was paired against. Server SCRIPT LATENCY agrees: original avg 93689 us, with_skill avg 5889 us."
+    },
+    {
+      "text": "per-candidate-hget-loop-batched: the per-candidate HGET/HMGET-per-mailbox loop over the candidate window is replaced by batched multi-field reads",
+      "passed": true,
+      "evidence": "outputs/claim_mailbox_batch.lua:265-267 replaces the original's two per-candidate HGETs (original lines 184-185) with 'local versions = hmget_many(versions_key, candidates)' and 'local raw_leases = hmget_many(KEYS[7], candidates)'; hmget_many (lines 23-37) issues chunked HMGET with CHUNK=512. Records and stale receipts are likewise one batched read each (lines 286-287). Request-token receipts and their leases are batched at lines 132-162; fences 4 GET -> 1 MGET (line 208); descriptor 3 HGET -> 1 HMGET (line 226). Writes are batched via acall_many into 8 calls (lines 363-365, 406-413). Grader-measured effect: SCRIPT LATENCY avg drops 93689 us -> 5889 us; NOTES.md:153 reports tx_shard_polls 4268 -> 24."
+    },
+    {
+      "text": "payload-reads-bounded-by-batch-size: record/payload reads are bounded by batch_size (32), not by candidate_window (1024)",
+      "passed": false,
+      "evidence": "Not present. outputs/claim_mailbox_batch.lua:279-281 appends a record field for EVERY candidate with a version and no live lease, then line 286 reads them all: 'local records = hmget_many(KEYS[13], record_fields)'. In the production shape (~1000 due, mostly unleased) that is ~1000 x ~2 KB of payload pulled into Lua per invocation, i.e. bounded by candidate_window, not by batch_size. READING APPLIED: literal - the property the assertion names is objectively absent from the output. THE ASSERTION CONFLICTS WITH 'reply-protocol-and-recovery-preserved' AND WITH THE PROMPT ('without changing its reply protocol or its recovery semantics'): the original emits {'PROTOCOL','record_missing'} (original line 217) for any eligible candidate anywhere in the 1024-window, including the 40th, so restricting the read to the first 32 claimables changes the reply on such states. The arm identified this correctly (NOTES.md 'No narrowing of any whole-window check') and its differential suite covers 'record_missing beyond the batch bound'. The only construction that would satisfy both - existence-probing the tail with per-field HSTRLEN/HEXISTS and HMGETing payloads only for the <=32 claimables - costs ~1000 extra round trips on Dragonfly, which the arm's own and the grader's measurements show is the dominant cost, so it is a pessimization. This failure is an eval defect (unsatisfiable assertion), not a defect in this arm; the same verdict is recorded for the other arm."
+    },
+    {
+      "text": "before-after-numbers-present: the deliverables contain concrete before/after numbers measured against a Dragonfly v1.34.0 container, not estimates",
+      "passed": true,
+      "evidence": "NOTES.md:130-153 gives two back-to-back measured runs on the pinned digest with --proactor_threads=4 --cache_mode=false --maxmemory=2048Mi: run 1 baseline p50 101009.8 us vs optimized 7350.5 us; run 2 baseline 68614.2 us vs optimized 3906.7 us; plus p95/p99/mean, server SCRIPT LATENCY averages (102182 -> 6450 us), coordination counters (io=1.00 shardlocal=0.00 both scripts) and tx_shard_polls 4268 -> 24. Raw output retained in outputs/bench-run2.txt and outputs/counters.txt. Grader independently reproduced the same order of magnitude (100114 -> 6424 us p50)."
+    },
+    {
+      "text": "reply-protocol-and-recovery-preserved: the whole-window protocol/version checks and the lease-receipt recovery semantics are unchanged",
+      "passed": true,
+      "evidence": "The decision pass (outputs/claim_mailbox_batch.lua:291-360) iterates all n_candidates and applies the same checks in the same order as the original 183-245: PROTOCOL lease, removals, CLEANUP_REQUIRED with the same stale-receipt validation, PROTOCOL record_missing, PROTOCOL receipt / receipt_lease_mismatch, and '#claimable < batch_size' still only gates insertion, not the scan. The receipt-recovery block (132-203) keeps the original order receipt -> receipt_token -> lease -> receipt_lease_mismatch -> RECEIPT_EXPIRED/record_missing and still returns early on has_receipt. Reads were only hoisted, never dropped. Confirmed externally by the grader's --compare (identical replies) and by the arm's differential.py (32/32 scenarios identical on reply AND final 14-key dump). RESIDUAL, NOT DISQUALIFYING: writes were regrouped so all HDELs on KEYS[8]/KEYS[14] run before all HSETs (lines 406-413), whereas the original interleaved delete-then-write per slot; if a caller-supplied request token equalled an older lease token the surviving keyspace would differ. NOTES.md:108-111 states this and argues the input is unsupported (recovery scan proves every request token is absent from KEYS[8]); the other arm guards it explicitly instead."
+    },
+    {
+      "text": "no-unverified-redis-only-advice: the output contains no Redis-origin performance advice presented without Dragonfly evidence",
+      "passed": true,
+      "evidence": "Every performance claim carries Dragonfly evidence: 'every synchronous redis.call is a coordinator->shard hop (~27 us measured in the skill lab, [lab Q5])' (NOTES.md:16-17), redis.acall flush cost 28.05 -> 2.93 us/call with eval_squashed_flushes delta (NOTES.md:81), unpack argument ceiling 8163 from [lab Q9] (NOTES.md:58), coordination counters io/shardlocal reported per invocation (NOTES.md:152), and the 'Explicitly not done' section rejects --!df flags=allow-undeclared-keys/disable-atomicity and --lock_on_hashtags on Dragonfly-specific grounds (global transaction, one hashtag vs 4 proactor threads) rather than Redis lore. No cluster-slot, single-threaded-server, or pipelining folklore appears."
+    }
+  ],
+  "summary": {
+    "passed": 6,
+    "failed": 1,
+    "total": 7,
+    "pass_rate": 0.86
+  },
+  "eval_feedback": {
+    "suggestions": [
+      {
+        "assertion": "payload-reads-bounded-by-batch-size: record/payload reads are bounded by batch_size (32), not by candidate_window (1024)",
+        "reason": "Unsatisfiable together with reply-equality-with-original and reply-protocol-and-recovery-preserved: the original's PROTOCOL record_missing fires for eligible candidates beyond the 32nd, so any bound on record reads changes replies. Both arms independently reached this conclusion and both fail the assertion as written. Rephrase to what is actually achievable and discriminating, e.g. 'record payloads are fetched in batched HMGETs rather than one HGET per candidate, and the whole-window record_missing detection is retained'."
+      },
+      {
+        "reason": "No assertion checks the resulting KEYSPACE, only the reply. Both arms reorder writes; with_skill's all-deletes-before-all-writes regrouping changes final KEYS[8]/KEYS[14] state if a request token collides with an old lease token, and --compare cannot see it. An assertion requiring a differential on the post-state of all 14 keys would be discriminating - both arms happened to build one, but nothing forced it."
+      },
+      {
+        "reason": "p50-improved-on-same-seed is trivially satisfied here (both arms 7-16x). A threshold (e.g. at least 5x, or p50 under 10 ms at the production shape) plus a requirement that the number be reproduced by the grader's own harness would separate a real batching rewrite from a micro-optimization."
+      }
+    ],
+    "overall": "Six of seven assertions are sound and discriminating. payload-reads-bounded-by-batch-size is mis-specified and should be rewritten; add a post-state equivalence assertion."
+  }
+}

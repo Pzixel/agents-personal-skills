@@ -1,0 +1,7 @@
+interface:
+  display_name: "Superpowers: Brainstorming (psilon)"
+  short_description: "Admit and compare evidence-backed designs"
+  default_prompt: "Use $superpowers-brainstorming-psilon to verify candidate prerequisites for this target, compare admissible approaches, and recommend a proportionate design only if current evidence admits one; otherwise report the block."
+
+policy:
+  allow_implicit_invocation: true

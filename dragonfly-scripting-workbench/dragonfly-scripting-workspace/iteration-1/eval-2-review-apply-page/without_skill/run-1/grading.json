@@ -1,0 +1,45 @@
+{
+  "expectations": [
+    {
+      "text": "finds-per-grant-hget-loop-453: a finding names the per-grant HGET loop at or around line 453 and proposes batching it (HMGET)",
+      "passed": true,
+      "evidence": "Finding 1 '## 1. Per-field `HGET` in the old-grant loop - up to 8192 inner commands (line 453)' quotes 'local old_payload = redis.call('HGET', KEYS[7], field)   -- line 453' (exact match at :453) and proposes 'one `chunked_call('HMGET', KEYS[7], old_grant_fields)` (or a single batched read over the union of old and new fields, reusing the line-410 results)'."
+    },
+    {
+      "text": "finds-cjson-plan-encode-673: a finding names the cjson.encode of the replay plan at or around lines 673-674 on the success path",
+      "passed": true,
+      "evidence": "Named at the right line with its success-path cost, though filed under 'Do not change' item 1: 'Publishing the full plan before applying it - `cjson.encode(plan)` (line 674) ... This is the largest single byte cost in the script (up to 32 MB materialized, written, and deleted per page)'. Also instrumented in the measurement plan: 'right after `cjson.encode(plan)` at line 674'. Unlike arm A it does not flag that the MAX_PLAN_BYTES check at :675 runs after the encode."
+    },
+    {
+      "text": "chunked-call-recognized-correct: the chunked_call helper around lines 134-150 is recognized as the right idiom, not reported as a defect",
+      "passed": true,
+      "evidence": "Finding 1: 'The script already knows how to avoid this: `chunked_call` (lines 134-150) does exactly this batching with `HMGET` in 256-field chunks and is used five times elsewhere'. Finding 8 critiques only an internal copy (`unpack(values, first, last)` would avoid the temp table) and rates it 'Low absolute impact, essentially free to fix' - not a rejection of the idiom."
+    },
+    {
+      "text": "findings-have-line-numbers-and-impact-order: every finding carries a concrete line number and the list is explicitly ordered by expected impact",
+      "passed": true,
+      "evidence": "'Findings are ordered by expected impact at the documented budgets (MAX_RECORDS = 256, MAX_GRANTS = 8192, MAX_OLD_GRANTS = 8192).' All ten findings carry line numbers (453; 612-615/618/629-634; 549-561/553; 615/617/618; 79-100/456/605; 113-131/255/334; 102-108/248-250; 134-168/216-227/63-71; 216-227/689/700/701; 497-509/535-547/583-587) and a closing impact table repeats them. Spot-checked 612-618 and 553 against the file: accurate."
+    },
+    {
+      "text": "names-recovery-contract-no-change: the review states what it would NOT change because it belongs to the recovery contract",
+      "passed": true,
+      "evidence": "Section '## What I would NOT change - recovery contract' with 9 items: plan-publish-then-apply-then-clear (674, 692-702), `commit` kept separate as the linearization point (665, 700, 701), HDEL 7 / ZREM 8 adjacency (612-613), scope patch on keys 22+n..24+n before the receipt (678-689), `SET ... NX` for cursor keys at 220 ('it is for a replay that happens after the cursor exists'), ZADD_NX vs ZADD, record_conflict reads at 403-415, deterministic table.sort."
+    },
+    {
+      "text": "addresses-multikey-coordination-cost: the review addresses the coordination cost of this 14-key script on default flags (io vs shard-local) and the --lock_on_hashtags trade-off",
+      "passed": false,
+      "evidence": "The premise is inverted and --lock_on_hashtags is never mentioned anywhere in the file. Opening section: 'All keys share the `{inbound}` tag, so every key resolves to one shard.' On Dragonfly v1.34.0 default flags placement is by full key name; 8 keys in one tag cost 26.95 us/call with eval_io_coordination_total +1, identical to 8 keys in eight tags (27.00 us), and only --lock_on_hashtags makes the tag the placement unit (1.54 us/call). No io-vs-shard-local distinction, no eval_*_coordination_total counters, and the single-shard assumption underpins the whole ranking and measurement item 5 ('Expect one proactor pinned near 100% and three near idle')."
+    },
+    {
+      "text": "claims-carry-dragonfly-evidence: every performance claim names Dragonfly-specific evidence (a measurement run, INFO/eval coordination counters, SCRIPT LATENCY, or a Dragonfly v1.34.0 doc/source citation)",
+      "passed": false,
+      "evidence": "Central numeric claims carry no Dragonfly measurement, counter, or source citation: 'At a conservative 3-6 us per inner call this is 25-50 ms of pure overhead' (no basis given; the real default-flag figure is 26.95 us/call io-coordinated, an order of magnitude off), 'roughly a 200x reduction in dispatch count (8192 -> 32)', 'Dragonfly replicates Lua **effects** ... not the script' (uncited), 'Lua 5.1 does not cache compiled patterns' and '`#` on a table is a border search in Lua 5.1' (Dragonfly v1.34.0 runs Lua 5.4). The transcript shows no server was started: 'No containers were started.' INFO commandstats appears only as a future measurement plan, not as evidence behind the claims."
+    },
+    {
+      "text": "no-unverified-redis-only-advice: no Redis Functions/FUNCTION migration, no '#!lua flags=no-writes' shebang, no disable-atomicity-for-speed, no client pipelining as the fix for in-script calls, no redis.setresp(3) -- unless backed by Dragonfly evidence",
+      "passed": true,
+      "evidence": "Grepped: no FUNCTION/FCALL migration, no '#!lua flags=' shebang, no disable-atomicity, no client-pipelining proposal, no redis.setresp. The only runtime suggestion is Dragonfly-specific and hedged: 'Dragonfly supports fire-and-forget inner calls (`redis.acall`, and the server-side `--lua_auto_async` flag) ... **Verify availability and exact semantics on 1.34.0 before relying on it**'. (The inverted hashtag-colocation premise is Redis-cluster-derived but is not one of the enumerated prescriptions; it is scored under the two assertions above.)"
+    }
+  ],
+  "summary": {"passed": 6, "failed": 2, "total": 8, "pass_rate": 0.75}
+}

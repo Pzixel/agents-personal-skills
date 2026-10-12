@@ -1,0 +1,7 @@
+interface:
+  display_name: "Superpowers: Verification Before Completion (psilon)"
+  short_description: "Verify high-risk outcomes at exact target scope"
+  default_prompt: "Use $superpowers-verification-before-completion-psilon to collect fresh target-matched evidence for this high-risk completion claim."
+
+policy:
+  allow_implicit_invocation: true

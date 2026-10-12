@@ -1,0 +1,7 @@
+interface:
+  display_name: "Superpowers: Subagent Development (psilon)"
+  short_description: "Explicit subagent execution for large plans"
+  default_prompt: "Use $superpowers-subagent-driven-development-psilon to execute the ready tasks in this large decomposed plan with bounded subagent ownership."
+
+policy:
+  allow_implicit_invocation: false

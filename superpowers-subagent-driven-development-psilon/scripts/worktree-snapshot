@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# Write the current non-ignored working-tree state to an unreachable Git tree
+# object without changing the real index, HEAD, or any ref. The returned tree
+# ID gives review-package a stable boundary when task-level commits are not
+# authorized.
+#
+# PATHS_FILE contains one literal repository-relative file or directory per
+# line. Globs, absolute paths, repository root, and parent traversal are
+# rejected. Only this authorized mutable scope is added to the temporary index.
+#
+# EXPECTED_HEAD_TREE is the clean plan baseline recorded before Task 1. Refuse
+# to snapshot after HEAD content drifts, and seed from that exact tree so no
+# unrelated commit can enter the review boundary.
+#
+# Usage: worktree-snapshot PLAN_FILE PATHS_FILE EXPECTED_HEAD_TREE
+set -euo pipefail
+
+if [ $# -ne 3 ]; then
+  echo "usage: worktree-snapshot PLAN_FILE PATHS_FILE EXPECTED_HEAD_TREE" >&2
+  exit 2
+fi
+
+plan=$1
+paths_file=$2
+expected_head_tree=$3
+[ -f "$plan" ] || { echo "no such plan file: $plan" >&2; exit 2; }
+[ -f "$paths_file" ] || { echo "no such paths file: $paths_file" >&2; exit 2; }
+
+script_dir=$(cd "$(dirname "$0")" && pwd)
+workspace=$("$script_dir/sdd-workspace" "$plan")
+snapshot_dir=$(mktemp -d "$workspace/.snapshot.XXXXXX")
+snapshot_index="$snapshot_dir/index"
+tracked_list="$snapshot_dir/tracked"
+stage_list="$snapshot_dir/stages"
+
+cleanup() {
+  rm -f "$snapshot_index" "$tracked_list" "$stage_list"
+  rmdir "$snapshot_dir"
+}
+trap cleanup EXIT
+
+root=$(git rev-parse --show-toplevel)
+cd "$root"
+git rev-parse --verify --quiet "$expected_head_tree^{tree}" >/dev/null \
+  || { echo "bad expected HEAD tree: $expected_head_tree" >&2; exit 2; }
+expected_head_tree=$(git rev-parse "$expected_head_tree^{tree}")
+live_head_tree=$(git rev-parse 'HEAD^{tree}')
+[ "$live_head_tree" = "$expected_head_tree" ] \
+  || { echo "HEAD tree changed since snapshot baseline: expected $expected_head_tree, found $live_head_tree" >&2; exit 3; }
+GIT_INDEX_FILE="$snapshot_index" git read-tree "$expected_head_tree"
+
+path_count=0
+while IFS= read -r scoped_path || [ -n "$scoped_path" ]; do
+  [ -n "$scoped_path" ] || continue
+  case "$scoped_path" in
+    /*|.|..|:*|*'*'*|*'?'*|*'['*|*']'*)
+      echo "unsafe or non-literal scoped path: $scoped_path" >&2
+      exit 2
+      ;;
+  esac
+  case "/$scoped_path/" in
+    *"/../"*|*"/./"*)
+      echo "unsafe scoped path traversal: $scoped_path" >&2
+      exit 2
+      ;;
+  esac
+  case "/$scoped_path/" in
+    *"/.git/"*)
+      echo "Git metadata cannot be a snapshot scope: $scoped_path" >&2
+      exit 2
+      ;;
+  esac
+
+  path_count=$((path_count + 1))
+  GIT_INDEX_FILE="$snapshot_index" git ls-files --stage -- "$scoped_path" > "$stage_list"
+  if awk '$1 == "160000" { found = 1 } END { exit !found }' "$stage_list"; then
+    echo "scoped path contains a gitlink or submodule unsupported by snapshot mode: $scoped_path" >&2
+    exit 2
+  fi
+  if [ -d "$scoped_path" ] && [ -n "$(find "$scoped_path" -name .git -print -quit)" ]; then
+    echo "scoped path contains a nested Git repository unsupported by snapshot mode: $scoped_path" >&2
+    exit 2
+  fi
+  GIT_INDEX_FILE="$snapshot_index" git ls-files -- "$scoped_path" > "$tracked_list"
+  if [ -e "$scoped_path" ] || [ -L "$scoped_path" ] || [ -s "$tracked_list" ]; then
+    GIT_INDEX_FILE="$snapshot_index" git add -A -- "$scoped_path"
+  fi
+done < "$paths_file"
+
+[ "$path_count" -gt 0 ] || { echo "paths file contains no scoped paths: $paths_file" >&2; exit 2; }
+GIT_INDEX_FILE="$snapshot_index" git write-tree

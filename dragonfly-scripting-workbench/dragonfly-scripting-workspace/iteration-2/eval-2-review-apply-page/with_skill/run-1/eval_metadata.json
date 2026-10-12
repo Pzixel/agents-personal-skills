@@ -1,0 +1,21 @@
+{
+  "eval_id": 2,
+  "name": "review-apply-page",
+  "skill_name": "dragonfly-scripting",
+  "prompt": "Review dragonfly-scripting-workbench/dragonfly-scripting-workspace/evals/inputs/apply_new_mutable_mailbox_page.lua (705 lines, runs on Dragonfly v1.34.0 via EVALSHA, all keys under one hashtag, default server flags with --proactor_threads=4) for wasted server work. Write REVIEW.md: concrete findings with line numbers ordered by expected impact, what each costs and why on Dragonfly specifically, what you would measure to confirm, and what you would NOT change because it is part of the recovery contract. No code changes required.",
+  "expected_output": "Findings include the per-grant HGET loop at :453 (batch via HMGET), the cjson.encode of the plan at :673-674 on the success path, recognition that chunked_call (:134-150) is already the right idiom, the io-coordination cost of a 14-key script on default flags and the --lock_on_hashtags trade-off; no Redis-only advice (FUNCTION, #!lua flags, disable-atomicity for speed, client pipelining as the fix).",
+  "files": [
+    "dragonfly-scripting-workbench/dragonfly-scripting-workspace/evals/inputs/apply_new_mutable_mailbox_page.lua"
+  ],
+  "assertions": [
+    "finds-per-grant-hget-loop-453: a finding names the per-grant HGET loop at or around line 453 and proposes batching it (HMGET)",
+    "finds-cjson-plan-encode-673: a finding names the cjson.encode of the replay plan at or around lines 673-674 on the success path",
+    "chunked-call-recognized-correct: the chunked_call helper around lines 134-150 is recognized as the right idiom, not reported as a defect",
+    "findings-have-line-numbers-and-impact-order: every finding carries a concrete line number and the list is explicitly ordered by expected impact",
+    "names-recovery-contract-no-change: the review states what it would NOT change because it belongs to the recovery contract",
+    "addresses-multikey-coordination-cost: the review addresses the coordination cost of this 14-key script on default flags (io vs shard-local) and the --lock_on_hashtags trade-off",
+    "claims-carry-dragonfly-evidence: every performance claim names Dragonfly-specific evidence (a measurement run, INFO/eval coordination counters, SCRIPT LATENCY, or a Dragonfly v1.34.0 doc/source citation)",
+    "no-unverified-redis-only-advice: no Redis Functions/FUNCTION migration, no '#!lua flags=no-writes' shebang, no disable-atomicity-for-speed, no client pipelining as the fix for in-script calls, no redis.setresp(3) -- unless backed by Dragonfly evidence",
+    "flags-redundant-writes: the review flags as redundant writes both the delete-and-reinsert of unchanged grants at apply_new_mutable_mailbox_page.lua:612-616 (HDEL/ZREM of grant fields followed by HSET/ZADD of the same rows) and the rewrite at apply_new_mutable_mailbox_page.lua:403-415 of records and grants the script has already compared and proven identical, and states that these writes still cost shard mutations, journal bytes and replica bytes"
+  ]
+}

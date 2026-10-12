@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# Extract one task's full text from an implementation plan into a file the
+# implementer reads in one call, so the task text never has to be pasted
+# through the controller's context.
+#
+# Usage: task-brief PLAN_FILE TASK_NUMBER [OUTFILE]
+# Default OUTFILE: <repo-root>/.superpowers/sdd/<plan-key>/task-<N>-brief.md
+# (per plan and per worktree; concurrent runs of the SAME plan in the same
+# working tree share it).
+set -euo pipefail
+
+if [ $# -lt 2 ] || [ $# -gt 3 ]; then
+  echo "usage: task-brief PLAN_FILE TASK_NUMBER [OUTFILE]" >&2
+  exit 2
+fi
+
+plan=$1
+n=$2
+[ -f "$plan" ] || { echo "no such plan file: $plan" >&2; exit 2; }
+
+if [ $# -eq 3 ]; then
+  out=$3
+else
+  dir=$("$(cd "$(dirname "$0")" && pwd)/sdd-workspace" "$plan")
+  out="$dir/task-${n}-brief.md"
+fi
+
+awk -v n="$n" '
+  function strip_fence_indent(line, s, i) {
+    s = line
+    for (i = 0; i < 3 && substr(s, 1, 1) == " "; i++) s = substr(s, 2)
+    return s
+  }
+  function open_fence(line, s, ch, i) {
+    s = strip_fence_indent(line)
+    ch = substr(s, 1, 1)
+    if (ch != "`" && ch != "~") return 0
+    for (i = 1; substr(s, i, 1) == ch; i++) {}
+    if (i - 1 < 3) return 0
+    fence_ch = ch
+    fence_len = i - 1
+    return 1
+  }
+  function close_fence(line, s, i) {
+    s = strip_fence_indent(line)
+    if (substr(s, 1, 1) != fence_ch) return 0
+    for (i = 1; substr(s, i, 1) == fence_ch; i++) {}
+    return i - 1 >= fence_len && substr(s, i) ~ /^[ \t]*$/
+  }
+  {
+    if (infence) {
+      if (intask) print
+      if (close_fence($0)) infence = 0
+      next
+    }
+    if (open_fence($0)) {
+      infence = 1
+      if (intask) print
+      next
+    }
+  }
+  {
+    heading = strip_fence_indent($0)
+    if (heading ~ /^#+[ \t]+(Task|Milestone)[ \t]+[0-9]+/) {
+      intask = (heading ~ ("^#+[ \t]+(Task|Milestone)[ \t]+" n "([^0-9]|$)"))
+    }
+    if (intask) print
+  }
+' "$plan" > "$out"
+
+if [ ! -s "$out" ]; then
+  echo "task ${n} not found in ${plan} (no heading matching 'Task ${n}' or 'Milestone ${n}')" >&2
+  exit 3
+fi
+
+echo "wrote ${out}: $(wc -l < "$out" | tr -d ' ') lines"

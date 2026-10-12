@@ -1,0 +1,64 @@
+=== Q7 raw log ===
+date: 2026-09-16T03:39:55+0300
+driver: q7_real_script.py
+note: real claim_mailbox_batch.lua vs HMGET variant; 1024 due mailboxes, no leases, candidate_window=1024, batch_size=32, lease_ttl=120000, ~2048B records, all 14 keys in hashtag {inbound}
+server version: df-v1.34.0 (redis_version 7.4.0), threads=4
+server flags:   ["--cache_mode=false","--maxmemory=2048Mi","--dbfilename=dump","--proactor_threads=4"]
+
+orig: lab/variants/claim_mailbox_batch.orig.lua (296 lines)
+hmget: lab/variants/claim_mailbox_batch.hmget.lua (347 lines)
+$ SET catalog:{inbound}:active_generation gen-q7 ; SET catalog:{inbound}:cursor_coverage_generation gen-q7 ; SET catalog:{inbound}:reconciled_server_run_id <master_replid> ; SET catalog:{inbound}:last_reconciliation_started_ms <now-1000>
+$ HSET catalog:{inbound}:generation:gen-q7:mailbox_versions <1024 mailbox_id -> version 7>
+$ HSET catalog:{inbound}:mailbox_records <1024 '<id>:7' -> ~2048B JSON>
+KEYS[11] catalog descriptor deliberately ABSENT -> legacy layout, versions read from KEYS[5]; KEYS[7] leases and KEYS[8] receipts ABSENT
+$ SCRIPT LOAD <orig> -> 088df7b00a12aa0886d8a7b5ef0970e65e7edb89
+$ SCRIPT LOAD <hmget> -> 2efba5976d939ab6b4d7a28741e4253091a4445d
+$ EVALSHA <sha> 14 catalog:{inbound}:active_generation catalog:{inbound}:cursor_coverage_generation catalog:{inbound}:reconciled_server_run_id catalog:{inbound}:last_reconciliation_started_ms catalog:{inbound}:generation:gen-q7:mailbox_versions imap:{inbound}:due imap:{inbound}:leases imap:{inbound}:lease_receipts imap:{inbound}:diagnostic_owners imap:{inbound}:poll_starts catalog:{inbound}:active_grants_descriptor catalog:{inbound}:active_mailbox_versions catalog:{inbound}:mailbox_records imap:{inbound}:lease_records 1 gen-q7 18c0fec7dce59df84eb6b2c2f58eac34584e0a1c q7-process 120000 1024 600000 32 <32 uuid tokens>
+
+--- reply equality (same seed, same lease tokens) ---
+    [orig] fence check PASSED: RESOLVED, earliest_due=1700000000000, 32/32 CLAIMED, deadline-now=120000 for all, record 2048B
+    [hmget] fence check PASSED: RESOLVED, earliest_due=1700000000000, 32/32 CLAIMED, deadline-now=120000 for all, record 2048B
+reply arrays identical (clock fields normalised): True
+len(orig)=35 len(hmget)=35; now_ms orig=1789519195550 hmget=1789519195591 (server clock, expected to differ)
+
+--- timing (state reset between every invocation, reset not timed) ---
+    [orig iter0] fence check PASSED: RESOLVED, earliest_due=1700000000000, 32/32 CLAIMED, deadline-now=120000 for all, record 2048B
+    [orig iter20] fence check PASSED: RESOLVED, earliest_due=1700000000000, 32/32 CLAIMED, deadline-now=120000 for all, record 2048B
+    [orig] counters over 200 invocations: eval_shardlocal_coordination=+0 eval_io_coordination=+200 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+200 tx_normal_total=+399 tx_shard_polls=+663192 used_memory_lua=-99712
+    [hmget iter0] fence check PASSED: RESOLVED, earliest_due=1700000000000, 32/32 CLAIMED, deadline-now=120000 for all, record 2048B
+    [hmget iter20] fence check PASSED: RESOLVED, earliest_due=1700000000000, 32/32 CLAIMED, deadline-now=120000 for all, record 2048B
+    [hmget] counters over 200 invocations: eval_shardlocal_coordination=+0 eval_io_coordination=+200 eval_squashed_flushes=+0 lua_blocked=+0 | lua_interpreter_return=+200 tx_normal_total=+399 tx_shard_polls=+49792
+| variant                           | n   | p50_us  | p95_us  | p99_us  | min_us  | max_us  | mean_us | total_us  |
+|-----------------------------------|-----|---------|---------|---------|---------|---------|---------|-----------|
+| orig (per-candidate HGET)         | 200 | 41182.7 | 45192.2 | 52222.5 | 21131.9 | 57597.4 | 39559.6 | 7911928.3 |
+| hmget prefetch + deferred payload | 200 | 7813.9  | 12082.0 | 17149.5 | 4460.3  | 21958.1 | 8346.7  | 1669349.1 |
+$ SCRIPT LATENCY
+
+--- SCRIPT LATENCY (usec; includes warm-up and the equality run) ---
+[orig] 088df7b00a12aa0886d8a7b5ef0970e65e7edb89
+Count: 221 Average: 39033.5520  StdDev: 5535.97
+Min: 20525.0000  Median: 41046.5116  Max: 52606.0000
+------------------------------------------------------
+[   20000,   25000 ) 12   5.430%   5.430% #
+[   25000,   30000 ) 7   3.167%   8.597% #
+[   30000,   35000 ) 11   4.977%  13.575% #
+[   35000,   40000 ) 53  23.982%  37.557% #####
+[   40000,   45000 ) 128  57.919%  95.475% ############
+[   45000,   50000 ) 8   3.620%  99.095% #
+[   50000,   60000 ) 2   0.905% 100.000%
+[hmget] 2efba5976d939ab6b4d7a28741e4253091a4445d
+Count: 221 Average: 7791.7964  StdDev: 1992.41
+Min: 4163.0000  Median: 7500.0000  Max: 21201.0000
+------------------------------------------------------
+[    4000,    4500 ) 1   0.452%   0.452% 
+[    4500,    5000 ) 2   0.905%   1.357% 
+[    5000,    6000 ) 7   3.167%   4.525% #
+[    6000,    7000 ) 28  12.670%  17.195% ###
+[    7000,    8000 ) 143  64.706%  81.900% #############
+[    8000,    9000 ) 19   8.597%  90.498% ##
+[    9000,   10000 ) 3   1.357%  91.855% 
+[   10000,   12000 ) 9   4.072%  95.928% #
+[   12000,   14000 ) 2   0.905%  96.833% 
+[   14000,   16000 ) 4   1.810%  98.643% 
+[   16000,   18000 ) 2   0.905%  99.548% 
+[   20000,   25000 ) 1   0.452% 100.000%
