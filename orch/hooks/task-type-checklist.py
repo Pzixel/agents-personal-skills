@@ -8,13 +8,24 @@ while the same instruction placed in the prompt was followed every time).
 This hook puts the 3-5 line checklist next to the prompt that starts the task.
 
 Stdout is added to the model's context. Matching is by prompt words; several
-types may fire. Short prompts without a task word get nothing.
+types may fire. Short prompts without a task word get nothing. The incident checklist exists
+because live failures were diagnosed before the last change was reverted.
 """
 import json
 import re
 import sys
 
 CHECKLISTS = [
+    (
+        r"((?:упал\w*|лёг|\bлег\b|лежит|лежат|не отвечает)(?:\s+\S+){0,3}?\s*(?:прод|production|сервис|service|бэкенд|backend|\bпод\b|pod|api|сайт|страниц)"
+        r"|(?:прод|production|сервис|service|бэкенд|backend|сайт|api)\S*(?:\s+\S+){0,2}?\s+(?:упал|лёг|\bлег\b|лежит|лежат|не отвечает)"
+        r"|(?<![\w#])(?:503|502)\b|\b(?:outage|incident|инцидент)\b|\bdown\b|(?-i:\bOOM\w*|CrashLoop\w*))",
+        "Incident checklist (live failure; before any diagnosis):\n"
+        "- First action restores the last known-good state: revert the last change on the failing path (code by PR revert, config through git, half-applied state cleaned).\n"
+        "- Owner status within 5 minutes: what is broken for users, since when, what was reverted.\n"
+        "- Only then the cause, as a hypothesis x cheapest-check table.\n"
+        "- A mitigation that is reversible, bounded and ours is applied now, never listed as optional.",
+    ),
     (
         r"(расслед|разбер|почему|не работа|не приход|не уход|сломал|упал|инцидент|incident|alert|алерт|отстава|lag\b|debug|why\b|investigate)",
         "Investigation checklist (first reply artifact):\n"

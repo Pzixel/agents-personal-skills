@@ -5,6 +5,9 @@ Unattended runs (a /goal, a /loop, a subagent) stall on a permission prompt
 that nobody can answer. This hook turns the prompt into an immediate refusal
 with an instruction, so the agent takes the alternative and keeps working.
 
+A reconciler such as Flux reverts direct kubectl changes, so a second restart follows
+(4 double restarts and a 10 h non-durable hot fix in the 2026-10-12 retro).
+
 Override: include `DESTRUCTIVE_OK: <reason>` in the command. Use it only on the
 owner's explicit instruction in the main session.
 """
@@ -20,7 +23,12 @@ PATTERNS = [
     (r"(^|[\s;&|(])(sh|bash|zsh)\s+-l?c(\s|$)", "shell -c wrappers: run the command directly"),
     (r"\bgit\s+(clean|reset\s+--hard|checkout\s+--\s|push\s+[^|;]*(-f|--force)(\s|$))",
      "destructive git: use a new commit, a branch, or a worktree instead"),
-    (r"\bkubectl\s+delete\s+(?!.*-l\s)(?!.*--selector)", "kubectl delete without a label selector: clean k8s objects by label"),
+    (r"\bkubectl\s+(?=((?:(?:-n|-s|-v|--v|--as|--as-group|--token|--request-timeout|--namespace|--context|--kubeconfig|--cluster|--user|--server)\s+\S+\s+|-\S+\s+)*))\1"
+     r"(?!(?:get|describe|logs|top|explain|api-resources|api-versions|version|cluster-info|diff|exec|cp|debug"
+     r"|port-forward|attach|wait|events|kustomize|config\s+(?:view|get-contexts|current-context)|auth\s+can-i"
+     r"|rollout\s+(?:status|history))(?:\s|$)|delete\s+[^|;&\n]*(?:-l\s|--selector))[a-z]",
+     "kubectl verbs other than reads (and delete by label) change controller-managed objects: "
+     "change the manifest in git and let the reconciler apply it; a scoped live experiment adds DESTRUCTIVE_OK: <reason>"),
 ]
 
 try:
