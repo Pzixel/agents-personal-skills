@@ -618,3 +618,20 @@ thresholds, tokens a hook or tool checks, and the decision rules a review
 found missing after the first cut; dragonfly-scripting's execution-model prose
 moved to
 `references/regime-and-design.md`.
+
+### 2026-10-14 test-audit replay eval
+
+test-audit's body (1385 body words at a0d0266) was replaced by a 209-word stub.
+Evidence: 82 blind-graded runs over the 20 synthetic workbench cases, whose task
+texts and truth rubrics the stub author generated from the pre-existing
+`cases.json` and `rubric.json`. STUB v2 (195 words) passed 20/20 cases, the shipped text (v2 plus two Report
+scope clarifications) 4/4 on the four cases those touch; v1
+(144 words) also passed 10/10 on the first ten with T10 3/3. No skill text
+passed 19/20. The only difference is T10 (a read-only audit over a red test
+exposing a product defect): no skill text and the a0d0266 body failed it 0/6,
+the stubs passed 5/5. The stub restates T10's Accept item, so T10 is not
+independent of the rubric. Details:
+`test-audit-workbench/benchmark.md`. Sibling eval:
+superpowers-verification-before-completion-psilon: 8 replayed moments, rubric
+0-32 totals NONE 26 / OLD 27 / lens rewrite 28, the rewrite lost on one case;
+kept unchanged. Its OLD arm was also the pre-dedupe body, not the a0d0266 body.

@@ -1,9 +1,9 @@
 # Test-pruning campaign
 
 Campaign mode prunes one subsystem's whole test surface in one PR: an integration,
-package, or one core area. The value bar, retention bar,
-candidate evidence, and validation in [SKILL.md](SKILL.md) apply to every
-lane. This file adds the order of work and the lessons of a full campaign.
+package, or one core area. The owner's global Tests rules and the four clauses
+of [SKILL.md](SKILL.md) (unit of accounting, red tests, sweeps, report) apply to
+every lane. This file adds the order of work and the lessons of a full campaign.
 Each step ends on its completion criterion; do not start the next step early.
 
 ## 1. Baseline
@@ -90,11 +90,13 @@ every restored contract has a caught mutation.
 
 ## 7. Product defects
 
-A baseline failure that survives into a keeper is a bug report. Fix it at its
-owner as a separate commit, and prove it at its real behavior boundary, with a
-**control** run that reverts the fix and shows the old behavior. Record
-unrelated product discrepancies you find as follow-ups instead of fixing them
-in the campaign.
+A baseline failure that survives into a keeper is a bug report. Without repair
+authority, leave the test red and report the defect as a finding; the campaign
+is complete when its findings are reported, and repair is a separate delivery.
+With repair authority, fix it at its owner as a separate commit, and prove it at
+its real behavior boundary, with a **control** run that reverts the fix and
+shows the old behavior. Record unrelated product discrepancies you find as
+follow-ups instead of fixing them in the campaign.
 
 Done when each repaired defect has a failing control and a passing candidate
 on the same harness.
