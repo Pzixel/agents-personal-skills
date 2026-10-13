@@ -601,3 +601,20 @@ inspection confirms that a qualifying four-task SDD plan retains at least four
 implementer dispatches, four task-review dispatches, and one final integrated
 review before any fix rounds. That cost is intentional behind the substantial-
 plan trigger and absent from the trivial-edit path.
+
+## 2026-10-14: shrink by deletion (retro, pareto-design-selection, orchestrate, dragonfly-scripting)
+
+Two replay evals on other skills showed the same decisions with and without
+the skill body: verification 8 cases (NONE 7/8 vs OLD 8/8 on the lint judge)
+and test-audit 10 cases (NONE 10/10 = OLD 10/10), so 17 of 18. The one thing
+that moved a result was a single sentence stating a decision rule the model
+gets wrong on its own (3/3 vs 0/3 on one case). retro,
+pareto-design-selection, orch/skills/orchestrate and dragonfly-scripting were
+therefore shrunk by deletion. Of the four, only dragonfly-scripting was then
+evaluated: its workbench eval 3 (design a new batched operation) replayed
+twice per arm met 11 of 11 expected items with the old body and 11 of 11
+with the shrunk body; the other three deletions extrapolate from those evals. Kept are output shapes, named
+thresholds, tokens a hook or tool checks, and the decision rules a review
+found missing after the first cut; dragonfly-scripting's execution-model prose
+moved to
+`references/regime-and-design.md`.
