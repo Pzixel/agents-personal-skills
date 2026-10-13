@@ -16,6 +16,16 @@ name so users can identify its lineage. The current set also contains the reposi
 and `pareto-design-selection` skills and the adapted `test-audit` and `retro` skills. The retired ClickHouse guard described below is historical and was not
 derived from an upstream Superpowers skill.
 
+## Codex simplify export: 2026-10-13
+
+`codex-simplify` copies the body of Claude Code's built-in `simplify` skill
+verbatim, as loaded through the Skill tool on 2026-10-13 (Claude Code
+built-in; no source file or version pin is available). The body is not
+adapted: Codex reads "the Agent tool" as its own subagent mechanism. Only the
+frontmatter is new: the name, and a description that makes any `/simplify` in
+a request an unconditional trigger, so Codex follows rules that tell it to run
+`/simplify`. It is installed for Codex only.
+
 ## Retro adaptation: 2026-10-12
 
 `retro` adapts `skills/engineering/retro/SKILL.md` from

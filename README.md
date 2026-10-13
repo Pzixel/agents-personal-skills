@@ -22,14 +22,17 @@ The original Superpowers plugin is not required.
 | `test-audit` | Authoring or changing tests, focused test review, or a requested subsystem test-pruning campaign |
 | `pareto-design-selection` | Several candidate decision strategies with a visible cost of error, an owner who decides, and a pure decision core; sound cheap screening, bounded search, calibrated finalist validation, Pareto table |
 | `retro` | Manual only (`/retro`, `$retro`): retrospective of the current session, named sessions, or a period; proposes up to three evidence-backed changes |
+| `codex-simplify` | Codex only: any request containing `/simplify` (unconditional), or a request to review changed code for reuse, simplification, efficiency, and altitude cleanups |
 
 `retro` is adapted from Matt Pocock's MIT-licensed `retro` skill; its license is in `retro/LICENSE`. It is manual-only in both clients through `disable-model-invocation` and `agents/openai.yaml`. Its 20-case eval protocol (not yet run on any model) is in [retro-workbench/EVALS.md](retro-workbench/EVALS.md).
+
+`codex-simplify` is a verbatim export of Claude Code's built-in `/simplify` skill body for Codex, which has no built-in equivalent. Only its description differs: any `/simplify` in a Codex request loads it unconditionally. It is linked into the Codex directory only, because Claude Code already ships `/simplify`.
 
 `test-audit` preserves the supplied audit and campaign workflows and states its test-value rules directly. Its language-neutral instructions and self-contained 20-case behavioral eval set are described in [test-audit-workbench/EVAL.md](test-audit-workbench/EVAL.md).
 
 ## Install for one user
 
-Clone the repository, then link its twelve skills into the personal skill directories for Codex and Claude Code. Existing links to this checkout are reused; a conflicting destination stops installation without replacing it:
+Clone the repository, then link its skills into the personal skill directories for Codex and Claude Code. Existing links to this checkout are reused; a conflicting destination stops installation without replacing it:
 
 ```bash
 git clone https://github.com/Pzixel/superpowers-psilon.git
@@ -49,6 +52,15 @@ for target in "$HOME/.agents/skills" "$HOME/.claude/skills"; do
     fi
   done
 done
+
+skill=codex-simplify
+dest="$HOME/.agents/skills/$skill"
+if [ ! -e "$dest" ] && [ ! -L "$dest" ]; then
+  ln -s "$PWD/$skill" "$dest"
+elif [ "$(realpath "$dest")" != "$(realpath "$skill")" ]; then
+  printf 'Conflicting skill destination: %s\n' "$dest" >&2
+  exit 1
+fi
 ```
 
 Both clients follow these directory links. Updates to this checkout update the linked skills; inspect and validate changes before relying on them. Use a fresh session if a running session still holds an older skill body.

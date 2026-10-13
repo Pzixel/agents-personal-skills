@@ -13,7 +13,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 NAME = re.compile(r"^[a-z0-9-]{1,64}$")
 LINK = re.compile(r"\[[^]]+\]\(([^)]+)\)")
-EXPECTED_SKILLS = 12
+EXPECTED_SKILLS = 13
 REQUIRED_KEYS = {"name", "description"}
 # Claude Code fields; Codex ignores them and uses agents/openai.yaml instead.
 OPTIONAL_KEYS = {"disable-model-invocation", "argument-hint"}
@@ -98,7 +98,7 @@ def validate_skill(directory: Path) -> None:
 def main() -> None:
     skills = sorted(
         path
-        for pattern in ("superpowers-*-psilon", "dragonfly-scripting", "test-audit", "pareto-design-selection", "retro")
+        for pattern in ("superpowers-*-psilon", "dragonfly-scripting", "test-audit", "pareto-design-selection", "retro", "codex-simplify")
         for path in ROOT.glob(pattern)
         if path.is_dir()
     )

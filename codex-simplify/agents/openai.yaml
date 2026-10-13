@@ -1,0 +1,7 @@
+interface:
+  display_name: "Simplify"
+  short_description: "Reuse, simplification, efficiency and altitude cleanups"
+  default_prompt: "Use $codex-simplify to review the changed code with four parallel cleanup agents and apply the fixes."
+
+policy:
+  allow_implicit_invocation: true
