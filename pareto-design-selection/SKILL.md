@@ -74,9 +74,7 @@ stop; do not simulate an execution path or a UI.
   strategies. Two controls are mandatory and remain available throughout:
   - the current behaviour, as the baseline;
   - the cheap extension of the existing mechanism (configuration, a priority,
-    an index). Never dismiss it without data. A final recommendation requires
-    proved insufficiency or validated sufficiency; if it suffices the answer
-    is to build nothing.
+    an index). If it suffices the answer is to build nothing.
 - Cover different principles: queue, round-robin, fair share, recency,
   lottery, hybrid. Keep a small diverse shortlist rather than many variants.
 - Each strategy is an exact ordering or selection rule over observable facts.
@@ -186,8 +184,7 @@ not fit, return incomplete findings and the precise work or budget still needed.
   inconclusive status and the evidence; never invent unmeasured cells.
 - The Pareto set contains strategies for which no other is at least as good on
   every metric and strictly better on at least one. Differences below a threshold
-  fixed in advance (default 20%) count as ties; otherwise noise decides for the
-  business. Use metric-appropriate absolute thresholds where percentages are
+  fixed in advance (default 20%) count as ties. Use metric-appropriate absolute thresholds where percentages are
   unsuitable. Only comparably validated results enter the final Pareto set.
 - For each Pareto member, state in plain words what it pays for its
   advantages.
@@ -226,7 +223,6 @@ not fit, return incomplete findings and the precise work or budget still needed.
 - Compare simulated performance before calibration, or treat a screen as proof
   of final performance.
 - Show the owner a recommendation without the table.
-- Refine figures that cannot change the choice.
 - Recommend a strategy while the cheap extension remains unresolved; an
   exhausted investigation instead reports its unresolved status and evidence gap.
 - Invent a strategy that is not an exact rule over observable facts.

@@ -39,7 +39,7 @@ Before any fix:
 2. Read enough of the reference and its callers to understand the relevant contract, ordering, and resource lifetime; expand when those depend on code not yet inspected.
 3. Compare differences that could affect the failing behavior. Expand the comparison if the evidence does not distinguish the cause.
 4. Map required components, settings, environment, state, and assumptions.
-5. For each reference pattern, identify load-bearing prerequisites; verify them for the exact failing target and seek missing dependency, config, state, coverage, or contract. A working example proves capability only. Unknown applicability remains a conditional hypothesis, never a proposed fix.
+5. For each reference pattern, identify load-bearing prerequisites; verify them for the exact failing target and seek missing dependency, config, state, coverage, or contract. Unknown applicability remains a conditional hypothesis, never a proposed fix.
 
 ### Test a Hypothesis
 
@@ -50,10 +50,10 @@ Before any fix:
 
 ### Correct and Verify
 
-1. Capture the simplest independent failing reproduction when feasible. Add a permanent or temporary test only when governing policy admits both the behavior and a plausible defect; otherwise inspect directly and use relevant runtime evidence. Mechanical forwarding does not earn a disposable test.
+1. Capture the simplest independent failing reproduction when feasible.
 2. Make one root-cause fix. No “while here” work or bundled refactor.
 3. Re-run the reproduction and admitted related checks. Confirm the issue is gone. Use `superpowers-verification-before-completion-psilon` only when its high-risk trigger matches; otherwise verify directly.
-4. If it fails, inspect what the result disproves before another attempt. After repeated failure without new evidence, stop retrying and reassess the causal model, prerequisites, and shared assumptions. Resume only with new evidence or a materially changed approach.
+4. If it fails, inspect what the result disproves before another attempt. Retry only with new evidence or a materially changed approach.
 
 Repeated failed fixes suggest—not prove—a bad model or architecture. Look for new coupling, unexpectedly broad changes, or new symptoms. Resolve from requirements and boundary evidence; ask only for an unresolved consequential product or authority choice or unavailable required evidence.
 

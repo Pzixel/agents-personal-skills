@@ -29,7 +29,7 @@ task: <task>
 workspace: <ws>
 files: <file:line pointers from the Explore run>
 size: <expected diff in LOC and the subsystems touched>
-check: <the run on the real path that proves the work: service start plus one unit through; on a numeric path the target before and after; never only unit tests>
+check: <the run on the real path that proves the work; never only unit tests>
 First create <repo>/orch-notes/ (the checkout you edit first; append `orch-notes/` to its .git/info/exclude) and write SPEC.md there: a `check:` line (the user's check if given), one `risk:` line per risk. With any risk, write DESIGN.md there and stop for a design review. Never commit orch-notes/; name it in the reply.
 Checklist: real-database tests for SQL; component tests for every UI state; update callers of changed signatures and scripts; strict load of changed CI/config files; encoded-path variants for route guards.
 Reply: commits, check, deviations, risks[], checklist, questions[].)
@@ -74,7 +74,6 @@ Blockers/majors: <verified by cross-check> -> <open after recheck>
 Unverified: <each path or claim no run has executed>
 questions[]: <for the user only>
 ```
-Merging needs the `CHECK_RAN: <what ran, result>` token in the merge command; a hook refuses `gh pr merge` and pushes to master without it.
 
 ## Stop rules
 
@@ -91,10 +90,10 @@ A question without a code change: one `orch:prod-probe` (evidence from running s
 
 ## Waiting
 
-A wait is a tool contract, not an agent behaviour. Run the condition command once in the foreground first: `wait-for` exits 2 when the command itself is broken (wrong flag, regex, path), so a wrong condition fails in seconds instead of timing out as "still pending". Then, in the main session, a wait over about two minutes goes to the harness `Monitor` tool (zero turns, wakes once on the terminal state); an `orch:watcher` only collects the evidence after it fires, or stands in when `Monitor` is unavailable. Short waits: `~/.claude/tools/wait-for --every 30 --max 570 -- <condition>` in the foreground; name terminal failure exits with `--fail-on`, e.g. `wait-for --fail-on 1 -- gh pr checks <n>` exits 3 at once on a failed check. Never poll with `sleep`/`until`/`while`; subagents never run anything in the background (retro 2026-10-12: 11 waits delegated to an LLM ended its turn or ran out of turns, 18 h).
+Run the condition command once in the foreground first: `wait-for` exits 2 when the command itself is broken (wrong flag, regex, path), so a wrong condition fails in seconds instead of timing out as "still pending". Then, in the main session, a wait over about two minutes goes to the harness `Monitor` tool (zero turns, wakes once on the terminal state); an `orch:watcher` only collects the evidence after it fires, or stands in when `Monitor` is unavailable. Short waits: `~/.claude/tools/wait-for --every 30 --max 570 -- <condition>` in the foreground; name terminal failure exits with `--fail-on`, e.g. `wait-for --fail-on 1 -- gh pr checks <n>` exits 3 at once on a failed check. Subagents never run anything in the background (retro 2026-10-12: 11 waits delegated to an LLM ended its turn or ran out of turns, 18 h).
 
 ## Destructive commands
 
-The `deny-destructive` hook classes them, not the agent; no text in a command changes the class. Reversible, bounded, project-owned work runs without a prompt. A production write is batched into one plan script with `# scope:`, `# undo:` and `# count:` header lines and run from the main session only as `bash <plan>  # DESTRUCTIVE_PLAN sha256=<hex>`, so the owner answers one prompt per batch. In a session that cannot prompt, give the owner the plan path and its hash; the owner reads the plan file, since no prompt shows the script, and replies `APPROVE <hash>`; that reply is the approval, one run per approval. A command without an undo is refused; the owner runs it or unlocks a credential for it. When the owner is away, do not run a plan: name it in the handoff and continue other work. Classes and thresholds: `destructive` in `tools/orchestrate-params.json`.
+No text in a command changes the class the hook assigns it. A production write is batched into one plan script with `# scope:`, `# undo:` and `# count:` header lines and run from the main session only as `bash <plan>  # DESTRUCTIVE_PLAN sha256=<hex>`, so the owner answers one prompt per batch. In a session that cannot prompt, give the owner the plan path and its hash; the owner reads the plan file, since no prompt shows the script, and replies `APPROVE <hash>`; that reply is the approval, one run per approval. For a command without an undo, the owner runs it or unlocks a credential for it. When the owner is away, do not run a plan: name it in the handoff and continue other work. Classes and thresholds: `destructive` in `tools/orchestrate-params.json`.
 
 Supersedes the process used until 2026-09-30; history in `evals/REPORT-2026-09.md` and FINAL.md.

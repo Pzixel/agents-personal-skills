@@ -125,9 +125,7 @@ Explain the outcomes that mattered; do not hunt for reasons to add rules.
 
 ## Report
 
-The report is a chat reply, not a file. Write conclusions, not a log of
-your reasoning. Use the language the user or their instructions set for
-chat.
+The report is a chat reply, not a file.
 
 1. **Scope**: sessions, period, and gaps, in one or two lines.
 2. **Keep**: up to three practices that worked, with pointers.

@@ -11,7 +11,7 @@ Use the description as the scope gate. Before a high-risk completion, commit, pu
 
 1. Define the outcome, target, required gates, and load-bearing prerequisites from authoritative requirements.
 2. Obtain the matching commands or observations. Inspect their relevant full output, exit status, failures, revision, and target coverage; search for disconfirming or limiting evidence.
-3. Report the proved scope. Missing or contradictory evidence leaves the affected gate incomplete; continue independent authorized work. Do not replace missing proof with confidence, a plan checklist, or an agent's summary.
+3. Report the proved scope.
 
 ## Proof Boundaries
 
@@ -23,8 +23,7 @@ Use the description as the scope gate. Before a high-risk completion, commit, pu
 | Regression test works | Admitted test distinguishes broken and fixed behavior | One passing run |
 | Agent completed | Inspect its actual work and verify the assigned outcome | Agent report |
 | Requirements met | Each authoritative requirement has matching target-boundary evidence | Tests or plan checklist alone |
-| Release complete | Every agreed check, reviewed revision, merge, rollout, authenticated behavior, and business observation is evidenced where required | CI or a ready deployment alone |
 
-A mechanism-level pass proves only the exercised scope, not another target's data, configuration, coverage, or deployment. Plans and reports locate evidence; they do not replace it. A documented decision cannot close a known defect or waive a required gate.
+A mechanism-level pass proves only the exercised scope, not another target's data, configuration, coverage, or deployment.
 
-Add tests only when both the behavior and a plausible defect qualify under governing policy. For an admitted regression test, capture failure before the fix and pass after it when feasible; use a safe revert or mutation only when proportionate and safe for user work. Test exclusions apply to disposable checks too. Otherwise use direct inspection or relevant operational evidence.
+For an admitted regression test, capture failure before the fix and pass after it when feasible; use a safe revert or mutation only when proportionate and safe for user work. Otherwise use direct inspection or relevant operational evidence.

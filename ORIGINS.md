@@ -16,6 +16,12 @@ name so users can identify its lineage. The current set also contains the reposi
 and `pareto-design-selection` skills and the adapted `test-audit` and `retro` skills. The retired ClickHouse guard described below is historical and was not
 derived from an upstream Superpowers skill.
 
+## Global-rule dedupe: 2026-10-14
+
+Removed clauses that restate the owner's global rules from the bodies of the
+eight `superpowers-*-psilon` skills, `test-audit`, `pareto-design-selection`,
+`retro`, and `orch/skills/orchestrate`; descriptions unchanged.
+
 ## Codex simplify export: 2026-10-13
 
 `codex-simplify` copies the body of Claude Code's built-in `simplify` skill

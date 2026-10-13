@@ -44,6 +44,5 @@ Use optionally only for a named uncertainty: a stuck investigation, risky-refact
 - Never ignore Critical issues or proceed with confirmed Important issues open.
 - Never give the reviewer session history or an implementation conclusion as fact.
 - Never argue with valid feedback; challenge invalid feedback with code, checks, and technical reasoning.
-- Independent review complements, not replaces, outcome-proportionate verification.
 
 Template: [code-reviewer.md](code-reviewer.md)

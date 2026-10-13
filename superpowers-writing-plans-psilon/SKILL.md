@@ -37,7 +37,7 @@ Every load-bearing statement is one of:
 
 The final plan need not label every sentence, but every provisional load-bearing choice and gate must be visible. Unknowns are not blanks for plausible answers. State evidence scope and date when drift matters. Never turn correlation, a narrow benchmark or cohort, history, or one agent's preference into a contract.
 
-For each selected approach, name prerequisites; verify them for the exact target; seek disconfirming and limiting evidence. APIs, parsers, integrations, examples, and prior success prove capability only. Reject any approach whose load-bearing prerequisite is false or conflicts with requirements or contracts. Keep unknown ones conditional behind an explicit gate, never as planned implementation.
+For each selected approach, name prerequisites; verify them for the exact target; seek disconfirming and limiting evidence. Reject any approach whose load-bearing prerequisite is false or conflicts with requirements or contracts. Keep unknown ones conditional behind an explicit gate, never as planned implementation.
 
 ## Rolling Horizon
 
@@ -48,7 +48,7 @@ For each selected approach, name prerequisites; verify them for the exact target
 
 Do not freeze API, storage, files, benchmark size, rollout order, or UI before their design and feasibility gates pass.
 
-When evidence disproves an assumption, update the plan and record the new decision and reason; remove superseded instructions. Requirements and authority still bind. Difficulty does not relax them, and history must not be rewritten.
+When evidence disproves an assumption, update the plan and record the new decision and reason; remove superseded instructions. History must not be rewritten.
 
 ## Admit Useful Detail Only
 
@@ -56,7 +56,7 @@ Include an exact file, symbol, type, schema, command, value, or code fragment on
 
 Use complete code only when literal text is the contract or a small fragile sequence cannot be transferred safely. Never invent production counts, times, IDs, budgets, benchmark samples, or expected output. If measurement is not fixed, state risk and confidence needs; choose and justify the method in that milestone.
 
-Give each fact one owner. Reference specs, contracts, runbooks, and evidence; repeat only the minimum safe constraint.
+Reference specs, contracts, runbooks, and evidence; repeat only the minimum safe constraint.
 
 ## Outcome-Based Work
 

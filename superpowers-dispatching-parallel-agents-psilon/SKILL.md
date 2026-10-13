@@ -66,4 +66,4 @@ When agents return:
 4. run one outcome-proportionate check after the last integration change;
 5. spot-check for systematic agent error.
 
-Agent summaries are claims, not proof. If results reveal coupling, stop parallel mutation and reintegrate the work as one domain.
+If results reveal coupling, stop parallel mutation and reintegrate the work as one domain.

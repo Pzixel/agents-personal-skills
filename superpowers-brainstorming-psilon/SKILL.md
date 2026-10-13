@@ -5,7 +5,7 @@ description: Use before planning a non-trivial change when unresolved product in
 
 # Brainstorming Ideas Into Designs
 
-> The description is the scope gate. Resolve ordinary engineering choices autonomously; scale artifacts and checkpoints to uncertainty, risk, and handoff value.
+> The description is the scope gate. Scale artifacts and checkpoints to uncertainty, risk, and handoff value.
 
 Turn an idea into a coherent design through project inspection and natural dialogue.
 
@@ -37,15 +37,13 @@ For each candidate:
 - reject false prerequisites and conflicts with requirements, contracts, or authority;
 - keep an unknown prerequisite conditional and exclude that candidate from the current recommendation.
 
-Implementation support, a working example, or an available integration proves capability only—not target data, coverage, compatibility, or applicability.
-
 If no candidate passes, collect available evidence or resolve one necessary user-owned decision, then rerun admission. When an unknown prerequisite can be tested within existing authority, use discovery below. Otherwise report the missing evidence or authority and minimum clearance. A conditional mechanism may be a discovery subject, never a recommended production design before admission. Keep rejected candidates internal unless needed to explain the result.
 
 ## Feasibility Discovery
 
 When the required outcome is known but a load-bearing premise is unknown, state the question, exact target, smallest discriminating experiment, and evidence that would admit, reject, or revise the candidate. Use read-only inspection first; a temporary prototype is appropriate when inspection cannot answer the question. Stay within authorized effects, resource use, and data access; do not deploy or introduce persistent product changes through a prototype.
 
-Run authorized bounded discovery without another approval pause. Label prototype code and findings as experimental; successful execution proves only the exercised scope. Return to candidate admission with the result. If the work needs a durable handoff, use `superpowers-writing-plans-psilon` to record a Discovery milestone with acceptance and fallback, leaving dependent implementation provisional. Stop only at an actual missing input, authority, access, or unsafe condition; continue independent authorized work.
+Run authorized bounded discovery without another approval pause. Label prototype code and findings as experimental; successful execution proves only the exercised scope. Return to candidate admission with the result. If the work needs a durable handoff, use `superpowers-writing-plans-psilon` to record a Discovery milestone with acceptance and fallback, leaving dependent implementation provisional.
 
 ## Design Quality
 

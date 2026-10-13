@@ -10,9 +10,9 @@ Separate the requested outcome from the reviewer's diagnosis and proposed mechan
 ## Assess and Act
 
 1. Read the feedback together and identify the governing requirements, affected behavior, and dependencies between items.
-2. Check each claim against code, current target evidence, compatibility needs, and the reason for existing behavior. Seek evidence that disproves the diagnosis; a working mechanism elsewhere does not establish applicability here.
+2. Check each claim against code, current target evidence, compatibility needs, and the reason for existing behavior. Seek evidence that disproves the diagnosis.
 3. Correct confirmed defects within authority. Reject incorrect findings with specific evidence; resolve disputed evidence before dependent changes. Neither a reviewer nor a plan creates a requirement from a preference.
-4. Verify each correction at its smallest meaningful boundary, then run one proportionate regression pass after the last relevant change. Apply governing test-admission rules to permanent and temporary tests alike.
+4. Verify each correction at its smallest meaningful boundary, then run one proportionate regression pass after the last relevant change.
 
 For an unclear item, investigate before changing it or its dependents. Continue independent verified work that cannot constrain the unresolved decision. Prioritize blocking and security defects, then group the remaining work by dependencies and coherent corrections rather than forcing a review/fix/check cycle for every comment.
 
@@ -20,6 +20,6 @@ Ask only when consequential intent, authority, a conflict with a binding user de
 
 ## Communicate the Result
 
-State the verified change, the technical reason for disagreement, or the exact missing evidence. Correct an earlier mistaken conclusion briefly when new evidence disproves it. Acknowledgment is not proof or correction.
+State the verified change, the technical reason for disagreement, or the exact missing evidence. Correct an earlier mistaken conclusion briefly when new evidence disproves it.
 
 When replies are authorized, answer inline GitHub review comments in their own thread (`gh api repos/{owner}/{repo}/pulls/{pr}/comments/{id}/replies`), not as top-level PR comments. Reviewing or fixing feedback alone does not authorize sending a message.

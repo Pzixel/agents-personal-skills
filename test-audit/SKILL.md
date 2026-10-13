@@ -15,41 +15,9 @@ before starting one, read [CAMPAIGN.md](CAMPAIGN.md).
 
 ## Test value gates
 
-Every case, assertion, fixture, and support element must pass both gates:
-qualifying required, observable, repository-owned behavior AND a specific
-plausible defect. A credible bug or critical contract label does not override
-the exclusions below. Audit every added or materially changed element before
-retaining it; passing proves execution only.
-
-Test pure policy directly, with configuration, time, randomness, and external
-results as explicit values and no hidden I/O. Test narrow workflows only for
-nontrivial contractual behavior depending on interactions, atomicity, or
-resource/stream lifetimes. Do not test mechanical glue, including forwarding or
-dispatch of decided actions, even in disposable mock/smoke scripts. Do not retest
-compiler/type/schema/derive/lint/framework/dependency guarantees, constants/config
-spelling, trivial arithmetic, or private structure. Unchecked semantic validation,
-mappings, and exact representations at real boundaries may qualify. Derive cases
-and expectations independently from authoritative contracts/failure models,
-never implementation constants or paths sharing its decisions. If none qualifies,
-omit tests and report other verification. No coverage/count quotas.
-
-Exact behavior requires exact equality; tolerances need a protocol or measured
-precision basis, and one-sided bounds need documented asymmetric risk. Arrange,
-act, observe, assert; split independent cases or use tables. Bodies expose action
-and observation; helpers hide only irrelevant construction. Further setup or
-alternating actions/assertions require contractual progression.
-
-Use small domain fakes with supported absence/conflict/failure outcomes and
-contractual call relationships, not generic infrastructure emulation. Fakes cannot
-prove atomicity/protocols; check changed nontrivial guarantees at real bindings in
-focused isolation. No integration machinery for unchanged dependencies. Support
-must be test-only and necessary for a qualifying test; substantial simulation also
-requires a high-risk integration contract that cannot be exercised directly.
-Never shape production interfaces solely for tests. Keep policy pure, workflows
-narrow, and execution mechanical; extraction alone justifies neither tests nor
-support. Preserve atomicity, ordering, cancellation, and resource ownership;
-process streams per item/bounded batch without moving all reads before writes.
-Add no classes, files, or wrappers merely to mirror these responsibilities.
+The test value gates are the owner's global Tests rules: qualifying observable
+behavior AND a specific plausible defect; this skill does not restate them.
+Those gates and exclusions bind disposable checks (mock or smoke scripts) too.
 
 ## Authoring gate
 
@@ -69,11 +37,10 @@ add it yet:
 Then check the test against every [junk pattern](#junk-patterns); a match fails
 the gate unless the [retention bar](#retention-bar) names the contract it
 independently guards AND both test value gates pass. The retention bar provides
-no exception to the exclusions above. A test that would break under behavior-preserving
+no exception to the global Tests exclusions. A test that would break under behavior-preserving
 refactoring is asserting implementation, not behavior; rewrite it at the
 owning boundary before landing it.
 
-Establish the invariant independently before changing code or expectations.
 Bug regression tests must fail on the pre-fix code for the intended reason and
 pass after the owner-boundary repair. A regression test that never demonstrably
 failed proves the mock, not the fix. One regression at the owner boundary
@@ -153,8 +120,7 @@ speculative inventory. Hunt for the [junk patterns](#junk-patterns).
 Keep a test when both test value gates pass and it independently enforces a
 public API, SDK, protocol, migration, storage, security, platform, prompt-byte,
 generated cross-language, package, release, or architecture contract. These
-labels alone do not qualify; configuration spelling and declared defaults
-warrant no tests. Also keep qualifying:
+labels alone do not qualify. Also keep qualifying:
 
 - call ordering when order is observable behavior;
 - regressions with a credible failure mode;
@@ -180,9 +146,6 @@ not ready for deletion:
 - production or test-support deletion unlocked;
 - risk and the focused validation command.
 
-Include every reachable persisted/deployed lifecycle, even when current writers
-no longer create those records; invent no unreachable compatibility.
-
 ## Edit shape
 
 Choose one coherent owner-boundary batch. Delete obsolete test-only exports,
@@ -202,15 +165,11 @@ Follow repository testing/runtime rules; route heavy proof through its approved
 execution environment.
 
 1. Run the smallest qualifying owner and sibling tests with repository commands.
-   Policy proof needs no production writes or environment simulator.
 2. For removed source greps or plan assertions, run the existing executable
    validator or dry-run that owns the real contract, or review it directly.
-   Do not replace excluded tests with disposable mock/smoke scripts.
 3. Run targeted formatting, then `git diff --check`, using local command wrappers.
 4. Classify changed paths with the repository's existing gate selector or
    dry-run, if any, then run the actual changed gates required by repository policy.
-   Move meaningful coverage with extracted logic; remove superseded in-scope
-   tests/support without unrelated suite cleanup.
 5. Inspect `git diff --numstat`; report production/tooling separately from
    tests and test support.
 6. After final audit edits, obtain mandatory independent review.
@@ -234,8 +193,3 @@ Report:
 - production versus test LOC;
 - PR and merge state;
 - named follow-ups.
-
-Remaining delivery needs an executor, exact action, revision/environment, evidence,
-and continuation/finish condition; instruct **CONTINUE** when gates remain.
-Claim release completion only with current evidence for every agreed gate;
-local checks cannot substitute for required publication, live behavior, or observation.

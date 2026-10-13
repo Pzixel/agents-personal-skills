@@ -44,7 +44,6 @@ Read the plan once. Record context, target, authoritative references, Global Con
 - find task/task or task/constraint contradictions and plan mandates the reviewer would treat as defects;
 - verify each Ready task's prerequisites for the exact target and search disconfirming evidence;
 - before later tasks, reuse current evidence and recheck only facts affected by prior work or drift;
-- treat APIs, examples, and prior tasks as capability—not target coverage.
 
 Resolve conflicts from authoritative requirements, policy, and evidence. Ask one batched question only for a genuinely unresolved consequential requirement or authority choice.
 
@@ -135,7 +134,7 @@ Applicability failure never enters a code loop first:
 
 Re-run applicability without code when evidence clears the current design. Code starts only after an admissible route exists. Ask the user only for unresolved consequential requirements or authority.
 
-Before a fix dispatch, verify each finding against the requirements, current code, and exact target. Reject an incorrect finding with evidence in the ledger immediately; do not spend fix rounds implementing it. Resolve disputed evidence before dependent work. A ruling cannot waive a requirement or settle a real defect without correction.
+Before a fix dispatch, verify each finding against the requirements, current code, and exact target. Reject an incorrect finding with evidence in the ledger immediately; do not spend fix rounds implementing it. Resolve disputed evidence before dependent work.
 
 The code loop handles an admitted replacement, confirmed spec gaps, and confirmed Critical/Important issues. Minor findings may be deferred only when they are not required for task acceptance: ledger them for final review. For plan conflicts, authority wins; resolve autonomously when clear, otherwise ask one consequential question. Never dismiss a finding because the plan mandates it.
 
@@ -144,7 +143,7 @@ A round is one fix dispatch plus one scoped re-review; maximum five:
 - **Rounds 1–3:** resume the implementer with open findings verbatim. If resume is impossible, use a fresh agent with brief, report, and findings.
 - **Rounds 4–5:** use a fresh implementer, stronger if available and justified, with brief, report, findings, and: “A prior implementer attempted this task [N] times; you own it now. Read the report file for what was tried.”
 
-Five rounds is a ceiling, not a quota. After repeated failure without new evidence, stop retrying and inspect the failed assumptions, required inputs, and attempted fixes. Resume only with a materially changed approach or new evidence; otherwise report the exact unresolved boundary.
+Five rounds is a ceiling, not a quota. Retry only with a materially changed approach or new evidence; otherwise report the exact unresolved boundary.
 
 Each round fixes, runs outcome-proportionate checks, appends commands/output to the report, and returns the short contract. Re-review only after covering evidence is present; name tests only when admitted. Record a fresh commit/snapshot HEAD and run `scripts/review-package PLAN_FILE FIX_BASE HEAD`; [re-review-prompt.md](re-review-prompt.md) verifies each finding and new breakage only. Add new Critical/Important breakage to the loop; ledger out-of-scope observations as deferred Minor.
 
