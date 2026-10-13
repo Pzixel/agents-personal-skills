@@ -8,16 +8,18 @@
 # per triple in `model_override_rights` (gate_policy.model_override_decision).
 # A builder prompt also needs `files:` and `check:` lines and a prod-probe prompt an
 # `access:` line (gate_policy.brief_decision): discovery stays with the caller.
-# Escape hatch for all of these refusals: the literal
-# AGENT_TYPE_OVERRIDE in the prompt. Any failure here exits 0 without output.
+# Escape hatch for all of these refusals, main session only: a prompt line
+# `AGENT_TYPE_OVERRIDE: <reason>` (gate_policy.override_marker), logged to
+# ~/.claude/agent-type-overrides.jsonl. A subagent carrying it is refused.
+# Any failure here exits 0 without output.
 input=$(cat)
 type=$(printf '%s' "$input" | jq -r '.tool_input.subagent_type // ""')
 prompt=$(printf '%s' "$input" | jq -r '.tool_input.prompt // ""')
 spawner=$(printf '%s' "$input" | jq -r '.agent_type // ""')
 model=$(printf '%s' "$input" | jq -r '.tool_input.model // ""')
-if printf '%s' "$prompt" | grep -q 'AGENT_TYPE_OVERRIDE'; then exit 0; fi
+session=$(printf '%s' "$input" | jq -r '.session_id // ""')
 
-out=$(HOOK_PATH="$0" SPAWNER_TYPE="$spawner" REQUESTED_TYPE="$type" REQUESTED_MODEL="$model" REQUESTED_PROMPT="$prompt" python3 - <<'PY'
+out=$(SESSION_ID="$session" HOOK_PATH="$0" SPAWNER_TYPE="$spawner" REQUESTED_TYPE="$type" REQUESTED_MODEL="$model" REQUESTED_PROMPT="$prompt" python3 - <<'PY'
 import json, os, sys
 
 hook = os.path.realpath(os.environ.get("HOOK_PATH") or "")
@@ -28,24 +30,25 @@ for candidate in (os.path.expanduser("~/.claude/tools"), tools):
         sys.path.insert(0, candidate)
 import gate_policy
 
-params = {}
-for candidate in sys.path[:2]:
-    path = os.path.join(candidate, "orchestrate-params.json")
-    if os.path.isfile(path):
-        with open(path) as fh:
-            params = json.load(fh)
-        break
-
+params = gate_policy.load_params()
 spawner = os.environ.get("SPAWNER_TYPE", "")
 requested = os.environ.get("REQUESTED_TYPE", "")
-decision = gate_policy.spawn_decision(spawner, requested, params)
-if decision["decision"] != "deny":
-    decision = gate_policy.model_override_decision(
-        spawner, requested, os.environ.get("REQUESTED_MODEL", ""), params
-    )
-if decision["decision"] != "deny":
-    # A delegate's budget goes to the deliverable: the brief carries the pointers.
-    decision = gate_policy.brief_decision(requested, os.environ.get("REQUESTED_PROMPT", ""))
+model = os.environ.get("REQUESTED_MODEL", "")
+decision = gate_policy.spawn_gate_decision(
+    spawner, requested, model, os.environ.get("REQUESTED_PROMPT", ""), params
+)
+if decision["decision"] == "override":
+    import datetime
+    record = {
+        "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "session_id": os.environ.get("SESSION_ID", ""),
+        "spawner": "main",
+        "subagent_type": requested,
+        "model": model,
+        "reason": decision["reason"],
+    }
+    with open(os.path.expanduser("~/.claude/agent-type-overrides.jsonl"), "a") as fh:
+        fh.write(json.dumps(record) + "\n")
 if decision["decision"] == "deny":
     json.dump(
         {

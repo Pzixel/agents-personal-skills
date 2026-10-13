@@ -33,7 +33,6 @@ import gate_policy  # noqa: E402
 
 PARAMS_PATH = os.path.join(TOOLS_DIR, "orchestrate-params.json")
 LOG_PATH = os.path.join(STATE_DIR, "skill-load-log.jsonl")
-OVERRIDE_MARKER = "SKILL_LOAD_OVERRIDE:"
 TAIL_BYTES = 2_000_000
 MESSAGES_SCANNED = 8
 
@@ -132,9 +131,9 @@ def entry_text(entry):
     return "\n".join(parts)
 
 
-def override_reason(transcript_path):
+def override_reason(transcript_path, params):
     """The override is read from the latest user/assistant text, the way
-    main-budget-gate.py reads its own: marker, rest of that line, truncated."""
+    a marker line as gate_policy.override_marker defines it."""
     if not transcript_path or not os.path.isfile(transcript_path):
         return ""
     seen = 0
@@ -145,8 +144,9 @@ def override_reason(transcript_path):
         if not text:
             continue
         seen += 1
-        if OVERRIDE_MARKER in text:
-            return text.split(OVERRIDE_MARKER, 1)[1].splitlines()[0].strip()[:200] or "(no reason given)"
+        reason = gate_policy.override_marker(text, "SKILL_LOAD_OVERRIDE", params)
+        if reason:
+            return reason
         if seen >= MESSAGES_SCANNED:
             break
     return ""
@@ -187,9 +187,10 @@ def main():
         return 0
 
     size = text_bytes(directory)
-    reason = override_reason(transcript_path)
+    params = load_params()
+    reason = override_reason(transcript_path, params)
     decision = gate_policy.skill_load_decision(
-        True, size, skill_name, load_params(), reason
+        True, size, skill_name, params, reason
     )
 
     record = {

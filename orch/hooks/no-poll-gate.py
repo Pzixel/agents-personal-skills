@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """PreToolUse hook (Bash matcher, main session and all agents): refuse
 foreground polling loops, and any run_in_background call from a subagent. All decision logic lives in tools/gate_policy.py;
-this file only moves fields. Escape hatch: the literal NO_POLL_OVERRIDE in the
+this file only moves fields. Escape hatch: a line `NO_POLL_OVERRIDE: <reason>` in the
 command. Fails open on absolutely any error -- a broken hook would block every
 live session."""
 
@@ -18,7 +18,6 @@ TOOLS_DIR = (
 )
 STATE_DIR = os.path.expanduser("~/.claude")
 OVERRIDE_LOG = os.path.join(STATE_DIR, "no-poll-overrides.jsonl")
-PARAMS_PATH = os.path.join(TOOLS_DIR, "orchestrate-params.json")
 
 
 def account_of(transcript_path):
@@ -30,12 +29,13 @@ def account_of(transcript_path):
     return "default"
 
 
-def log_override(payload, command):
+def log_override(payload, command, reason):
     try:
         record = {
             "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "account": account_of(payload.get("transcript_path") or ""),
             "agent_type": payload.get("agent_type") or "",
+            "reason": reason,
             "command": command[:200],
         }
         with open(OVERRIDE_LOG, "a") as fh:
@@ -51,7 +51,6 @@ def main():
     payload = json.loads(raw)
     tool_input = payload.get("tool_input") or {}
     command = tool_input.get("command") or ""
-    overridden = "NO_POLL_OVERRIDE" in command
     background = bool(
         tool_input.get("run_in_background") or payload.get("run_in_background")
     )
@@ -59,12 +58,7 @@ def main():
     sys.path.insert(0, TOOLS_DIR)
     import gate_policy
 
-    params = {}
-    try:
-        with open(PARAMS_PATH) as fh:
-            params = json.load(fh)
-    except Exception:
-        params = {}
+    params = gate_policy.load_params()
     decision = gate_policy.poll_decision(
         command,
         background,
@@ -72,10 +66,10 @@ def main():
         params,
         tool_input.get("timeout"),
     )
-    if decision.get("decision") != "deny":
+    if decision.get("decision") == "override":
+        log_override(payload, command, decision["reason"])
         return
-    if overridden:
-        log_override(payload, command)
+    if decision.get("decision") != "deny":
         return
     sys.stdout.write(
         json.dumps(

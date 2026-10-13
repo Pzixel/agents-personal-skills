@@ -10,6 +10,7 @@ a complete decision dict.
 """
 
 import fnmatch
+import json
 import os
 import re
 import shlex
@@ -322,8 +323,8 @@ _POLL_REASON = (
     "waits on external state with a Monitor whose command prints nothing until the "
     "state is terminal, or a `watcher` agent, or background wait-for only for a few "
     "minutes (the harness kills background Bash tasks with exit 144 at its own events, "
-    "and a killed task reports nothing). Escape hatch: include the literal "
-    "NO_POLL_OVERRIDE in the command with a reason; it overrides the polling heuristic "
+    "and a killed task reports nothing). Escape hatch: a line "
+    "`NO_POLL_OVERRIDE: <reason>` in the command (a reason is required); it overrides the polling heuristic "
     "only, and every use is logged."
 )
 
@@ -331,7 +332,7 @@ _SUBAGENT_BACKGROUND_REASON = (
     "run_in_background is refused for subagents: the harness kills background Bash "
     "tasks with exit 144 at its own events, and a subagent that ends its turn to wait "
     "for the notification is never resumed. " + _SUBAGENT_PROTOCOL + " Escape hatch: "
-    "include the literal NO_POLL_OVERRIDE in the command with a reason; it is logged, "
+    "a line `NO_POLL_OVERRIDE: <reason>` in the command (a reason is required); it is logged, "
     "and you must then block in the same turn on a foreground `wait-for` (timeout "
     "600000, `--max 570`, repeated on exit 124) until that task has finished."
 )
@@ -377,7 +378,17 @@ def poll_decision(cmd, run_in_background, agent_type="", params=None, timeout_ms
     whose --max would outlive its Bash timeout. Everyone: refuse a foreground
     polling construct. Main session background calls pass.
 
-    ``timeout_ms`` is the Bash call's timeout; None means the harness default."""
+    ``timeout_ms`` is the Bash call's timeout; None means the harness default.
+    A refusal becomes {"decision": "override", "reason": ...} when the command
+    carries a NO_POLL_OVERRIDE marker (override_marker)."""
+    decision = _poll_rule(cmd, run_in_background, agent_type, params, timeout_ms)
+    reason = override_marker(cmd, "NO_POLL_OVERRIDE", params)
+    if decision["decision"] == "deny" and reason:
+        return {"decision": "override", "reason": reason}
+    return decision
+
+
+def _poll_rule(cmd, run_in_background, agent_type, params, timeout_ms):
     if run_in_background:
         if agent_type:
             return {"decision": "deny", "reason": _SUBAGENT_BACKGROUND_REASON}
@@ -524,6 +535,29 @@ def tool_call_class(tool_name, cmd_or_path, params=None):
     return classify_command(cmd_or_path, params)
 
 
+def override_marker(text, name, params=None):
+    """Return the reason of an override marker ``name`` in ``text``, else None.
+
+    A marker is a line that, after whitespace and an optional leading ``#``,
+    is ``NAME: <reason>`` (the rest of the line) or ``NAME="<reason>"`` (the
+    quoted part; the ``=`` form requires quotes). The reason, stripped of
+    whitespace and quotes, must be at least ``override_reason_min_chars``
+    long. A marker elsewhere in a line (a grep argument, a string) is not an
+    override."""
+    min_chars = int(_merged_params(params)["override_reason_min_chars"])
+    pattern = re.compile(
+        r"^#?\s*" + re.escape(name) + r"\s*(?::(.*)|=\s*(\"[^\"]*\"|'[^']*'))"
+    )
+    for line in (text or "").splitlines():
+        match = pattern.match(line.strip())
+        if not match:
+            continue
+        reason = (match.group(1) or match.group(2) or "").strip().strip("\"'").strip()
+        if len(reason) >= min_chars:
+            return reason[:200]
+    return None
+
+
 def budget_decision(
     agent_type, ctx_tokens, window_calls, cmd_or_path,
     tool_name="Bash", loaded_skills=(), params=None,
@@ -535,8 +569,9 @@ def budget_decision(
     """
     if agent_type:
         return {"decision": "allow"}
-    if "MAIN_BUDGET_OVERRIDE" in (cmd_or_path or ""):
-        return {"decision": "override", "reason": "MAIN_BUDGET_OVERRIDE present"}
+    reason = override_marker(cmd_or_path, "MAIN_BUDGET_OVERRIDE", params)
+    if reason:
+        return {"decision": "override", "reason": reason}
     p = _merged_params(params)
     main_only = [s for s in loaded_skills or () if s in p["main_only_skills"]]
     if main_only:
@@ -587,6 +622,8 @@ DEFAULT_PARAMS = {
     "wait_for_max_seconds": 570,
     "bash_timeout_max_ms": 600000,
     "skill_bytes_threshold": 40000,
+    # An override marker needs a reason of at least this many characters.
+    "override_reason_min_chars": 8,
     "process_skills": [
         "orchestrate",
         "workflow-authoring",
@@ -683,6 +720,16 @@ _CALLS_REMIND = (
     "exploring and write the handoff with the exact next step."
 )
 _CALLS_STOP = "Hard turn cap reached for {agent} ({calls}/{hard} tool calls). "
+
+
+def load_params():
+    """orchestrate-params.json next to this module, or the built-in defaults
+    when it is missing or unreadable."""
+    try:
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "orchestrate-params.json")) as fh:
+            return json.load(fh)
+    except Exception:
+        return dict(DEFAULT_PARAMS)
 
 
 def _merged_params(params):
@@ -921,16 +968,16 @@ _UNTYPED = frozenset({"", "general-purpose", "claude"})
 
 _UNTYPED_REASON = (
     "Untyped subagent refused (45k-token base per turn). Name a type from "
-    "~/.claude/agents whose description matches the work. If none fits, add the line "
-    "AGENT_TYPE_OVERRIDE to the prompt with the reason."
+    "~/.claude/agents whose description matches the work. If none fits, the main session "
+    "adds a line `AGENT_TYPE_OVERRIDE: <reason>` to the prompt (a reason is required)."
 )
 
 _SPAWN_REASON = (
     "A `{spawner}` agent may not spawn `{requested}`: {allowed}. Spawn rights are set "
     "per spawning type in ~/.claude/tools/orchestrate-params.json (`spawn_rights`) so "
     "that work stays on the agent that was given it. Do the part you were assigned and "
-    "return what you cannot do as a question, or add the line AGENT_TYPE_OVERRIDE to "
-    "the prompt with the reason."
+    "return what you cannot do as a question; only the main session may add a line "
+    "`AGENT_TYPE_OVERRIDE: <reason>` to the prompt."
 )
 
 _MAIN_SPAWNER = "main"
@@ -971,6 +1018,32 @@ def spawn_decision(spawner_type, requested_type, params=None):
             spawner=spawner, requested=requested, allowed=phrase
         ),
     }
+
+
+_SUBAGENT_OVERRIDE_REASON = (
+    "AGENT_TYPE_OVERRIDE is honoured only in the main session: the main session "
+    "spawns reviewers; return the request to main."
+)
+
+
+def spawn_gate_decision(spawner_type, requested_type, model, prompt, params=None):
+    """The Agent-tool gate: spawn rights, model choice and brief, in that order.
+
+    A prompt line ``AGENT_TYPE_OVERRIDE: <reason>`` turns a refusal into
+    ``{"decision": "override", "reason": ...}`` for the main session only; a
+    subagent carrying it is refused. A spawn the gate already allows stays a
+    plain allow, so override records count only real bypasses."""
+    reason = override_marker(prompt, "AGENT_TYPE_OVERRIDE", params)
+    if reason and agent_type_name(spawner_type):
+        return {"decision": "deny", "reason": _SUBAGENT_OVERRIDE_REASON}
+    decision = spawn_decision(spawner_type, requested_type, params)
+    if decision["decision"] != "deny":
+        decision = model_override_decision(spawner_type, requested_type, model, params)
+    if decision["decision"] != "deny":
+        decision = brief_decision(requested_type, prompt)
+    if decision["decision"] == "deny" and reason:
+        return {"decision": "override", "reason": reason}
+    return decision
 
 
 # ---------------------------------------------------------------------------
@@ -1413,7 +1486,7 @@ _BRIEF_REASON = (
     "`access:` = the route to every system the probe reads (infra-access). A "
     "delegate that must discover these burns its context before the deliverable "
     "(retro 2026-10-12: 30+ builders and 4 probes died that way). Add the lines, "
-    "or `AGENT_TYPE_OVERRIDE` with the reason."
+    "or, from the main session, a line `AGENT_TYPE_OVERRIDE: <reason>`."
 )
 
 

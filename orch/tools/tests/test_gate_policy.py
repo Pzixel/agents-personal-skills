@@ -154,13 +154,35 @@ class BudgetDecisionTest(unittest.TestCase):
             gate_policy.budget_decision("", 200000, 3, "cat src/app.py")["decision"], "allow"
         )
 
-    def test_override_token_bypasses_the_budget(self):
+    def test_override_marker_line_bypasses_the_budget_with_its_reason(self):
         self.assertEqual(
             gate_policy.budget_decision(
-                "", 200000, 20, "cat src/app.py  # MAIN_BUDGET_OVERRIDE: testing"
-            )["decision"],
-            "override",
+                "", 200000, 20, "# MAIN_BUDGET_OVERRIDE: delivery setup for slices\ncat src/app.py"
+            ),
+            {"decision": "override", "reason": "delivery setup for slices"},
         )
+
+
+class OverrideMarkerTest(unittest.TestCase):
+    CASES = [
+        ("colon form", "MAIN_BUDGET_OVERRIDE: reads for the retro", "reads for the retro"),
+        ("equals with quotes", 'MAIN_BUDGET_OVERRIDE="reads for the retro report"\nls', "reads for the retro report"),
+        ("equals with quotes then a command", 'MAIN_BUDGET_OVERRIDE="reads for the retro report" cat a', "reads for the retro report"),
+        ("unquoted equals form", "MAIN_BUDGET_OVERRIDE=reads cat src/app.py", None),
+        ("trailing comment after a command", "cat x # MAIN_BUDGET_OVERRIDE: reason text", None),
+        ("leading hash", "cat a\n  # MAIN_BUDGET_OVERRIDE: delivery setup for slices", "delivery setup for slices"),
+        ("inside a grep argument", "rtk grep MAIN_BUDGET_OVERRIDE ~/.claude/x.jsonl", None),
+        ("inside an echo string", 'echo "MAIN_BUDGET_OVERRIDE: delivery setup for slices"', None),
+        ("reason under the minimum", "# MAIN_BUDGET_OVERRIDE: ok", None),
+        ("other marker name", "NO_POLL_OVERRIDE: waiting on a deploy", None),
+    ]
+
+    def test_cases(self):
+        for label, text, expected in self.CASES:
+            with self.subTest(label):
+                self.assertEqual(
+                    gate_policy.override_marker(text, "MAIN_BUDGET_OVERRIDE"), expected
+                )
 
 
 
@@ -677,3 +699,42 @@ class RedactSecretsTest(unittest.TestCase):
     def test_counts_and_short_values_stay(self):
         text = "tokens: 15000\ntoken: null\nimage: nginx:1.27\nsubagent_tokens 1234"
         self.assertEqual(gate_policy.redact_secrets(text), text)
+
+
+class OverrideGatesTest(unittest.TestCase):
+    BRIEF = "files: a\ncheck: b\n"
+
+    def test_main_marker_turns_a_refused_spawn_into_an_override(self):
+        self.assertEqual(
+            gate_policy.spawn_gate_decision(
+                "", "Plan", "", "AGENT_TYPE_OVERRIDE: second opinion on the design"
+            ),
+            {"decision": "override", "reason": "second opinion on the design"},
+        )
+
+    def test_subagent_marker_is_refused(self):
+        decision = gate_policy.spawn_gate_decision(
+            "builder", "reviewer", "", self.BRIEF + "AGENT_TYPE_OVERRIDE: second opinion on the design"
+        )
+        self.assertEqual(decision["decision"], "deny")
+        self.assertIn("the main session spawns reviewers; return the request to main", decision["reason"])
+
+    def test_main_marker_on_an_allowed_spawn_stays_a_plain_allow(self):
+        self.assertEqual(
+            gate_policy.spawn_gate_decision(
+                "", "builder", "", self.BRIEF + "AGENT_TYPE_OVERRIDE: second opinion on the design"
+            ),
+            {"decision": "allow"},
+        )
+
+    def test_subagent_background_with_marker_line_is_an_override(self):
+        self.assertEqual(
+            gate_policy.poll_decision("make test\n# NO_POLL_OVERRIDE: waiting on the deploy", True, "builder"),
+            {"decision": "override", "reason": "waiting on the deploy"},
+        )
+
+    def test_subagent_background_with_trailing_marker_is_refused(self):
+        self.assertEqual(
+            gate_policy.poll_decision("make test # NO_POLL_OVERRIDE: waiting on the deploy", True, "builder")["decision"],
+            "deny",
+        )

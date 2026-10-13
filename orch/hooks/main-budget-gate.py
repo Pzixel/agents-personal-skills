@@ -137,15 +137,6 @@ def loaded_skills(session_id):
     ]
 
 
-def load_params():
-    """A missing or broken params file falls back to the policy defaults."""
-    try:
-        with open(os.path.join(TOOLS_DIR, "orchestrate-params.json")) as fh:
-            return json.load(fh)
-    except Exception:
-        return {}
-
-
 def hands_on_calls(entries, boundary, classify):
     count = 0
     for entry in entries[boundary + 1:]:
@@ -161,12 +152,8 @@ def hands_on_calls(entries, boundary, classify):
     return count
 
 
-def log_override(payload, ctx_tokens, window_calls, command, transcript_path):
+def log_override(payload, ctx_tokens, window_calls, command, transcript_path, reason):
     try:
-        marker = "MAIN_BUDGET_OVERRIDE:"
-        reason = ""
-        if marker in command:
-            reason = command.split(marker, 1)[1].splitlines()[0].strip()[:200]
         record = {
             "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "account": account_of(transcript_path),
@@ -208,7 +195,7 @@ def main():
     if boundary is None:
         return
     ctx_tokens = context_tokens(entries)
-    params = load_params()
+    params = gate_policy.load_params()
     window_calls = hands_on_calls(
         entries, boundary, lambda tool, target: gate_policy.tool_call_class(tool, target, params)
     )
@@ -231,7 +218,7 @@ def main():
     elif verdict == "remind":
         emit({"hookEventName": "PreToolUse", "additionalContext": decision.get("message", "")})
     elif verdict == "override":
-        log_override(payload, ctx_tokens, window_calls, cmd_or_path, transcript_path)
+        log_override(payload, ctx_tokens, window_calls, cmd_or_path, transcript_path, decision["reason"])
 
 
 try:
