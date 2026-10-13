@@ -1,6 +1,8 @@
-"""deny-destructive refuses kubectl mutations; task-type-checklist fires the incident checklist on live failures."""
+"""deny-destructive fails closed; task-type-checklist fires the incident checklist on live failures."""
 
 import json
+import shutil
+import tempfile
 import pathlib
 import subprocess
 import unittest
@@ -14,33 +16,31 @@ def run(hook, payload):
     )
 
 
-def deny(command):
-    return run("deny-destructive.py", {"tool_input": {"command": command}}).returncode
-
-
 def incident(prompt):
     return "Incident checklist" in run("task-type-checklist.py", {"prompt": prompt}).stdout
 
 
-class KubectlVerbs(unittest.TestCase):
-    def test_table(self):
-        for cmd, code in [
-            ("kubectl rollout restart deploy/x", 2),
-            ("kubectl -n app patch deploy/x -p '{}'", 2),
-            ("kubectl rollout undo deploy/x", 2),
-            ("kubectl --context prod scale deploy/x --replicas=0", 2),
-            ("kubectl drain node-3", 2),
-            ("kubectl -v 6 apply -f m.yaml", 2),
-            ("kubectl delete pod x", 2),
-            ("kubectl delete pod -l app=x", 0),
-            ("kubectl rollout status deploy/x", 0),
-            ("kubectl get pods -A", 0),
-            ("kubectl get pods -n set", 0),
-            ("kubectl -n app exec pod -- redis-cli set k v", 0),
-            ("kubectl get pods # then patch it", 0),
-        ]:
-            with self.subTest(cmd=cmd):
-                self.assertEqual(deny(cmd), code)
+def destructive_decision(hooks_dir, stdin):
+    out = subprocess.run(
+        ["python3", str(hooks_dir / "deny-destructive.py")], input=stdin, capture_output=True, text=True
+    )
+    return out.returncode, json.loads(out.stdout)["hookSpecificOutput"]["permissionDecision"]
+
+
+class DenyDestructiveFailsClosed(unittest.TestCase):
+    def test_bad_stdin_is_denied(self):
+        self.assertEqual(destructive_decision(HOOKS, "not json"), (0, "deny"))
+
+    def test_malformed_params_value_is_denied(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            shutil.copytree(HOOKS, root / "hooks")
+            shutil.copytree(HOOKS.parent / "tools", root / "tools", ignore=shutil.ignore_patterns("tests"))
+            (root / "tools" / "orchestrate-params.json").write_text(
+                json.dumps({"destructive": {"ours_paths": 5}})
+            )
+            payload = json.dumps({"tool_input": {"command": "rm tmp/x"}})
+            self.assertEqual(destructive_decision(root / "hooks", payload), (0, "deny"))
 
 
 class IncidentChecklist(unittest.TestCase):

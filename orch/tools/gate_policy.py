@@ -680,6 +680,15 @@ DEFAULT_PARAMS = {
         "http_clients": ["curl", "wget", "http", "https", "httpie"],
         "local_hosts": ["localhost", "127.0.0.1", "::1", "host.docker.internal"],
     },
+    "destructive": {
+        "ours_paths": ["/tmp/", "tmp/", ".worktrees/", "~/.claude/tmp/"],
+        "ours_labels": ["orch.session"],
+        "sql_clients": ["psql", "mysql", "sqlite3", "clickhouse-client", "clickhouse", "mongosh"],
+        "plan_max_lines": 40,
+        "plan_max_bytes": 4000,
+        "command_max_bytes": 65536,
+        "ask_in_bypass": False,
+    },
 }
 
 # Agent types whose stop text may offer the checkpoint-commit path: they own a
@@ -1555,3 +1564,481 @@ def redact_secrets(text, known_tokens=()):
             lambda m: m.group(1) + _mask(m.group(2)) + m.group(3), out
         )
     return out
+
+
+# --- destructive policy (hooks/deny-destructive.py) -------------------------
+
+_PLAN_MARKER_RE = re.compile(
+    r"^\s*(?:bash|sh|zsh)\s+(\S+)\s+#\s*DESTRUCTIVE_PLAN\s+sha256=([0-9a-fA-F]{64})\s*$"
+)
+_PLAN_HEADERS = ("# scope:", "# undo:", "# count:")
+_PLAN_INDIRECT_RE = re.compile(r"^\s*(?:(?:source|\.|exec|eval)\s|(?:bash|sh|zsh)\s+\S)")
+_SEGMENT_PUNCT = frozenset(";&|()\n`{}")
+_HEREDOC_RE = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
+_SHELLS = frozenset({"bash", "sh", "zsh"})
+_INNER_SUBST_RE = re.compile(r"`([^`]*)`|\$\(([^()]*)\)")
+_KUBECTL_VALUE_FLAGS = frozenset({
+    "-n", "-s", "-v", "--v", "--as", "--as-group", "--token", "--request-timeout",
+    "--namespace", "--context", "--kubeconfig", "--cluster", "--user", "--server",
+})
+_KUBECTL_READS = frozenset({
+    "get", "describe", "logs", "top", "explain", "api-resources", "api-versions",
+    "version", "cluster-info", "diff", "cp", "debug", "port-forward",
+    "attach", "wait", "events", "kustomize",
+})
+_KUBECTL_READ_PAIRS = {
+    "config": frozenset({"view", "get-contexts", "current-context"}),
+    "auth": frozenset({"can-i"}),
+    "rollout": frozenset({"status", "history"}),
+}
+_KUBECTL_NO_UNDO_KINDS = frozenset({
+    "namespace", "namespaces", "ns", "secret", "secrets", "pvc", "pvcs",
+    "persistentvolumeclaim", "persistentvolumeclaims", "crd", "crds",
+    "customresourcedefinition", "customresourcedefinitions",
+})
+_SECRET_WORD_RE = re.compile(r"^secrets?(?:$|[/.,])", re.I)
+_SECRET_MANIFEST_RE = re.compile(r"\bkind:\s*Secret\b")
+_SQL_NO_UNDO_RE = re.compile(
+    r"\bDROP\s+(?:TABLE|DATABASE|SCHEMA|INDEX|VIEW|MATERIALIZED\s+VIEW|SEQUENCE|TYPE"
+    r"|FUNCTION|EXTENSION|TRIGGER|POLICY|ROLE|USER)\b|\bTRUNCATE\b|\bALTER\s+TABLE\b[^;]*\b(?:DROP|DELETE)\b"
+    r"|\.drop(?:Database)?\(",
+    re.I,
+)
+_SQL_DELETE_RE = re.compile(r"\bDELETE\s+FROM\b([^;]*)", re.I)
+_SQL_WRITE_RE = re.compile(
+    r"\bUPDATE\s+\S+\s+SET\b|\.(?:delete|update)(?:One|Many)\(|\.remove\(", re.I
+)
+_SQL_FILE_FLAGS = frozenset({"-f", "--file", "--queries-file", "<"})
+_INLINE_INTERPRETER_RE = re.compile(r"^(?:python[0-9.]*|perl|ruby|node)$")
+_INLINE_WRITE_RE = re.compile(
+    r"rmtree|os\.remove|unlink|rmdir|shutil\.move|rmSync|rm_rf|FileUtils\.rm|\bDROP\b|\bTRUNCATE\b|DELETE\s+FROM"
+    r"|subprocess|os\.system",
+    re.I,
+)
+_XARGS_VALUE_FLAGS = frozenset({"-I", "-n", "-P", "-L", "-s", "-d", "-E", "-a"})
+_SSH_VALUE_FLAGS = frozenset({"-p", "-i", "-l", "-o", "-F", "-J", "-b", "-c", "-D", "-L", "-R", "-W"})
+_DOCKER_VALUE_FLAGS = frozenset({"-u", "--user", "-e", "--env", "-w", "--workdir", "--env-file"})
+
+
+def plan_marker(command):
+    """(path, sha256 hex) when the whole command runs a destructive plan, else None."""
+    m = _PLAN_MARKER_RE.match(command or "")
+    return (m.group(1), m.group(2).lower()) if m else None
+
+
+def _shell_segments(command):
+    """Token lists per shell segment; quoted text stays one token, so a quoted
+    word never becomes a command head. Backticks split like ``;``."""
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()\n`{}")
+    lexer.whitespace = " \t\r"
+    lexer.whitespace_split = True
+    lexer.commenters = ""
+    try:
+        tokens = list(lexer)
+    except ValueError:
+        tokens = command.split()
+    # A comment ends at the next separator, not only at a newline: over-reading
+    # a comment as a command can only raise a class, never hide one.
+    segments, current, comment = [], [], False
+    for tok in tokens:
+        if tok == "{}":
+            if not comment:
+                current.append(tok)
+        elif tok and set(tok) <= _SEGMENT_PUNCT:
+            if current:
+                segments.append(current)
+            current, comment = [], False
+        elif comment or tok.startswith("#"):
+            comment = True
+        else:
+            current.append(tok)
+    if current:
+        segments.append(current)
+    return segments
+
+
+def _command_head(tokens):
+    """(program, args, via_xargs) after env assignments, wrappers and their options."""
+    i, via_xargs = 0, False
+    n = len(tokens)
+    while i < n:
+        word = os.path.basename(tokens[i])
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[i]):
+            i += 1
+        elif word == "function":
+            i += 2
+        elif tokens[i] in ("do", "then", "else", "elif", "if", "while", "until", "!"):
+            i += 1
+        elif word == "timeout":
+            i += 1
+            while i < n and tokens[i].startswith("-"):
+                i += 2 if tokens[i] in ("-s", "-k", "--signal", "--kill-after") else 1
+            i += 1
+        elif word == "rtk":
+            i += 2 if i + 1 < n and tokens[i + 1] == "proxy" else 1
+        elif word == "xargs":
+            via_xargs = True
+            i += 1
+            while i < n and tokens[i].startswith("-"):
+                i += 2 if tokens[i] in _XARGS_VALUE_FLAGS else 1
+        elif word == "nice":
+            i += 1
+            while i < n and tokens[i].startswith("-"):
+                i += 2 if tokens[i] == "-n" else 1
+        elif word in ("env", "nohup", "time", "command", "exec"):
+            i += 1
+            while i < n and tokens[i].startswith("-"):
+                i += 2 if (word, tokens[i]) in (
+                    ("env", "-u"), ("env", "-C"), ("env", "-S"), ("exec", "-a")
+                ) else 1
+        else:
+            return word, tokens[i + 1:], via_xargs
+    return "", [], via_xargs
+
+
+def _path_args(args):
+    paths, after_dashdash = [], False
+    for arg in args:
+        if not after_dashdash and arg == "--":
+            after_dashdash = True
+        elif after_dashdash or not arg.startswith("-"):
+            paths.append(arg)
+    return paths
+
+
+def _is_ours_path(path, cfg, relative_ok):
+    if any(ch in path for ch in "$`{}") or ".." in path.split("/"):
+        return False
+    norm = os.path.normpath(path)
+    for prefix in cfg["ours_paths"]:
+        if not relative_ok and not prefix.startswith(("/", "~")):
+            continue
+        root = prefix.rstrip("/")
+        if norm.startswith(prefix) or norm == root and not root.startswith("/"):
+            return True
+    return False
+
+
+def _is_plain_relative(path):
+    """A relative path a rename can reverse: no climbing, variables or globs."""
+    return not (
+        path.startswith(("/", "~", "-")) or ".." in path.split("/")
+        or any(ch in path for ch in "$`{}*?[")
+    )
+
+
+def _rm_rule(paths, cfg, relative_ok, what):
+    if paths and all(_is_ours_path(p, cfg, relative_ok) for p in paths):
+        return ("ours", what + " of project-owned scratch paths")
+    return ("impossible", what + " outside the project-owned paths has no undo: leave the file or overwrite it")
+
+
+def _selector_keys(args):
+    keys = []
+    for i, arg in enumerate(args):
+        value = None
+        if arg in ("-l", "--selector") and i + 1 < len(args):
+            value = args[i + 1]
+        elif arg.startswith(("-l=", "--selector=")):
+            value = arg.split("=", 1)[1]
+        elif arg.startswith("-l") and len(arg) > 2:
+            value = arg[2:]
+        if value:
+            keys.extend(re.split(r"!=|==|=|\s", part.strip())[0] for part in value.split(","))
+    return keys
+
+
+def _flag_value(args, flag):
+    for i, arg in enumerate(args):
+        if arg == flag and i + 1 < len(args):
+            return args[i + 1]
+        if arg.startswith(flag + "="):
+            return arg.split("=", 1)[1]
+    return None
+
+
+def _kubectl_class(args, cfg, ctx):
+    rest, i = [], 0
+    while i < len(args):
+        if args[i] in _KUBECTL_VALUE_FLAGS:
+            i += 2
+            continue
+        rest.append(args[i])
+        i += 1
+    words = [a for a in rest if not a.startswith("-")]
+    if not words:
+        return []
+    verb = words[0]
+    if verb == "exec":
+        return _classify_inner(rest[rest.index("--") + 1:], cfg, ctx) if "--" in rest else []
+    if verb in _KUBECTL_READS:
+        return []
+    if verb in _KUBECTL_READ_PAIRS and len(words) > 1 and words[1] in _KUBECTL_READ_PAIRS[verb]:
+        return []
+    source = _flag_value(rest, "-f") or _flag_value(rest, "--filename") or ""
+    names_secret = any(_SECRET_WORD_RE.match(w) for w in words[1:]) or "secret" in source.lower()
+    if verb == "delete":
+        kinds = re.split(r"[,/]", words[1].lower()) if len(words) > 1 else []
+        if names_secret or any(kind.split(".")[0] in _KUBECTL_NO_UNDO_KINDS for kind in kinds):
+            return [("impossible", "kubectl delete of a namespace, secret, PVC or CRD has no undo")]
+        keys = _selector_keys(rest)
+        if keys and "--all" not in rest and all(key in cfg["ours_labels"] for key in keys):
+            return [("ours", "kubectl delete by a session-owned label")]
+        return [("approval", "kubectl delete of controller-managed objects")]
+    if names_secret or (
+        verb in ("apply", "create", "replace") and _SECRET_MANIFEST_RE.search(ctx["text"])
+    ):
+        return [("impossible", "kubectl writes a Secret: the previous value cannot be restored")]
+    return [("approval", "kubectl " + verb + " changes live cluster state")]
+
+
+def _git_class(args):
+    i = 0
+    while i < len(args) and args[i].startswith("-"):
+        i += 2 if args[i] in ("-C", "-c") else 1
+    if i >= len(args):
+        return []
+    sub, rest = args[i], args[i + 1:]
+    if sub == "clean":
+        return [("impossible", "git clean deletes untracked files")]
+    if sub == "reset" and "--hard" in rest:
+        return [("impossible", "git reset --hard discards uncommitted work")]
+    if sub == "checkout" and "--" in rest and rest.index("--") < len(rest) - 1:
+        return [("impossible", "git checkout -- <path> discards uncommitted work")]
+    if sub == "push" and any(
+        a in ("-f", "--force") or a.startswith("+") for a in rest
+    ):
+        return [("impossible", "a force push overwrites remote history")]
+    return []
+
+
+def _sql_hits(args):
+    text = " ".join(args)
+    if _SQL_NO_UNDO_RE.search(text):
+        return [("impossible", "SQL DROP/TRUNCATE/ALTER ... DROP has no undo")]
+    for m in _SQL_DELETE_RE.finditer(text):
+        if not re.search(r"\bWHERE\b", m.group(1), re.I):
+            return [("impossible", "SQL DELETE without WHERE has no undo")]
+    if _SQL_DELETE_RE.search(text) or _SQL_WRITE_RE.search(text):
+        return [("approval", "SQL write to a database")]
+    if any(a in _SQL_FILE_FLAGS or a.startswith(("--file=", "--queries-file=")) for a in args):
+        return [("approval", "SQL from a file: its statements are not visible")]
+    return []
+
+
+def _after_options(args, value_flags):
+    """Index of the first positional argument, skipping options and their values."""
+    i = 0
+    while i < len(args) and args[i].startswith("-"):
+        i += 2 if args[i] in value_flags else 1
+    return i
+
+
+def _classify_inner(tokens, cfg, ctx):
+    """A command run elsewhere (exec, ssh): one quoted string is re-parsed."""
+    if len(tokens) == 1:
+        return _classify_text(tokens[0], cfg, ctx["depth"] + 1)
+    return _classify_tokens(tokens, cfg, ctx)
+
+
+def _classify_tokens(tokens, cfg, ctx):
+    """Hits for one segment; ``ctx`` carries the raw text and the cd state."""
+    program, args, via_xargs = _command_head(tokens)
+    relative_ok = not ctx["cd"]
+    if not program:
+        return []
+    if program in ("cd", "pushd"):
+        ctx["cd"] = True
+        return []
+    if program in ("sudo", "doas", "alias", "apt", "apt-get") or program == "brew" and args[:1] == ["uninstall"]:
+        return [("privileged", "privileged package or system command")]
+    if program in ("kill", "pkill", "killall"):
+        return [("privileged", "kill: stop a job with its own tool or let it finish")]
+    if program in ("chmod", "chown"):
+        return [("privileged", "chmod/chown: file modes are not changed by agents")]
+    if program == "eval" or program in ("sh", "bash", "zsh") and any(
+        re.match(r"^-[a-z]*c[a-z]*$", a) for a in args
+    ):
+        return [("privileged", "eval or shell -c wrapper: run the command directly")]
+    if program == "rm":
+        return [_rm_rule([] if via_xargs else _path_args(args), cfg, relative_ok, "rm")]
+    if program == "mv":
+        paths = _path_args(args)
+        if paths and all(_is_ours_path(p, cfg, relative_ok) for p in paths):
+            return [("ours", "mv within project-owned paths")]
+        if relative_ok and paths and all(_is_plain_relative(p) for p in paths):
+            return []
+        return [("approval", "mv outside the project-owned paths")]
+    if program == "find":
+        exec_rm = any(
+            a in ("-exec", "-execdir") and args[i + 1:i + 2] == ["rm"] for i, a in enumerate(args)
+        )
+        if "-delete" in args or exec_rm:
+            start = []
+            for a in args:
+                if a.startswith(("-", "(", "!")):
+                    break
+                start.append(a)
+            return [_rm_rule(start, cfg, relative_ok, "find -delete")]
+        return []
+    if program == "git":
+        return _git_class(args)
+    if program == "kubectl":
+        return _kubectl_class(args, cfg, ctx)
+    if program == "docker":
+        rest = args[1:] if args[:1] == ["compose"] else args
+        if rest[:1] == ["exec"]:
+            i = _after_options(rest[1:], _DOCKER_VALUE_FLAGS)
+            return _classify_inner(rest[1:][i + 1:], cfg, ctx)
+        return []
+    if program == "ssh":
+        i = _after_options(args, _SSH_VALUE_FLAGS)
+        return _classify_inner(args[i + 1:], cfg, ctx)
+    if program in ("helm",) and args[:1] in (["uninstall"], ["delete"]) or (
+        program == "flux" and args[:1] == ["delete"]
+    ) or program == "rsync" and any(a.startswith("--delete") for a in args):
+        return [("approval", program + " removes live state")]
+    if _INLINE_INTERPRETER_RE.match(program):
+        code = " ".join(
+            args[i + 1] for i, a in enumerate(args[:-1]) if a in ("-c", "-e", "-E")
+        )
+        if code and _INLINE_WRITE_RE.search(code):
+            return [("approval", "inline " + program + " code deletes, moves or runs commands")]
+        return []
+    if program in cfg["sql_clients"]:
+        return _sql_hits(args)
+    return []
+
+
+def _classify_text(command, cfg, depth=0):
+    if depth > 3:
+        return [("impossible", "command nesting too deep to classify")]
+    ctx = {"text": command, "cd": False, "depth": depth}
+    script, heredocs = _split_heredocs(command)
+    hits = []
+    for tokens in _shell_segments(script):
+        hits.extend(_classify_tokens(tokens, cfg, ctx))
+    for m in _INNER_SUBST_RE.finditer(script):
+        hits.extend(_classify_text(m.group(1) or m.group(2) or "", cfg, depth + 1))
+    for line, body, quoted in heredocs:
+        if not quoted:
+            for m in _INNER_SUBST_RE.finditer(body):
+                hits.extend(_classify_text(m.group(1) or m.group(2) or "", cfg, depth + 1))
+        hits.extend(_heredoc_hits(line, body, cfg, depth))
+    return hits
+
+
+def _split_heredocs(command):
+    """(script without heredoc bodies, [(opening line, body, delimiter quoted)])."""
+    lines = command.split("\n")
+    script, heredocs, i = [], [], 0
+    while i < len(lines):
+        line = lines[i]
+        script.append(line)
+        i += 1
+        for m in _HEREDOC_RE.finditer(line):
+            body = []
+            while i < len(lines) and lines[i].strip() != m.group(2):
+                body.append(lines[i])
+                i += 1
+            i += 1
+            heredocs.append((line, "\n".join(body), bool(m.group(1))))
+    return "\n".join(script), heredocs
+
+
+def _heredoc_hits(line, body, cfg, depth):
+    """A heredoc body is data unless it feeds a shell, an interpreter, a remote
+    shell or a SQL client; then it is classed as what that head runs. Every
+    segment of the opening line counts: ``cat <<EOF | bash`` feeds bash."""
+    for tokens in _shell_segments(line):
+        program, args, _ = _command_head(tokens)
+        if program == "kubectl" and "exec" in args or program == "docker" and "exec" in args:
+            program = "ssh"
+        if program in _SHELLS or program == "ssh":
+            return _classify_text(body, cfg, depth + 1)
+        if _INLINE_INTERPRETER_RE.match(program) and _INLINE_WRITE_RE.search(body):
+            return [("approval", "inline " + program + " code deletes, moves or runs commands")]
+        if program in cfg["sql_clients"]:
+            return _sql_hits([body])
+    return []
+
+
+_DECISION = {"ours": "allow", "approval": "ask", "impossible": "deny", "privileged": "deny"}
+_SEVERITY = {"ours": 1, "approval": 2, "impossible": 3, "privileged": 3}
+
+
+def _plan_decision(path, marker_hash, agent_type, plan_text, plan_hash, cfg):
+    def deny(reason):
+        return {"decision": "deny", "class": "approval", "reason": reason}
+
+    if agent_type:
+        return deny("only the main session runs a destructive plan: return the plan path to main")
+    if not path.startswith(("/", "~/")):
+        return deny("plan path must be absolute")
+    if plan_text is None:
+        return deny("plan file " + path + " is missing or unreadable")
+    if (plan_hash or "").lower() != marker_hash:
+        return deny("plan hash mismatch: rewrite the marker after editing the plan")
+    lines = plan_text.splitlines()
+    headers = {}
+    for header in _PLAN_HEADERS:
+        found = [l for l in lines if l.strip().lower().startswith(header)]
+        if not found:
+            return deny("plan header line `" + header + " ...` is missing")
+        headers[header] = found[0].strip()
+    max_lines, max_bytes = int(cfg["plan_max_lines"]), int(cfg["plan_max_bytes"])
+    if len(lines) > max_lines or len(plan_text.encode("utf-8")) > max_bytes:
+        return deny(
+            "plan is over %d lines or %d bytes: split the plan" % (max_lines, max_bytes)
+        )
+    for number, line in enumerate(lines, 1):
+        if _PLAN_INDIRECT_RE.match(line):
+            return deny(
+                "plan line %d runs another file: inline it, the owner approves only what is shown" % number
+            )
+    summary = "Destructive plan " + path + " | " + " | ".join(headers[h] for h in _PLAN_HEADERS)
+    return {"decision": "ask", "class": "approval", "reason": summary + "\n\n" + plan_text}
+
+
+def destructive_decision(
+    command, agent_type, plan_text, plan_hash, params=None, permission_mode=""
+):
+    """Class and permission decision for one Bash command.
+
+    ``plan_text``/``plan_hash`` are the content and sha256 hex of the file the
+    DESTRUCTIVE_PLAN marker names (None when there is no readable file). The
+    plan's inner commands are not re-inspected: the owner reads them in the
+    prompt. ``permission_mode`` is the hook input field; whether a hook ``ask``
+    prompts in bypassPermissions mode is undocumented, so there it becomes a
+    deny unless ``destructive.ask_in_bypass``. A malformed params value raises.
+    Returns {"decision": allow|ask|deny, "class", "reason"}.
+    """
+    cfg = _merged_params(params)["destructive"]
+    if len((command or "").encode("utf-8", "surrogatepass")) > int(cfg["command_max_bytes"]):
+        return {"decision": "deny", "class": "impossible",
+                "reason": "command too long for the destructive gate"}
+    marker = plan_marker(command)
+    if marker:
+        result = _plan_decision(marker[0], marker[1], agent_type, plan_text, plan_hash, cfg)
+    else:
+        result = _command_decision(command or "", cfg)
+    if (
+        result["decision"] == "ask"
+        and permission_mode == "bypassPermissions"
+        and not cfg["ask_in_bypass"]
+    ):
+        return {"decision": "deny", "class": result["class"], "reason": (
+            "approval needs a permission prompt; this session runs in bypass mode and "
+            "cannot prompt (destructive.ask_in_bypass=false)"
+        )}
+    return result
+
+
+def _command_decision(command, cfg):
+    found = _classify_text(command, cfg)
+    if not found:
+        return {"decision": "allow", "class": "none", "reason": ""}
+    cls, reason = max(found, key=lambda hit: _SEVERITY[hit[0]])
+    if cls == "approval":
+        reason += ": batch it into a plan script (# scope / # undo / # count) run from the main session"
+    return {"decision": _DECISION[cls], "class": cls, "reason": reason}

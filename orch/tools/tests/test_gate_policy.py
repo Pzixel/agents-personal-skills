@@ -738,3 +738,249 @@ class OverrideGatesTest(unittest.TestCase):
             gate_policy.poll_decision("make test # NO_POLL_OVERRIDE: waiting on the deploy", True, "builder")["decision"],
             "deny",
         )
+_PLAN = (
+    "# scope: orders table, rows of tenant acme\n"
+    "# undo: restore from tmp/orders-acme.csv\n"
+    "# count: 120 rows\n"
+    "psql -c \"DELETE FROM orders WHERE tenant = 'acme'\"\n"
+)
+_PLAN_HASH = "a" * 64
+_PLAN_CMD = "bash /tmp/plan.sh  # DESTRUCTIVE_PLAN sha256=" + _PLAN_HASH
+
+
+def _destructive(command, agent_type="", plan_text=None, plan_hash=None):
+    return gate_policy.destructive_decision(command, agent_type, plan_text, plan_hash)
+
+
+class DestructiveDecisionTest(unittest.TestCase):
+    def test_rm_of_scratch_path_is_allowed(self):
+        self.assertEqual(_destructive("rm -rf tmp/build /tmp/x")["decision"], "allow")
+
+    def test_rm_outside_ours_is_denied(self):
+        self.assertEqual(
+            {k: _destructive("rm -rf tmp/x ~/Documents")[k] for k in ("decision", "class")},
+            {"decision": "deny", "class": "impossible"},
+        )
+
+    def test_rm_climbing_out_of_scratch_is_denied(self):
+        self.assertEqual(_destructive("rm -rf tmp/../../src")["decision"], "deny")
+
+    def test_kubectl_delete_by_session_label_is_allowed(self):
+        self.assertEqual(
+            _destructive("kubectl -n jobs delete pods -l orch.session=abc")["decision"], "allow"
+        )
+
+    def test_kubectl_delete_by_other_label_asks(self):
+        self.assertEqual(_destructive("kubectl delete pods -l app=api")["decision"], "ask")
+
+    def test_kubectl_delete_secret_is_denied(self):
+        self.assertEqual(_destructive("kubectl delete secret/db-creds -n prod")["decision"], "deny")
+
+    def test_kubectl_scale_asks(self):
+        self.assertEqual(
+            _destructive("kubectl scale deploy/api --replicas=0")["decision"], "ask"
+        )
+
+    def test_kubectl_verbs_moved_from_the_hook_table(self):
+        for cmd, decision in [
+            ("kubectl rollout restart deploy/x", "ask"),
+            ("kubectl -n app patch deploy/x -p '{}'", "ask"),
+            ("kubectl drain node-3", "ask"),
+            ("kubectl -v 6 apply -f m.yaml", "ask"),
+            ("kubectl rollout status deploy/x", "allow"),
+            ("kubectl get pods -n set", "allow"),
+            ("kubectl -n app exec pod -- redis-cli set k v", "allow"),
+            ("kubectl get pods # then patch it", "allow"),
+        ]:
+            with self.subTest(cmd=cmd):
+                self.assertEqual(_destructive(cmd)["decision"], decision)
+
+    def test_ask_in_bypass_mode_becomes_deny(self):
+        result = gate_policy.destructive_decision(
+            "kubectl scale deploy/api --replicas=0", "", None, None,
+            permission_mode="bypassPermissions",
+        )
+        self.assertEqual(result["decision"], "deny")
+
+    def test_sql_delete_without_where_is_denied(self):
+        self.assertEqual(_destructive('psql -c "DELETE FROM orders"')["decision"], "deny")
+
+    def test_plan_with_matching_hash_asks_and_shows_the_script(self):
+        result = _destructive(_PLAN_CMD, plan_text=_PLAN, plan_hash=_PLAN_HASH)
+        self.assertEqual(result["decision"], "ask")
+        self.assertIn(_PLAN, result["reason"])
+
+    def test_plan_with_tampered_hash_is_denied(self):
+        result = _destructive(_PLAN_CMD, plan_text=_PLAN, plan_hash="b" * 64)
+        self.assertEqual(
+            (result["decision"], result["reason"]),
+            ("deny", "plan hash mismatch: rewrite the marker after editing the plan"),
+        )
+
+    def test_plan_without_undo_header_is_denied(self):
+        text = _PLAN.replace("# undo: restore from tmp/orders-acme.csv\n", "")
+        result = _destructive(_PLAN_CMD, plan_text=text, plan_hash=_PLAN_HASH)
+        self.assertEqual(result["decision"], "deny")
+        self.assertIn("# undo:", result["reason"])
+
+    def test_plan_from_a_subagent_is_denied(self):
+        result = _destructive(_PLAN_CMD, "builder", _PLAN, _PLAN_HASH)
+        self.assertEqual(result["decision"], "deny")
+
+    def test_marker_words_inside_grep_are_not_an_override(self):
+        for command in (
+            'grep -rn "DESTRUCTIVE_OK" orch',
+            "echo bash x.sh  # DESTRUCTIVE_PLAN sha256=" + _PLAN_HASH,
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(_destructive(command)["class"], "none")
+
+    def test_ask_in_bypass_true_keeps_ask(self):
+        result = gate_policy.destructive_decision(
+            "kubectl scale deploy/api --replicas=0", "", None, None,
+            {"destructive": {"ask_in_bypass": True}}, "bypassPermissions",
+        )
+        self.assertEqual(result["decision"], "ask")
+
+    def test_privileged_commands_are_denied(self):
+        for cmd in (
+            "sudo ls", "apt-get install x", "brew uninstall x", "kill -9 1", "pkill -f x",
+            "killall x", "chmod +x tmp/x", "chown me tmp/x", "bash -lc ls", "zsh -ic ls",
+            "sh -c ls", "eval ls",
+        ):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(_destructive(cmd)["class"], "privileged")
+
+    def test_git_option_before_subcommand_is_skipped(self):
+        self.assertEqual(_destructive("git -C /x reset --hard HEAD~1")["decision"], "deny")
+
+    def test_cd_voids_relative_ours_prefixes(self):
+        self.assertEqual(
+            (_destructive("rm -rf tmp/x")["decision"], _destructive("cd ~ && rm -rf tmp/x")["decision"]),
+            ("allow", "deny"),
+        )
+
+    def test_rm_of_repo_paths_is_denied(self):
+        for cmd in ("rm -rf .", "rm -rf ./.", "rm -rf .git", "rm -rf src", "rm -rf tmp/$X/etc"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(_destructive(cmd)["decision"], "deny")
+
+    def test_wrappers_do_not_hide_rm(self):
+        for cmd in ("nice -n 10 rm -rf /", "find . | xargs -I {} rm -rf {}", "xargs -n 1 rm -rf"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(_destructive(cmd)["decision"], "deny")
+
+    def test_command_inside_backticks_is_classed(self):
+        self.assertEqual(_destructive("echo `rm -rf /`")["decision"], "deny")
+
+    def test_inner_commands_are_classed(self):
+        for cmd in (
+            "kubectl -n prod exec db-0 -- psql -c 'DROP TABLE orders'",
+            "docker exec db psql -c 'DROP TABLE t'",
+            "ssh host psql -c 'DROP TABLE t'",
+            "kubectl exec db-0 -- rm -rf /data",
+        ):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(_destructive(cmd)["class"], "impossible")
+
+    def test_inline_python_scan(self):
+        self.assertEqual(
+            (
+                _destructive("python3 -c 'import shutil; shutil.rmtree(\"/srv\")'")["decision"],
+                _destructive("python3 -c 'print(1)'")["class"],
+            ),
+            ("ask", "none"),
+        )
+
+    def test_sql_without_undo_is_denied(self):
+        for cmd in (
+            "psql -c 'DROP MATERIALIZED VIEW x'", "psql -c 'ALTER TABLE t DROP COLUMN c'",
+            "clickhouse-client --query 'ALTER TABLE t DELETE WHERE 1'",
+            "mongosh --eval 'db.t.drop()'", "mysql -e 'TRUNCATE t'",
+        ):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(_destructive(cmd)["decision"], "deny")
+
+    def test_sql_from_a_file_asks(self):
+        for cmd in ("psql -f file.sql", "psql < dump.sql"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(_destructive(cmd)["decision"], "ask")
+
+    def test_secret_writes_are_denied(self):
+        for cmd in (
+            "kubectl patch secret x -p '{}'", "kubectl edit secret x",
+            "kubectl apply -f - <<EOF\nkind: Secret\nEOF", "kubectl apply -f k8s/secret.yaml",
+        ):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(_destructive(cmd)["decision"], "deny")
+
+    def test_find_delete_follows_the_rm_rule(self):
+        self.assertEqual(
+            (_destructive("find tmp/x -delete")["decision"], _destructive("find / -name x -delete")["decision"]),
+            ("allow", "deny"),
+        )
+
+    def test_relative_plan_path_is_denied(self):
+        result = _destructive(
+            "bash tmp/plan.sh  # DESTRUCTIVE_PLAN sha256=" + _PLAN_HASH, "", _PLAN, _PLAN_HASH
+        )
+        self.assertEqual((result["decision"], result["reason"]), ("deny", "plan path must be absolute"))
+
+    def test_plan_running_another_file_is_denied(self):
+        for line in ("source other.sh\n", ". other.sh\n", "exec bash evil.sh\n", "bash other.sh\n"):
+            with self.subTest(line=line):
+                result = _destructive(_PLAN_CMD, "", _PLAN + line, _PLAN_HASH)
+                self.assertEqual(result["decision"], "deny")
+
+    def test_line_after_a_comment_is_classed(self):
+        self.assertEqual(_destructive("ls # note\nrm -rf /")["decision"], "deny")
+
+    def test_heredoc_authoring_a_plan_is_data(self):
+        cmd = "cat > /tmp/plan.sh <<'EOF'\n# undo: none\nrm -rf /var/lib/foo\nEOF"
+        self.assertEqual(_destructive(cmd)["class"], "none")
+
+    def test_heredoc_fed_to_a_shell_is_classed(self):
+        self.assertEqual(_destructive("bash <<EOF\nrm -rf /\nEOF")["decision"], "deny")
+
+    def test_brace_groups_and_functions_are_classed(self):
+        for cmd in ("{ rm -rf /; }", "x() { rm -rf /; }; x", "function x { rm -rf /; }; x"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(_destructive(cmd)["decision"], "deny")
+
+    def test_alias_is_privileged(self):
+        self.assertEqual(_destructive("alias ls='rm -rf /'")["class"], "privileged")
+
+    def test_oversized_command_is_denied(self):
+        cmd = "# " + "x" * 70000 + "\nrm -rf /"
+        self.assertEqual(
+            _destructive(cmd)["reason"], "command too long for the destructive gate"
+        )
+
+    def test_relative_rename_is_unclassed(self):
+        self.assertEqual(
+            (_destructive("mv src/a.py src/b.py")["class"], _destructive("mv src/a.py /etc/a.py")["decision"]),
+            ("none", "ask"),
+        )
+
+    def test_force_with_lease_is_unclassed(self):
+        self.assertEqual(_destructive("git push --force-with-lease")["class"], "none")
+
+    def test_ours_root_directory_is_ours(self):
+        for cmd in ("rm -rf tmp/", "rm -rf tmp", "find tmp/ -delete", "rm -rf .worktrees/x"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(_destructive(cmd)["decision"], "allow")
+
+    def test_rm_inside_a_loop_body_is_classed(self):
+        self.assertEqual(_destructive('for f in a b; do rm -rf "$f"; done')["decision"], "deny")
+
+    def test_xargs_placeholder_is_an_unknown_path(self):
+        self.assertEqual(_destructive("echo /etc | xargs -I{} rm -rf tmp/x {}")["decision"], "deny")
+
+    def test_heredoc_piped_into_a_shell_is_classed(self):
+        self.assertEqual(_destructive("cat <<EOF | bash\nrm -rf /\nEOF")["decision"], "deny")
+
+    def test_heredoc_piped_into_a_sql_client_is_classed(self):
+        self.assertEqual(_destructive("cat <<EOF | psql\nDROP TABLE t;\nEOF")["decision"], "deny")
+
+    def test_old_override_text_does_not_lift_a_denial(self):
+        self.assertEqual(_destructive("rm -rf /etc  # DESTRUCTIVE_OK: owner said")["decision"], "deny")
