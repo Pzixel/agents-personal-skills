@@ -5,21 +5,14 @@ description: Use for concrete user or external code-review feedback to assess, a
 
 # Receiving Code Review
 
-Separate the requested outcome from the reviewer's diagnosis and proposed mechanism. User requirements and authority decisions bind; technical claims still need verification against the current code and exact target.
+Split each item into the requested outcome, the reviewer's diagnosis, and the proposed mechanism. A binding user requirement binds; diagnoses and mechanisms are claims.
 
-## Assess and Act
+For each item:
 
-1. Read the feedback together and identify the governing requirements, affected behavior, and dependencies between items.
-2. Check each claim against code, current target evidence, compatibility needs, and the reason for existing behavior. Seek evidence that disproves the diagnosis.
-3. Correct confirmed defects within authority. Reject incorrect findings with specific evidence; resolve disputed evidence before dependent changes. Neither a reviewer nor a plan creates a requirement from a preference.
-4. Verify each correction at its smallest meaningful boundary, then run one proportionate regression pass after the last relevant change.
+1. Check the diagnosis and its facts against the current code and the exact target; look for evidence that disproves it, including the reason the existing behavior exists.
+2. If it holds, fix it at its root cause; the reviewer's proposed mechanism is a candidate, not a requirement.
+3. If it does not hold, push back with specific evidence (file:line, command output). If the evidence is missing, say exactly what is missing.
 
-For an unclear item, investigate before changing it or its dependents. Continue independent verified work that cannot constrain the unresolved decision. Prioritize blocking and security defects, then group the remaining work by dependencies and coherent corrections rather than forcing a review/fix/check cycle for every comment.
+Handle blocking and security items first; group items that share a cause into one fix and run one regression pass after the last change.
 
-Ask only when consequential intent, authority, a conflict with a binding user decision, or unavailable required evidence cannot be resolved from the existing instructions and investigation. Do not add unused features merely because a reviewer calls them professional.
-
-## Communicate the Result
-
-State the verified change, the technical reason for disagreement, or the exact missing evidence. Correct an earlier mistaken conclusion briefly when new evidence disproves it.
-
-When replies are authorized, answer inline GitHub review comments in their own thread (`gh api repos/{owner}/{repo}/pulls/{pr}/comments/{id}/replies`), not as top-level PR comments. Reviewing or fixing feedback alone does not authorize sending a message.
+Fixing feedback does not authorize replying. When replies are authorized, answer an inline GitHub review comment in its own thread (`gh api repos/{owner}/{repo}/pulls/{pr}/comments/{id}/replies`), not as a top-level PR comment.

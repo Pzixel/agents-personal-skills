@@ -13,7 +13,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 NAME = re.compile(r"^[a-z0-9-]{1,64}$")
 LINK = re.compile(r"\[[^]]+\]\(([^)]+)\)")
-EXPECTED_SKILLS = 13
+EXPECTED_SKILLS = 11
 REQUIRED_KEYS = {"name", "description"}
 # Claude Code fields; Codex ignores them and uses agents/openai.yaml instead.
 OPTIONAL_KEYS = {"disable-model-invocation", "argument-hint"}

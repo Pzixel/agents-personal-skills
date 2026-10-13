@@ -1,6 +1,6 @@
 # Superpowers psilon
 
-Eight personal forks of [obra/superpowers](https://github.com/obra/superpowers) for Codex and Claude Code, plus the repository-authored Dragonfly scripting skill, the adapted Test Audit skill, the repository-authored Pareto Design Selection skill, and the adapted manual-only Retro skill. They use narrow triggers, exact-target evidence gates, proportional workflows, and repository-owned policy. Subagent-driven development is an explicitly selected execution mode.
+Six personal forks of [obra/superpowers](https://github.com/obra/superpowers) for Codex and Claude Code, plus the repository-authored Dragonfly scripting skill, the adapted Test Audit skill, the repository-authored Pareto Design Selection skill, and the adapted manual-only Retro skill. They use narrow triggers, exact-target evidence gates, proportional workflows, and repository-owned policy.
 
 The original Superpowers plugin is not required.
 
@@ -12,9 +12,7 @@ The original Superpowers plugin is not required.
 |---|---|
 | `superpowers-brainstorming-psilon` | Consequential design uncertainty or coupled-system decomposition |
 | `superpowers-writing-plans-psilon` | Durable multi-stage, coordinated, risky, or cross-session plans |
-| `superpowers-subagent-driven-development-psilon` | Explicit user choice, plus a large accepted plan with disjoint scopes and verified prerequisites |
 | `superpowers-dispatching-parallel-agents-psilon` | Two or more proved-independent substantial workstreams |
-| `superpowers-systematic-debugging-psilon` | Observed failures with uncertain root cause |
 | `superpowers-requesting-code-review-psilon` | Independent review at a material integration-risk boundary |
 | `superpowers-receiving-code-review-psilon` | Concrete review feedback to assess or implement |
 | `superpowers-verification-before-completion-psilon` | Fresh proof before production, security, data, concurrency, migration, contract, release, or broad-system completion |
@@ -65,17 +63,7 @@ fi
 
 Both clients follow these directory links. Updates to this checkout update the linked skills; inspect and validate changes before relying on them. Use a fresh session if a running session still holds an older skill body.
 
-Codex's SDD invocation policy is bundled in `agents/openai.yaml`. For Claude Code, merge this entry into the existing `skillOverrides` object in `~/.claude/settings.json`, preserving all other settings:
-
-```json
-{
-  "skillOverrides": {
-    "superpowers-subagent-driven-development-psilon": "user-invocable-only"
-  }
-}
-```
-
-SDD remains available through an explicit `$superpowers-subagent-driven-development-psilon` in Codex or `/superpowers-subagent-driven-development-psilon` in Claude Code. The other skills retain their scoped automatic triggers. See [Codex skills](https://developers.openai.com/codex/skills) and [Claude Code invocation settings](https://code.claude.com/docs/en/skills#override-skill-visibility-from-settings).
+When a skill is retired here, delete its link in both directories by hand; the install loop never removes links.
 
 ## Validate changes
 
@@ -83,12 +71,8 @@ SDD remains available through an explicit `$superpowers-subagent-driven-developm
 python3 -m venv .venv
 .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/python scripts/validate-skills.py
-.venv/bin/python scripts/test_review_package.py
 
 scripts=(
-  superpowers-brainstorming-psilon/scripts/*.sh
-  superpowers-subagent-driven-development-psilon/scripts/*
-  superpowers-systematic-debugging-psilon/*.sh
   dragonfly-scripting/scripts/*.sh
 )
 for script in "${scripts[@]}"; do

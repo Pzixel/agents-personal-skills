@@ -17,14 +17,10 @@ jobs:
           python-version: "3.12"
       - run: python -m pip install -r requirements-dev.txt
       - run: python scripts/validate-skills.py
-      - run: python scripts/test_review_package.py
       - name: Validate shell syntax
         shell: bash
         run: |
           scripts=(
-            superpowers-brainstorming-psilon/scripts/*.sh
-            superpowers-subagent-driven-development-psilon/scripts/*
-            superpowers-systematic-debugging-psilon/*.sh
             dragonfly-scripting/scripts/*.sh
           )
           for script in "${scripts[@]}"; do

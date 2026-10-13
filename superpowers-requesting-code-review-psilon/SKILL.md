@@ -36,7 +36,7 @@ Use optionally only for a named uncertainty: a stuck investigation, risky-refact
    - `[DIFF_FILE]` — optional exact review package; blank uses the Git range
    - `[BASE_SHA]`, `[HEAD_SHA]` — exact review boundaries
 
-3. Verify every finding against current code, requirements, and target evidence. Fix confirmed Critical issues at once and Important issues before proceeding; record Minor issues. Push back with evidence when the reviewer is wrong.
+3. Verify every finding against current code, requirements, and target evidence. Fix confirmed findings before proceeding. Push back with evidence when the reviewer is wrong.
 
 ## Hard Rules
 
