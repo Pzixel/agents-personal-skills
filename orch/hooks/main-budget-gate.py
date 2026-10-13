@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PreToolUse hook (matcher Bash|Read|Grep|Glob): throttle hands-on tool calls
+"""PreToolUse hook (matcher Bash|Read|Grep|Glob|Edit|Write|NotebookEdit): throttle hands-on tool calls
 in the MAIN session once its context is expensive, so reading gets batched or
 delegated instead of paid for at full context.
 
@@ -26,8 +26,11 @@ TOOLS_DIR = (
 )
 STATE_DIR = os.path.expanduser("~/.claude")
 OVERRIDE_LOG = os.path.join(STATE_DIR, "main-budget-overrides.jsonl")
-# Cheap or non-reading tools: spawning/writing is not what blows up context.
-SKIP_TOOLS = frozenset({"Agent", "Write", "Edit", "TodoWrite", "Task", "SendMessage"})
+SKILL_LOG = os.path.join(STATE_DIR, "skill-load-log.jsonl")
+# A session's skill loads are recent: the last ~1300 records cover them.
+SKILL_LOG_TAIL_BYTES = 256_000
+# Spawning and bookkeeping tools are not hands-on work; hand edits are.
+SKIP_TOOLS = frozenset({"Agent", "TodoWrite", "Task", "SendMessage"})
 SPAWN_TOOLS = frozenset({"Agent", "Task"})
 
 
@@ -40,11 +43,11 @@ def account_of(transcript_path):
     return "default"
 
 
-def tail_lines(path):
+def tail_lines(path, max_bytes=TAIL_BYTES):
     with open(path, "rb") as fh:
         fh.seek(0, os.SEEK_END)
         size = fh.tell()
-        start = max(0, size - TAIL_BYTES)
+        start = max(0, size - max_bytes)
         fh.seek(start)
         blob = fh.read()
     if start > 0:
@@ -123,6 +126,26 @@ def last_boundary(entries):
     return boundary
 
 
+def loaded_skills(session_id):
+    """Skills this session loaded, from the tail of the skill-load-gate log."""
+    if not session_id or not os.path.isfile(SKILL_LOG):
+        return []
+    return [
+        r["skill"]
+        for r in tail_lines(SKILL_LOG, SKILL_LOG_TAIL_BYTES)
+        if r.get("session_id") == session_id and r.get("skill")
+    ]
+
+
+def load_params():
+    """A missing or broken params file falls back to the policy defaults."""
+    try:
+        with open(os.path.join(TOOLS_DIR, "orchestrate-params.json")) as fh:
+            return json.load(fh)
+    except Exception:
+        return {}
+
+
 def hands_on_calls(entries, boundary, classify):
     count = 0
     for entry in entries[boundary + 1:]:
@@ -132,7 +155,7 @@ def hands_on_calls(entries, boundary, classify):
             if block.get("type") != "tool_use" or block.get("name") in SKIP_TOOLS:
                 continue
             target = target_of(block.get("input") or {})
-            if classify(target) in ("exempt", "wait_for"):
+            if classify(block.get("name"), target) in ("exempt", "wait_for"):
                 continue
             count += 1
     return count
@@ -185,9 +208,17 @@ def main():
     if boundary is None:
         return
     ctx_tokens = context_tokens(entries)
-    window_calls = hands_on_calls(entries, boundary, gate_policy.classify_command)
+    params = load_params()
+    window_calls = hands_on_calls(
+        entries, boundary, lambda tool, target: gate_policy.tool_call_class(tool, target, params)
+    )
 
-    decision = gate_policy.budget_decision("", ctx_tokens, window_calls, cmd_or_path)
+    decision = gate_policy.budget_decision(
+        "", ctx_tokens, window_calls, cmd_or_path,
+        tool_name=payload.get("tool_name") or "",
+        loaded_skills=loaded_skills(payload.get("session_id") or ""),
+        params=params,
+    )
     verdict = decision.get("decision")
     if verdict == "deny":
         emit(

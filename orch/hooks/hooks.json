@@ -74,7 +74,7 @@
         ]
       },
       {
-        "matcher": "Bash|Read|Grep|Glob",
+        "matcher": "Bash|Read|Grep|Glob|Edit|Write|NotebookEdit",
         "hooks": [
           {
             "type": "command",

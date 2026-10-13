@@ -171,12 +171,19 @@ def main():
 
     tool_input = payload.get("tool_input") or {}
     skill_name = str(tool_input.get("skill") or "").strip()
-    if not skill_name or ":" in skill_name:
+    if not skill_name:
         return 0
 
     transcript_path = payload.get("transcript_path") or ""
-    directory = skill_dir(skill_name, payload.get("cwd") or os.getcwd())
+    directory = "" if ":" in skill_name else skill_dir(skill_name, payload.get("cwd") or os.getcwd())
     if not directory:
+        # Plugin or unresolved skill: not measured, allowed, still logged.
+        log({
+            "account": account_of(transcript_path),
+            "session_id": payload.get("session_id") or "",
+            "skill": skill_name.split(":")[-1],
+            "decision": "allow",
+        })
         return 0
 
     size = text_bytes(directory)
@@ -197,6 +204,9 @@ def main():
         log(record)
         return 0
     if decision["decision"] != "deny":
+        # Every allowed load is logged: main-budget-gate reads it to learn
+        # which skills this session runs.
+        log(record)
         return 0
 
     log(record)

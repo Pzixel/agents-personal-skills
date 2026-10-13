@@ -32,8 +32,14 @@
     "orchestrate",
     "workflow-authoring",
     "artifact-design",
-    "artifact-capabilities"
+    "artifact-capabilities",
+    "dialogue-to-knowledge"
   ],
+  "main_only_skills": [
+    "dialogue-to-knowledge",
+    "retro"
+  ],
+  "_doc_main_only_skills": "main-budget-gate: skills whose whole procedure runs in the main session by design; the budget gate does not count calls in a session that loaded one (skill-load-gate logs every allowed load).",
   "process_skill_globs": [
     "orchestrate-*",
     "process-*",

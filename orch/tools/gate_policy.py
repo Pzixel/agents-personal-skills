@@ -32,6 +32,23 @@ _EXEMPT_TOOLS = frozenset(
     }
 )
 
+# Delivery commands the orchestrate skill keeps in the main session: program ->
+# argument prefixes that are free there. An empty prefix matches any arguments.
+# Waiting and polling (gh pr checks --watch, gh run watch) are not delivery.
+_DELIVERY_COMMANDS = {
+    "gh": (
+        ("pr", "create"), ("pr", "merge"), ("pr", "view"), ("pr", "edit"), ("pr", "close"),
+    ),
+    "git": (
+        ("worktree", "add"), ("worktree", "remove"), ("worktree", "prune"),
+        ("worktree", "list"), ("branch", "-d"), ("branch", "-D"),
+        ("push",), ("fetch",), ("pull",),
+    ),
+}
+
+# Tools that write files by hand: always a hands-on call, the file is the subject.
+_EDIT_TOOLS = frozenset({"Edit", "Write", "NotebookEdit"})
+
 # Handoffs and reports are the cheap summaries the whole delegation scheme is
 # built on: reading one is never the expensive thing.
 _REPORT_GLOBS = ("handoff-*.md", "handoff.md", "*-report*.md", "report-*.md")
@@ -196,10 +213,27 @@ def _is_report_path(text):
     return any(fnmatch.fnmatch(base, pat) for pat in _REPORT_GLOBS)
 
 
+# git global options that take a separate value (`git -C <dir> push`).
+_GIT_VALUE_OPTIONS = frozenset({"-C", "-c", "--git-dir", "--work-tree", "--namespace"})
+
+
+def _subcommand_args(prog, args):
+    """Arguments from the subcommand on, past git's global options."""
+    if prog != "git":
+        return args
+    i = 0
+    while i < len(args) and args[i].startswith("-"):
+        i += 2 if args[i] in _GIT_VALUE_OPTIONS else 1
+    return args[i:]
+
+
 def _segment_class(tokens):
     prog = _program(tokens)
     args = tokens[1:]
     if prog in _EXEMPT_TOOLS:
+        return EXEMPT
+    sub = _subcommand_args(prog, args)
+    if any(tuple(sub[: len(pre)]) == pre for pre in _DELIVERY_COMMANDS.get(prog, ())):
         return EXEMPT
     if prog == "git":
         sub = args[0] if args else ""
@@ -211,7 +245,9 @@ def _segment_class(tokens):
             return EXEMPT
         return HANDS_ON
     if prog == "gh":
-        if args[:2] in (["pr", "view"], ["pr", "checks"], ["run", "view"]):
+        if args[:2] == ["pr", "checks"] and "--watch" not in args:
+            return EXEMPT
+        if args[:2] == ["run", "view"]:
             return EXEMPT
         return HANDS_ON
     if prog in _NEUTRAL_TOOLS:
@@ -467,8 +503,9 @@ _BUDGET_DENY = (
     "context). Combine the remaining reads into ONE call -- issue the tool calls in "
     "parallel in a single message, or run one composite shell command -- or hand the "
     "reading to an `Explore` or `prod-probe` subagent that carries a cheap context and "
-    "reports back a summary. Validation commands (git status, git diff --stat, gh pr "
-    "checks, scout, wait-for, usage-audit, reading handoff/report markdown) "
+    "reports back a summary. Validation and delivery commands (git status, git diff "
+    "--stat, gh pr checks without --watch, gh pr create/merge/view, git push/fetch/pull, "
+    "git worktree, scout, wait-for, usage-audit, reading handoff/report markdown) "
     "are free and never counted. If this specific call really must happen here, re-run "
     "it with `MAIN_BUDGET_OVERRIDE: <reason>` in the command."
 )
@@ -479,15 +516,34 @@ _BUDGET_REMIND = (
 )
 
 
-def budget_decision(agent_type, ctx_tokens, window_calls, cmd_or_path):
-    """Throttle hands-on main-session tool calls once the context is expensive."""
+def tool_call_class(tool_name, cmd_or_path, params=None):
+    """Budget class of one main-session tool call: a hand edit is always
+    hands-on; every other tool is classified by its command or path."""
+    if tool_name in _EDIT_TOOLS:
+        return HANDS_ON
+    return classify_command(cmd_or_path, params)
+
+
+def budget_decision(
+    agent_type, ctx_tokens, window_calls, cmd_or_path,
+    tool_name="Bash", loaded_skills=(), params=None,
+):
+    """Throttle hands-on main-session tool calls once the context is expensive.
+
+    ``loaded_skills`` are the skills this session loaded; a session running a
+    ``main_only_skills`` skill works in main by design and is never throttled.
+    """
     if agent_type:
         return {"decision": "allow"}
     if "MAIN_BUDGET_OVERRIDE" in (cmd_or_path or ""):
         return {"decision": "override", "reason": "MAIN_BUDGET_OVERRIDE present"}
+    p = _merged_params(params)
+    main_only = [s for s in loaded_skills or () if s in p["main_only_skills"]]
+    if main_only:
+        return {"decision": "allow", "reason": "main-only skill %s loaded" % main_only[0]}
     if ctx_tokens <= 80000:
         return {"decision": "allow"}
-    if classify_command(cmd_or_path) in (EXEMPT, WAIT_FOR):
+    if tool_call_class(tool_name, cmd_or_path, p) in (EXEMPT, WAIT_FOR):
         return {"decision": "allow"}
     ctx_k = int(round(ctx_tokens / 1000.0))
     if window_calls >= 16:
@@ -536,7 +592,11 @@ DEFAULT_PARAMS = {
         "workflow-authoring",
         "artifact-design",
         "artifact-capabilities",
+        "dialogue-to-knowledge",
     ],
+    # Skills whose whole procedure runs in the main session by design; the
+    # budget gate does not count calls in a session that loaded one.
+    "main_only_skills": ["dialogue-to-knowledge", "retro"],
     "process_skill_globs": ["orchestrate-*", "process-*", "*-process", "workflow-*"],
     # Who may spawn whom, by the type of the SPAWNING agent. "*" means every
     # type the gate otherwise allows; "default" covers types not listed. A

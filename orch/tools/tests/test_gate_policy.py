@@ -39,6 +39,37 @@ class ClassifyCommandTest(unittest.TestCase):
     def test_git_diff_without_stat_is_not_exempt(self):
         self.assertEqual(gate_policy.classify_command("git diff"), "hands_on")
 
+    def test_delivery_commands_main_keeps_are_exempt(self):
+        for cmd in (
+            "gh pr merge 7 --squash",
+            "git push -u origin x",
+            "git -C x push",
+        ):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(gate_policy.classify_command(cmd), "exempt")
+
+    def test_watching_pr_checks_is_hands_on(self):
+        self.assertEqual(gate_policy.classify_command("gh pr checks 7 --watch"), "hands_on")
+
+
+class MainBudgetSessionTest(unittest.TestCase):
+    def test_main_only_skill_session_is_never_throttled(self):
+        self.assertEqual(
+            gate_policy.budget_decision(
+                "", 100000, 16, "cat src/app.py",
+                loaded_skills=["test-audit", "dialogue-to-knowledge"],
+            ),
+            {"decision": "allow", "reason": "main-only skill dialogue-to-knowledge loaded"},
+        )
+
+    def test_hand_edit_counts_even_on_a_free_to_read_path(self):
+        self.assertEqual(
+            gate_policy.budget_decision(
+                "", 100000, 16, "/Users/x/plans/handoff-1.md", tool_name="Edit"
+            )["decision"],
+            "deny",
+        )
+
 
 class PollDecisionTest(unittest.TestCase):
     def test_foreground_sleep_loop_is_denied(self):
