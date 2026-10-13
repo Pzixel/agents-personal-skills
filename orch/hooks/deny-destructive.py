@@ -37,6 +37,16 @@ def read_plan(path):
     return data.decode("utf-8", "replace"), hashlib.sha256(data).hexdigest()
 
 
+def read_sql_file(path, limit):
+    """Text of a SQL file a client will read; None when unreadable or over limit."""
+    try:
+        with open(path, "rb") as fh:
+            data = fh.read(limit + 1)
+    except OSError:
+        return None
+    return None if len(data) > limit else data.decode("utf-8", "replace")
+
+
 def main():
     # Plugin layout first (hooks/../tools), the ~/.claude install as fallback.
     tools = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tools")
@@ -48,9 +58,16 @@ def main():
     agent_type = str(payload.get("agent_type") or "")
     marker = gate_policy.plan_marker(command)
     plan_text, plan_hash = read_plan(marker[0]) if marker else (None, None)
+    params = gate_policy.load_params()
+    cwd = str(payload.get("cwd") or os.getcwd())
+    limit = int(params.get("destructive", {}).get("command_max_bytes", 65536))
+    sql_file_texts = {
+        p: read_sql_file(os.path.join(cwd, os.path.expanduser(p)), limit)
+        for p in gate_policy.sql_file_paths(command, params)
+    }
     result = gate_policy.destructive_decision(
-        command, agent_type, plan_text, plan_hash, gate_policy.load_params(),
-        str(payload.get("permission_mode") or ""),
+        command, agent_type, plan_text, plan_hash, params,
+        str(payload.get("permission_mode") or ""), sql_file_texts,
     )
     if result["class"] == "none":
         return

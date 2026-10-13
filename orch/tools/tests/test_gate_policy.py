@@ -892,6 +892,53 @@ class DestructiveDecisionTest(unittest.TestCase):
             ("ask", "none"),
         )
 
+    def test_inline_subprocess_call_is_not_destructive(self):
+        cmd = "python3 - <<'EOF'\nimport subprocess\nsubprocess.run(['psql', '-f', 'q.sql'])\nEOF"
+        self.assertEqual(_destructive(cmd)["class"], "none")
+
+    def test_inline_sql_text_needs_a_db_client_to_count(self):
+        edit = "python3 - <<'EOF'\ns = open('q.sql').read().replace('DROP TABLE t', '')\nEOF"
+        drop = "python3 - <<'EOF'\nimport psycopg2\ncur.execute('DROP TABLE t')\nEOF"
+        self.assertEqual(
+            (_destructive(edit)["class"], _destructive(drop)["class"]), ("none", "impossible")
+        )
+
+    def test_inline_update_where_through_a_client_asks(self):
+        cmd = "python3 - <<'EOF'\nimport psycopg2\ncur.execute('UPDATE t SET a=1 WHERE id=2')\nEOF"
+        self.assertEqual(_destructive(cmd)["class"], "approval")
+
+    def test_sql_file_written_by_heredoc_is_classified_by_its_text(self):
+        read = "cat > q.sql <<'EOF'\nSELECT 1;\nEOF\npsql -f q.sql"
+        drop = "cat > q.sql <<'EOF'\nDROP TABLE t;\nEOF\npsql -f q.sql"
+        self.assertEqual(
+            (_destructive(read)["class"], _destructive(drop)["class"]), ("none", "impossible")
+        )
+
+    def test_sql_file_read_by_the_hook_is_classified_by_its_text(self):
+        result = gate_policy.destructive_decision(
+            "clickhouse-client < q.sql", "", None, None,
+            sql_file_texts={"q.sql": "UPDATE t SET a = 1 WHERE id = 2;"},
+        )
+        self.assertEqual(result["class"], "approval")
+
+    def test_unreadable_sql_file_asks(self):
+        result = gate_policy.destructive_decision(
+            "psql -f q.sql", "", None, None, sql_file_texts={"q.sql": None}
+        )
+        self.assertEqual(result["class"], "approval")
+
+    def test_sql_file_paths_lists_literal_client_inputs(self):
+        self.assertEqual(
+            gate_policy.sql_file_paths("psql -f a.sql; clickhouse-client < $f; cat b.sql"),
+            ["a.sql"],
+        )
+
+    def test_shell_c_reason_names_the_wrapper(self):
+        self.assertEqual(
+            _destructive("/usr/bin/time -p sh -c 'ls'")["reason"].split(":")[0],
+            "sh -c wrapper",
+        )
+
     def test_sql_without_undo_is_denied(self):
         for cmd in (
             "psql -c 'DROP MATERIALIZED VIEW x'", "psql -c 'ALTER TABLE t DROP COLUMN c'",

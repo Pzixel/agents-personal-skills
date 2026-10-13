@@ -1609,12 +1609,27 @@ _SQL_WRITE_RE = re.compile(
     r"\bUPDATE\s+\S+\s+SET\b|\.(?:delete|update)(?:One|Many)\(|\.remove\(", re.I
 )
 _SQL_FILE_FLAGS = frozenset({"-f", "--file", "--queries-file", "<"})
+# SET changes only the session it runs in.
+_SQL_READ_WORDS = frozenset({"SELECT", "WITH", "SHOW", "EXPLAIN", "DESCRIBE", "DESC", "SET", "(SELECT"})
 _INLINE_INTERPRETER_RE = re.compile(r"^(?:python[0-9.]*|perl|ruby|node)$")
 _INLINE_WRITE_RE = re.compile(
-    r"rmtree|os\.remove|unlink|rmdir|shutil\.move|rmSync|rm_rf|FileUtils\.rm|\bDROP\b|\bTRUNCATE\b|DELETE\s+FROM"
-    r"|subprocess|os\.system",
-    re.I,
+    r"rmtree|os\.remove|unlink|rmdir|shutil\.move|rmSync|rm_rf|FileUtils\.rm", re.I
 )
+# SQL in interpreter code counts only next to a DB client; without one the
+# code edits or generates SQL text.
+_INLINE_DB_CLIENT_RE = re.compile(
+    r"psycopg|asyncpg|sqlalchemy|clickhouse|pymysql|mysql|sqlite3|psql|pg8000|\bdatabases\b"
+    r"|\bDBI\b|\bpg\b|Sequel"
+)
+
+
+def _inline_code_hits(program, code):
+    hits = []
+    if _INLINE_WRITE_RE.search(code):
+        hits.append(("approval", "inline " + program + " code deletes or moves files"))
+    if _INLINE_DB_CLIENT_RE.search(code):
+        hits.extend(_sql_hits([code]))
+    return hits
 _XARGS_VALUE_FLAGS = frozenset({"-I", "-n", "-P", "-L", "-s", "-d", "-E", "-a"})
 _SSH_VALUE_FLAGS = frozenset({"-p", "-i", "-l", "-o", "-F", "-J", "-b", "-c", "-D", "-L", "-R", "-W"})
 _DOCKER_VALUE_FLAGS = frozenset({"-u", "--user", "-e", "--env", "-w", "--workdir", "--env-file"})
@@ -1812,7 +1827,8 @@ def _git_class(args):
     return []
 
 
-def _sql_hits(args):
+def _sql_hits(args, file_texts=()):
+    """``file_texts``: text of each file the client reads, None when unknown."""
     text = " ".join(args)
     if _SQL_NO_UNDO_RE.search(text):
         return [("impossible", "SQL DROP/TRUNCATE/ALTER ... DROP has no undo")]
@@ -1821,8 +1837,22 @@ def _sql_hits(args):
             return [("impossible", "SQL DELETE without WHERE has no undo")]
     if _SQL_DELETE_RE.search(text) or _SQL_WRITE_RE.search(text):
         return [("approval", "SQL write to a database")]
-    if any(a in _SQL_FILE_FLAGS or a.startswith(("--file=", "--queries-file=")) for a in args):
-        return [("approval", "SQL from a file: its statements are not visible")]
+    hits = []
+    for body in file_texts:
+        if body is None:
+            hits.append(("approval", "SQL from a file: its statements are not visible"))
+        else:
+            hits.extend(_sql_hits([body]) or _sql_read_only_hits(body))
+    return hits
+
+
+def _sql_read_only_hits(text):
+    """A SQL file passes unasked only when every statement is a read."""
+    text = re.sub(r"--[^\n]*|/\*.*?\*/", " ", text, flags=re.S)
+    for stmt in text.split(";"):
+        word = stmt.split(None, 1)[0].upper() if stmt.strip() else ""
+        if word and word not in _SQL_READ_WORDS:
+            return [("approval", "SQL file runs " + word + ", not only reads")]
     return []
 
 
@@ -1856,10 +1886,11 @@ def _classify_tokens(tokens, cfg, ctx):
         return [("privileged", "kill: stop a job with its own tool or let it finish")]
     if program in ("chmod", "chown"):
         return [("privileged", "chmod/chown: file modes are not changed by agents")]
-    if program == "eval" or program in ("sh", "bash", "zsh") and any(
-        re.match(r"^-[a-z]*c[a-z]*$", a) for a in args
-    ):
-        return [("privileged", "eval or shell -c wrapper: run the command directly")]
+    if program == "eval":
+        return [("privileged", "eval wrapper: run the command directly")]
+    shell_flag = next((a for a in args if re.match(r"^-[a-z]*c[a-z]*$", a)), None)
+    if program in ("sh", "bash", "zsh") and shell_flag:
+        return [("privileged", program + " " + shell_flag + " wrapper: run the command directly")]
     if program == "rm":
         return [_rm_rule([] if via_xargs else _path_args(args), cfg, relative_ok, "rm")]
     if program == "mv":
@@ -1902,12 +1933,56 @@ def _classify_tokens(tokens, cfg, ctx):
         code = " ".join(
             args[i + 1] for i, a in enumerate(args[:-1]) if a in ("-c", "-e", "-E")
         )
-        if code and _INLINE_WRITE_RE.search(code):
-            return [("approval", "inline " + program + " code deletes, moves or runs commands")]
-        return []
+        return _inline_code_hits(program, code)
     if program in cfg["sql_clients"]:
-        return _sql_hits(args)
+        return _sql_hits(args, _sql_file_texts(args, cfg["sql_files"], relative_ok))
+    if program in ("echo", "printf"):
+        target = _redirect_target(args)
+        if target:
+            cfg["sql_files"][target] = " ".join(args[:args.index(target) - 1])
     return []
+
+
+def _redirect_target(args):
+    """The file a ``> path`` / ``>> path`` redirect writes, else None."""
+    for i, a in enumerate(args[:-1]):
+        if a in (">", ">>"):
+            return args[i + 1]
+    return None
+
+
+def _sql_file_args(args):
+    paths = []
+    for i, a in enumerate(args):
+        if a in _SQL_FILE_FLAGS and i + 1 < len(args):
+            paths.append(args[i + 1])
+        elif a.startswith(("--file=", "--queries-file=")):
+            paths.append(a.split("=", 1)[1])
+    return paths
+
+
+def _sql_file_texts(args, files, relative_ok):
+    """Text of every SQL file the client reads; None where it is not known: a
+    variable or glob path, a relative path after a cd, a file nobody read."""
+    texts = []
+    for p in _sql_file_args(args):
+        if re.search(r"[$*?`{]", p) or not relative_ok and not p.startswith(("/", "~")):
+            texts.append(None)
+        else:
+            texts.append(files.get(p))
+    return texts
+
+
+def sql_file_paths(command, params=None):
+    """Literal paths SQL clients in ``command`` read from; the hook reads them
+    and passes their text to ``destructive_decision`` as ``sql_file_texts``."""
+    clients = _merged_params(params)["destructive"]["sql_clients"]
+    paths = []
+    for tokens in _shell_segments(_split_heredocs(command)[0]):
+        program, args, _ = _command_head(tokens)
+        if program in clients:
+            paths.extend(p for p in _sql_file_args(args) if not re.search(r"[$*?`{]", p))
+    return paths
 
 
 def _classify_text(command, cfg, depth=0):
@@ -1915,6 +1990,11 @@ def _classify_text(command, cfg, depth=0):
         return [("impossible", "command nesting too deep to classify")]
     ctx = {"text": command, "cd": False, "depth": depth}
     script, heredocs = _split_heredocs(command)
+    for line, body, _ in heredocs:
+        for tokens in _shell_segments(line):
+            target = _redirect_target(tokens)
+            if target:
+                cfg["sql_files"][target] = body
     hits = []
     for tokens in _shell_segments(script):
         hits.extend(_classify_tokens(tokens, cfg, ctx))
@@ -1956,8 +2036,8 @@ def _heredoc_hits(line, body, cfg, depth):
             program = "ssh"
         if program in _SHELLS or program == "ssh":
             return _classify_text(body, cfg, depth + 1)
-        if _INLINE_INTERPRETER_RE.match(program) and _INLINE_WRITE_RE.search(body):
-            return [("approval", "inline " + program + " code deletes, moves or runs commands")]
+        if _INLINE_INTERPRETER_RE.match(program) and _inline_code_hits(program, body):
+            return _inline_code_hits(program, body)
         if program in cfg["sql_clients"]:
             return _sql_hits([body])
     return []
@@ -2001,7 +2081,8 @@ def _plan_decision(path, marker_hash, agent_type, plan_text, plan_hash, cfg):
 
 
 def destructive_decision(
-    command, agent_type, plan_text, plan_hash, params=None, permission_mode=""
+    command, agent_type, plan_text, plan_hash, params=None, permission_mode="",
+    sql_file_texts=None,
 ):
     """Class and permission decision for one Bash command.
 
@@ -2010,10 +2091,12 @@ def destructive_decision(
     plan's inner commands are not re-inspected: the owner reads them in the
     prompt. ``permission_mode`` is the hook input field; whether a hook ``ask``
     prompts in bypassPermissions mode is undocumented, so there it becomes a
-    deny unless ``destructive.ask_in_bypass``. A malformed params value raises.
+    deny unless ``destructive.ask_in_bypass``. ``sql_file_texts`` maps each
+    path of ``sql_file_paths(command)`` to its text, None when unreadable.
+    A malformed params value raises.
     Returns {"decision": allow|ask|deny, "class", "reason"}.
     """
-    cfg = _merged_params(params)["destructive"]
+    cfg = dict(_merged_params(params)["destructive"], sql_files=dict(sql_file_texts or {}))
     if len((command or "").encode("utf-8", "surrogatepass")) > int(cfg["command_max_bytes"]):
         return {"decision": "deny", "class": "impossible",
                 "reason": "command too long for the destructive gate"}
