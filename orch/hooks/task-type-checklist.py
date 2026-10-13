@@ -35,7 +35,7 @@ CHECKLISTS = [
         "- No fix, config change or measurement longer than a minute before the table names the surviving hypothesis.",
     ),
     (
-        r"(оптимиз|ускор|скорост|производительн|пропускн|нагрузк|throughput|latency|задержк|perf\b|бенч|bench|\d+\s*/\s*с\b|/s\b|cpu|память|memory|диск)",
+        r"(оптимиз|ускор|производительн|пропускн|throughput|latency|\bперф|perf\b|бенч|bench|\d+\s*/\s*(?:с|s|сек|sec)\b|\brps\b|\bqps\b|(?:максим|целев|target)\w*\s+скорост|(?:cpu|память|memory|диск|disk|cost|стоимост)\W+(?:\S+\s+){0,3}?(?:сниз|уменьш|мень|cut|reduce|lower|limit|лимит|бюджет|budget|цел|target)|(?:сниз|уменьш|cut|reduce|lower)\W+(?:\S+\s+){0,3}?(?:cpu|память|memory|диск|disk|cost|стоимост|latency|задержк))",
         "Optimization checklist (first reply artifact; user-rules 'Optimization method'):\n"
         "- Name the unit of work at the customer boundary and the one metric: units/s or resource per unit there. Part metrics are diagnostics.\n"
         "- Unit-cost table: operation x minimum per unit by contract x measured actual x gap at target load; fix the top row; a code count is a hypothesis.\n"
