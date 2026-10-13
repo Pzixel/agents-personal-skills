@@ -3,8 +3,9 @@
 inside the agent's authority.
 
 Returned once, with the rule that failed, when the reply claims completion
-without an observation (command, value, time) or ends on a question the agent
-could decide itself. The second stop (`stop_hook_active`) always passes, so a
+without an observation (command, value, time) or hands a decision to the owner
+in words ("your call", "жду вашего решения"); a trailing question mark alone
+is not a hand-off, answers to the owner's questions end on one. The second stop (`stop_hook_active`) always passes, so a
 reply that genuinely needs the owner costs one extra turn, never a loop.
 Decision: gate_policy.reply_lint_decision. Any error exits 0 with no output.
 

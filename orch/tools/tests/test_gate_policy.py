@@ -103,9 +103,14 @@ class BudgetDecisionTest(unittest.TestCase):
             gate_policy.budget_decision("", 200000, 7, "git diff")["decision"], "remind"
         )
 
-    def test_eighth_hands_on_call_is_denied(self):
+    def test_sixteenth_hands_on_call_is_denied(self):
         self.assertEqual(
-            gate_policy.budget_decision("", 200000, 8, "cat src/app.py")["decision"], "deny"
+            gate_policy.budget_decision("", 200000, 16, "cat src/app.py")["decision"], "deny"
+        )
+
+    def test_fifteenth_hands_on_call_is_reminded_not_denied(self):
+        self.assertEqual(
+            gate_policy.budget_decision("", 200000, 15, "cat src/app.py")["decision"], "remind"
         )
 
     def test_fourth_hands_on_call_reminds(self):
@@ -582,8 +587,9 @@ class ReplyLintDecisionTest(unittest.TestCase):
     def test_negated_done_is_not_a_claim(self):
         self.assertEqual(gate_policy.reply_lint_decision("Ещё не готово, CI идёт.", False)["decision"], "allow")
 
-    def test_trailing_technical_question_is_returned(self):
-        self.assertEqual(gate_policy.reply_lint_decision("Какой лимит ставим?", False)["decision"], "block")
+    def test_answer_ending_on_a_question_passes(self):
+        text = "Пауза 2 с стоит в PAGE_PAUSE_SECONDS. Это единственное место. Убрать её вместе со следующим шагом?"
+        self.assertEqual(gate_policy.reply_lint_decision(text, False)["decision"], "allow")
 
     def test_owner_decision_list_is_returned(self):
         text = "Статус: план готов, замер 12:00Z 1.5 cores. Решения за вами: 1) retention 2) порог."

@@ -490,7 +490,7 @@ def budget_decision(agent_type, ctx_tokens, window_calls, cmd_or_path):
     if classify_command(cmd_or_path) in (EXEMPT, WAIT_FOR):
         return {"decision": "allow"}
     ctx_k = int(round(ctx_tokens / 1000.0))
-    if window_calls >= 8:
+    if window_calls >= 16:
         return {
             "decision": "deny",
             "reason": _BUDGET_DENY.format(calls=window_calls, ctx=ctx_k),
@@ -1302,7 +1302,7 @@ _CLAIM_REASON = (
     "complete final reply again."
 )
 _AUTHORITY_REASON = (
-    REPLY_LINT_MARKER + " the reply ends on a question or hands a decision to the owner. "
+    REPLY_LINT_MARKER + " the reply hands a decision to the owner. "
     "Authority test: reversible, bounded and ours -> do it now; a tunable value -> set "
     "a default and report 'set to X - keep or change?'; only money, business priorities "
     "and irreversible effects on client data go to the owner, as one plain question with "
@@ -1319,7 +1319,10 @@ def _has_done_claim(text):
 
 def reply_lint_decision(last_assistant_text, stop_hook_active):
     """Return the main session once when its final reply claims completion
-    without an observation, or ends on a question the agent could decide.
+    without an observation, or hands a decision to the owner. A trailing
+    question mark alone is not a hand-off: a reply that answers the owner's
+    question and ends on a follow-up question stays (2026-10-12: 4 of 11
+    blocks were answers to direct questions, one never re-delivered).
     The second stop (``stop_hook_active``) always passes."""
     if stop_hook_active:
         return {"decision": "allow"}
@@ -1329,8 +1332,7 @@ def reply_lint_decision(last_assistant_text, stop_hook_active):
     reasons = []
     if _has_done_claim(text) and not _OBSERVATION_RE.search(text):
         reasons.append(_CLAIM_REASON)
-    tail = text.rstrip("*_` \n")
-    asks_owner = tail.endswith("?") or _OWNER_QUESTION_RE.search(_blank_quoted(text))
+    asks_owner = _OWNER_QUESTION_RE.search(_blank_quoted(text))
     if asks_owner and not _OWNER_DOMAIN_RE.search(text):
         reasons.append(_AUTHORITY_REASON)
     if not reasons:
