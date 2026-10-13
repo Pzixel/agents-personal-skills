@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PreToolUse hook (matcher `Bash`): class destructive commands and answer
+"""PreToolUse hook (matcher `Bash|Write|Edit|NotebookEdit`): class destructive commands and answer
 allow / ask / deny through the native permission decision.
 
 The decision is gate_policy.destructive_decision; the class table lives in
@@ -9,12 +9,17 @@ DESTRUCTIVE_PLAN marker names, calls the decision, logs every classed
 decision to ~/.claude/destructive-log.jsonl and prints the response. It fails
 closed: any error is a deny. The agents' kubeconfig is cluster-admin today, so
 the `impossible` class is enforced only here until RBAC is tightened.
+File tools are checked only for a path under the approvals dir. An approved
+plan run consumes its approval file (written by plan-approval.py) before the
+allow is printed; when another PreToolUse hook then denies the same call,
+the approval is spent without a run and the owner approves again (fails safe).
 """
 
 import datetime
 import hashlib
 import json
 import os
+import re
 import sys
 
 LOG_PATH = os.path.expanduser("~/.claude/destructive-log.jsonl")
@@ -54,11 +59,24 @@ def main():
     import gate_policy
 
     payload = json.load(sys.stdin)
+    params = gate_policy.load_params()
+    tool_input = payload.get("tool_input") or {}
+    if payload.get("tool_name", "Bash") != "Bash":
+        path = str(tool_input.get("file_path") or tool_input.get("notebook_path") or "")
+        result = gate_policy.approval_path_decision(path, os.path.expanduser("~"), params)
+        if result:
+            respond(result["decision"], result["reason"])
+        return
     command = str((payload.get("tool_input") or {}).get("command") or "")
     agent_type = str(payload.get("agent_type") or "")
     marker = gate_policy.plan_marker(command)
     plan_text, plan_hash = read_plan(marker[0]) if marker else (None, None)
-    params = gate_policy.load_params()
+    session = str(payload.get("session_id") or "")
+    approval = None
+    if marker and re.match(r"^[A-Za-z0-9_-]+$", session):
+        root = gate_policy.approvals_root(params, os.path.expanduser("~"))
+        approval = os.path.join(root, session, marker[1])
+    approved = bool(approval) and os.path.isfile(approval)
     cwd = str(payload.get("cwd") or os.getcwd())
     limit = int(params.get("destructive", {}).get("command_max_bytes", 65536))
     sql_file_texts = {
@@ -67,8 +85,10 @@ def main():
     }
     result = gate_policy.destructive_decision(
         command, agent_type, plan_text, plan_hash, params,
-        str(payload.get("permission_mode") or ""), sql_file_texts,
+        str(payload.get("permission_mode") or ""), sql_file_texts, approved,
     )
+    if approved and result["decision"] == "allow":
+        os.remove(approval)
     if result["class"] == "none":
         return
     try:

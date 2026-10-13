@@ -688,6 +688,7 @@ DEFAULT_PARAMS = {
         "plan_max_bytes": 4000,
         "command_max_bytes": 65536,
         "ask_in_bypass": False,
+        "approvals_dir": "~/.claude/approvals",
     },
 }
 
@@ -2080,9 +2081,58 @@ def _plan_decision(path, marker_hash, agent_type, plan_text, plan_hash, cfg):
     return {"decision": "ask", "class": "approval", "reason": summary + "\n\n" + plan_text}
 
 
+_APPROVALS_READERS = frozenset({"cat", "ls", "head", "tail", "stat", "test", "wc", "file", "grep", "rg"})
+
+
+_APPROVE_LINE_RE = re.compile(r"^[ \t]*APPROVE[ \t]+([0-9a-fA-F]{64})[ \t]*$", re.IGNORECASE | re.MULTILINE)
+_APPROVE_TOKEN_RE = re.compile(r"APPROVE\s+[0-9a-f]{64}(?![0-9a-f])", re.IGNORECASE)
+_APPROVALS_DENY = {"decision": "deny", "class": "privileged",
+                   "reason": "the approvals directory is written only by the owner's prompt"}
+
+
+def approved_hashes(prompt):
+    """Lowercase plan hashes the owner approves: each line that is exactly
+    `APPROVE <64 hex>` (APPROVE case-insensitive, surrounding blanks allowed)."""
+    return [h.lower() for h in _APPROVE_LINE_RE.findall(prompt or "")]
+
+
+def _expand_home(path, home):
+    return os.path.join(home, path[2:]) if path == "~" or path.startswith("~/") else path
+
+
+def approvals_root(params, home):
+    """Expanded, resolved approvals directory for ``home``."""
+    return os.path.realpath(_expand_home(_merged_params(params)["destructive"]["approvals_dir"], home))
+
+
+def _writes_approvals(command, cfg):
+    """True when a token names the approvals dir (case-folded, normalized)
+    outside a plain read, or the command carries an APPROVE line."""
+    if _APPROVE_TOKEN_RE.search(command):
+        return True
+    name = os.path.basename(os.path.normpath(cfg["approvals_dir"])).casefold()
+    hit = False
+    for tokens in _shell_segments(command):
+        if any(name in os.path.normpath(t).casefold().split("/") for t in tokens):
+            if re.search(r"[<>]", command) or _command_head(tokens)[0] not in _APPROVALS_READERS:
+                return True
+            hit = True
+    return hit and bool(re.search(r"[<>]", command))
+
+
+def approval_path_decision(file_path, home, params=None):
+    """deny when a file-tool path resolves under the approvals dir, else None.
+    Compared case-folded: the volume may be case-insensitive."""
+    root = approvals_root(params, home).casefold()
+    target = os.path.realpath(_expand_home(file_path, home)).casefold()
+    if target == root or target.startswith(root + os.sep):
+        return dict(_APPROVALS_DENY)
+    return None
+
+
 def destructive_decision(
     command, agent_type, plan_text, plan_hash, params=None, permission_mode="",
-    sql_file_texts=None,
+    sql_file_texts=None, approved=False,
 ):
     """Class and permission decision for one Bash command.
 
@@ -2093,6 +2143,8 @@ def destructive_decision(
     prompts in bypassPermissions mode is undocumented, so there it becomes a
     deny unless ``destructive.ask_in_bypass``. ``sql_file_texts`` maps each
     path of ``sql_file_paths(command)`` to its text, None when unreadable.
+    ``approved`` says whether the owner's prompt approved this plan hash in
+    this session (plan-approval.py); an approved valid plan is allowed once.
     A malformed params value raises.
     Returns {"decision": allow|ask|deny, "class", "reason"}.
     """
@@ -2100,9 +2152,19 @@ def destructive_decision(
     if len((command or "").encode("utf-8", "surrogatepass")) > int(cfg["command_max_bytes"]):
         return {"decision": "deny", "class": "impossible",
                 "reason": "command too long for the destructive gate"}
+    if _writes_approvals(command or "", cfg):
+        return dict(_APPROVALS_DENY)
     marker = plan_marker(command)
     if marker:
         result = _plan_decision(marker[0], marker[1], agent_type, plan_text, plan_hash, cfg)
+        if result["decision"] == "ask" and approved:
+            return {"decision": "allow", "class": "approval",
+                    "reason": "plan " + marker[1][:12] + " approved by owner"}
+        if result["decision"] == "ask" and permission_mode == "bypassPermissions" and not cfg["ask_in_bypass"]:
+            return {"decision": "deny", "class": "approval", "reason": (
+                "this session cannot prompt; give the owner the plan path " + marker[0] + " to read and ask them to reply "
+                "with the line: APPROVE " + marker[1] + "\nthen run the same command again"
+            )}
     else:
         result = _command_decision(command or "", cfg)
     if (

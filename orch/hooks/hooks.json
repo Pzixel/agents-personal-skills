@@ -34,7 +34,7 @@
         ]
       },
       {
-        "matcher": "Bash",
+        "matcher": "Bash|Write|Edit|NotebookEdit",
         "hooks": [
           {
             "type": "command",
@@ -172,6 +172,11 @@
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/task-type-checklist.py\"",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/plan-approval.py\"",
             "timeout": 5
           }
         ]
