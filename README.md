@@ -1,6 +1,6 @@
 # Superpowers psilon
 
-Six personal forks of [obra/superpowers](https://github.com/obra/superpowers) for Codex and Claude Code, plus the repository-authored Dragonfly scripting skill, the adapted Test Audit skill, the repository-authored Pareto Design Selection skill, and the adapted manual-only Retro skill. They use narrow triggers, exact-target evidence gates, proportional workflows, and repository-owned policy.
+Five personal forks of [obra/superpowers](https://github.com/obra/superpowers) for Codex and Claude Code, plus the repository-authored Dragonfly scripting skill, the adapted Test Audit skill, the repository-authored Pareto Design Selection skill, and the adapted manual-only Retro skill. They use narrow triggers, exact-target evidence gates, proportional workflows, and repository-owned policy.
 
 The original Superpowers plugin is not required.
 
@@ -10,7 +10,6 @@ The original Superpowers plugin is not required.
 
 | Skill | Trigger |
 |---|---|
-| `superpowers-brainstorming-psilon` | Consequential design uncertainty or coupled-system decomposition |
 | `superpowers-writing-plans-psilon` | Durable multi-stage, coordinated, risky, or cross-session plans |
 | `superpowers-dispatching-parallel-agents-psilon` | Two or more proved-independent substantial workstreams |
 | `superpowers-requesting-code-review-psilon` | Independent review at a material integration-risk boundary |

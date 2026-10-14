@@ -7,7 +7,7 @@ description: 'Use for durable plans spanning 3+ stages, component/interface coor
 
 Write for a capable engineer with the repository but no session history. Save where requested; otherwise `docs/superpowers/plans/YYYY-MM-DD-<feature-name>.md`.
 
-If consequential product semantics, success criteria, state ownership, or architecture is unresolved and user-owned, stop and apply `superpowers-brainstorming-psilon`. If the outcome is fixed but feasibility is unknown, plan a Discovery milestone with its evidence, decision rule, and fallback instead of guessing downstream design.
+If consequential product semantics, success criteria, state ownership, or architecture is unresolved and user-owned, stop and resolve it with the owner first. If the outcome is fixed but feasibility is unknown, plan a Discovery milestone with its evidence, decision rule, and fallback instead of guessing downstream design.
 
 ## Rolling Horizon
 

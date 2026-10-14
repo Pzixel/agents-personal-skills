@@ -9,7 +9,7 @@
 - Fork date: 2026-08-04
 - License: MIT; see `LICENSE.superpowers`
 
-Eight directories in this repository are provenance-named personal forks, not
+Five directories in this repository are provenance-named personal forks, not
 upstream plugin installations. The original plugin remains disabled. Each fork
 keeps `superpowers-<upstream-name>-psilon` as both its directory and frontmatter
 name so users can identify its lineage. The current set also contains the repository-authored `dragonfly-scripting`
@@ -42,6 +42,49 @@ findings. The description is unchanged.
 Removed clauses that restate the owner's global rules from the bodies of the
 eight `superpowers-*-psilon` skills, `test-audit`, `pareto-design-selection`,
 `retro`, and `orch/skills/orchestrate`; descriptions unchanged.
+
+## Search-shape pass: 2026-10-14
+
+Applied the owner's model of the built-in `/simplify` (a skill works when it
+turns intent into searches with a required answer shape and ends by changing
+the artifact; governance text yields governance output) to every skill here.
+Unchanged: `dragonfly-scripting`, `superpowers-receiving-code-review-psilon`,
+`superpowers-verification-before-completion-psilon`,
+`superpowers-dispatching-parallel-agents-psilon`, `codex-simplify`
+(already that shape, a flow or experiment procedure rather than a review of one
+artifact, or their lens content already lives in the owner's global rules).
+`superpowers-requesting-code-review-psilon` reshaped by export (see its own
+section). `superpowers-writing-plans-psilon` kept after a replay eval.
+`superpowers-brainstorming-psilon` retired.
+
+Measured use before the pass (sessions whose transcript shows a Skill-tool
+load or a read of the SKILL.md; all Claude Code projects and all Codex sessions
+on this machine, counted 2026-10-14): writing-plans 0 Claude loads, 5 Codex
+sessions; brainstorming 0 Claude loads, 6 Codex sessions;
+requesting-code-review 0 Claude loads, 50 Codex sessions.
+
+Replay eval (method as in the earlier sections: a fresh agent answers a
+scrubbed task reconstructed from a real session, arms NONE = no skill text and
+OLD = the shipped body, two runs per arm, blind grading by a separate agent
+against judge-only Accept/Reject items taken from the owner's later
+correction; retire only when NONE is not worse than OLD on every case).
+writing-plans, two cases: on the plan-redirect case NONE scored 2/5 and 2/5
+Accept items, OLD 4/5 and 3/5, so the body is kept; on the premature-block case
+all four runs tied at 4/5 with the same Reject violation. brainstorming, one
+case (weak: the source session had not invoked the skill; the correction was a
+premise challenge): all four runs 5/5 Accept, OLD had one Reject violation in
+one run, NONE none. With no case where the body helped, 6 sessions ever, and
+its two main rules already stated in the owner's global rules ("extend goes
+first", "minimal model from the product definition"), the skill is retired.
+Its third rule (verify each load-bearing prerequisite for the exact target)
+moved into the owner's `/simplify` plan pass as a fifth "premises" angle on
+2026-10-14. The owner deletes the links in `~/.agents/skills` and
+`~/.claude/skills` by hand (README rule).
+
+Not applied, with reason: lens versions of `test-audit` would restate the
+owner's global Tests rules (reversing the 2026-10-14 dedupe); `retro` is
+slated for deletion by the owner; `pareto-design-selection` and `orchestrate`
+are procedures, not reviews of one artifact.
 
 ## Codex simplify export: 2026-10-13
 
