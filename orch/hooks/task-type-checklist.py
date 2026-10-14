@@ -40,7 +40,9 @@ CHECKLISTS = [
         "- Name the unit of work at the customer boundary and the one metric: units/s or resource per unit there. Part metrics are diagnostics.\n"
         "- Unit-cost table: operation x minimum per unit by contract x measured actual x gap at target load; fix the top row; a code count is a hypothesis.\n"
         "- Candidates include the minimum-facts design built from zero; accept changes of cardinality before constants; hardware only after a saturation run.\n"
-        "- First deliverable is the number from the thinnest prototype on the real path; guarantees after; re-measure the target after every change on the path.",
+        "- First deliverable is the number from the thinnest prototype on the real path; guarantees after; re-measure the target after every change on the path.\n"
+        "- Decide the store and the cardinality first; per-unit arithmetic inside the store you already have comes after that decision, never instead of it.\n"
+        "- The first number comes from a pilot that costs at most ~10 % of the task's time budget and states which numbers it proves and which it does not; design, builder and review work wait for that number.",
     ),
     (
         r"(дизайн|спроектир|план\b|плана\b|архитектур|схем[ау]|design|plan\b|предлож|вариант)",
