@@ -65,7 +65,7 @@ class RedactionTest(unittest.TestCase):
         text = (
             "key %s\n"
             "image ghcr.io/acme/example-service:85152016178a7a5dc221ce57538e2f3da191801e\n"
-            "path /Users/pzixel/Documents/Repos/backend/tmp/eva-probe2/Report2026/x.txt\n"
+            "path /Users/me/Repos/example-service/tmp/probe/x.txt\n"
             "sha e6ea08ee5c823e0f80ce65a1182d07de4cf22f2883d247027d3b4fd1599b65a9\n"
         ) % KEY_B
         out = gate_policy.redact_secrets(text)

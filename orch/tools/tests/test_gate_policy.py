@@ -636,7 +636,7 @@ if __name__ == "__main__":
 
 _MERGE_FIELDS = (
     "CHECK_RAN: ring r10 on prod, 3635/s",
-    "PROD_POSITION: mailboxes touched, prod 187k, outreachdb count",
+    "PROD_POSITION: mailboxes touched, prod 187k, example-db count",
     "WAY_BACK: revert PR, 10 min",
 )
 _MERGE_FULL = "echo '" + "; ".join(_MERGE_FIELDS) + "'; gh pr merge 12 --squash"
@@ -718,6 +718,54 @@ class ReplyLintDecisionTest(unittest.TestCase):
 
     def test_second_stop_passes(self):
         self.assertEqual(gate_policy.reply_lint_decision("Готово.", True)["decision"], "allow")
+
+    def _decide(self, text):
+        return gate_policy.reply_lint_decision(text, False)["decision"]
+
+    def test_non_assertions_of_done_pass(self):
+        for text in (
+            "Хук работает так: читает последний ответ.",
+            "Когда пакеты будут готовы, сравню их.",
+            "Три из 13 прогонов готовы.",
+            "NS готовы: 0 из 15.",
+            "Готово, когда CI зелёный.",
+        ):
+            self.assertEqual(self._decide(text), "allow", text)
+
+    def test_complete_progress_is_a_claim(self):
+        self.assertEqual(self._decide("13 из 13 готовы."), "block")
+
+    def test_record_references_count_as_observation(self):
+        for text in (
+            "Fix round готов (ce382a8).",
+            "Готов: example-service #7.",
+            "Готово, exit 0.",
+            "Готово, 20 из 20 тестов прошли.",
+            "Исправлено: 3/10 → 9/10 по ключам.",
+        ):
+            self.assertEqual(self._decide(text), "allow", text)
+
+    def test_bare_mentions_are_not_observations(self):
+        for text in ("Шаг #2 готов.", "Готово, проверено.", "Готово, 20 тестов."):
+            self.assertEqual(self._decide(text), "block", text)
+
+    def test_offer_waiting_on_others_is_not_a_promise(self):
+        for text in (
+            "Пришлите URL, и я проверю API.",
+            "Once you allow writes, I'll write it.",
+        ):
+            self.assertEqual(self._decide(text), "allow", text)
+
+    def test_promise_waiting_on_own_work_is_returned(self):
+        self.assertEqual(self._decide("Когда CI пройдёт, открою PR."), "block")
+
+    def test_guillemet_quoted_marker_is_not_a_question(self):
+        self.assertEqual(self._decide("Хук передаёт «жду вашего решения» как образец."), "allow")
+
+
+class BlankQuotedTest(unittest.TestCase):
+    def test_low_double_quote_closes_on_high_left_quote(self):
+        self.assertEqual(gate_policy._blank_quoted("a \u201ex\u201c b \u201cy\u201d c"), "a     b     c")
 
 
 class BriefDecisionTest(unittest.TestCase):

@@ -9,6 +9,8 @@ first person ("I'll fix it in a follow-up PR") without doing it or naming a
 durable handoff (issue, PR, handoff file); a trailing question mark alone
 is not a hand-off, answers to the owner's questions end on one. The second stop (`stop_hook_active`) always passes, so a
 reply that genuinely needs the owner costs one extra turn, never a loop.
+The reason asks for an addendum with only the missing part, never a repeat
+of the whole reply.
 Decision: gate_policy.reply_lint_decision. Any error exits 0 with no output.
 
 Why a hook: the rules "every done carries proof" and "do not end with owner

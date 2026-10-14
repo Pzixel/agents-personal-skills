@@ -443,11 +443,13 @@ _SLEEPING_STOP_REASON = (
 # Only the end of the final reply decides: a report that mentions a waiting
 # phrase early (or quotes one) is not a reply that stops to wait.
 WAITING_TAIL_CHARS = 600
-_QUOTE_PAIRS = {'"': '"', "`": "`", "'": "'", "\u201c": "\u201d", "\u2018": "\u2019"}
+_QUOTE_PAIRS = {'"': '"', "`": "`", "'": "'", "\u201c": "\u201d", "\u2018": "\u2019",
+    "\u00ab": "\u00bb", "\u201e": "\u201c",
+}
 
 
 def _blank_quoted(text):
-    """Replace the contents of closed "...", `...`, '...' and curly-quoted spans
+    """Replace the contents of closed "...", `...`, '...', curly, «...» and „...“ spans
     with spaces, keeping the length. A single quote between two word characters
     is an apostrophe (I'll, don't), not a quote; an unclosed quote is literal."""
     chars = list(text)
@@ -1444,7 +1446,7 @@ def merge_gate_decision(command):
 
 _DONE_RE = re.compile(
     r"(?<![\w-])(?:готов[оаы]?|сделан[оаы]?|исправлен[оаы]?|починен[оаы]?|починил[аи]?"
-    r"|работает|закрыт[оаы]?|влит[оаы]?|done|fixed|resolved|works)(?![\w-])",
+    r"|закрыт[оаы]?|влит[оаы]?|done|fixed|resolved)(?![\w-])",
     re.IGNORECASE,
 )
 _NEGATED_DONE_RE = re.compile(
@@ -1455,7 +1457,11 @@ _OBSERVATION_RE = re.compile(
     r"```"
     r"|measured|observed|assumed|замер|наблюда|измер|не провер|not verified|unverified"
     r"|\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}:\d{2}(?::\d{2})?Z?\b"
-    r"|\b\d+(?:[.,]\d+)?\s?(?:ms|мс|s|с|sec|сек|min|мин|h|ч|%|/s|/с|[KMG]i?B|[КМГ]Б|rows|строк|LOC|cores?)\b",
+    r"|\b\d+(?:[.,]\d+)?\s?(?:ms|мс|s|с|sec|сек|min|мин|h|ч|%|/s|/с|[KMG]i?B|[КМГ]Б|rows|строк|LOC|cores?)\b"
+    r"|(?<![\w-])(?=[0-9a-f]*\d)[0-9a-f]{7,40}(?![\w-])|(?<![\w-])[A-Za-z][\w-]*\s+#\d+\b"
+    r"|\bexit\s+\d+|\b\d+\s*(?:/|из|of)\s*\d+\s+(?:тест\w*|tests?)\b"
+    r"|\b\d+\s+(?:тест\w*|tests?)\s+(?:прош\w*|pass\w*)"
+    r"|\b\d+/\d+\s*(?:→|->)\s*\d+/\d+",
     re.IGNORECASE,
 )
 _OWNER_QUESTION_RE = re.compile(
@@ -1491,28 +1497,91 @@ _CLAIM_REASON = (
     "the observation that proves it (command or query, value, time) labelled "
     "measured / observed / assumed, on one sampled real artifact of the original "
     "scenario; or write 'not verified'. A number from the owner, a client, memory or "
-    "a delegate is a claim until reproduced from the primary source. Then give the "
-    "complete final reply again."
+    "a delegate is a claim until reproduced from the primary source. Append only the missing part; do not "
+    "repeat the reply."
 )
 _AUTHORITY_REASON = (
     REPLY_LINT_MARKER + " the reply hands a decision to the owner. "
     "Authority test: reversible, bounded and ours -> do it now; a tunable value -> set "
     "a default and report 'set to X - keep or change?'; only money, business priorities "
     "and irreversible effects on client data go to the owner, as one plain question with "
-    "a recommendation. Do the work, then give the complete final reply again."
+    "a recommendation. Do the work, then append only the missing part; do not repeat the reply."
 )
 
 _PROMISE_REASON = (
     REPLY_LINT_MARKER + " the reply promises future work that this turn did not do. "
     "Do it now if it is inside your authority, or state plainly that it is not done "
-    "and name where it is tracked (issue, PR, handoff file). Then give the complete "
-    "final reply again."
+    "and name where it is tracked (issue, PR, handoff file). Append only the missing part; do not repeat the reply."
 )
 
 
+# The one word before a done word that makes it a question, a relative clause, a condition or a
+# future, not an assertion ("как работает", "когда будут готовы", "once done").
+_NON_ASSERTION_WORD_RE = re.compile(
+    r"\b(?:как|how|когда|when|once|будет|будут|станет|will|если|if)\s+$", re.IGNORECASE
+)
+# A condition right after the done word qualifies the status, it does not claim it.
+_QUALIFIED_AFTER_RE = re.compile(r"(?:готов\w*,?\s+когда|done\s+when)\b", re.IGNORECASE)
+_NUMBER_WORDS = {
+    "один": 1, "одна": 1, "одного": 1, "первый": 1, "первая": 1, "первое": 1, "first": 1,
+    "one": 1, "два": 2, "две": 2, "двух": 2, "второй": 2, "two": 2, "три": 3, "трёх": 3,
+    "трех": 3, "третий": 3, "three": 3, "четыре": 4, "четырёх": 4, "четырех": 4,
+    "four": 4, "пять": 5, "пяти": 5, "five": 5,
+}
+_NUMBER = r"(\d+|" + "|".join(_NUMBER_WORDS) + r")"
+_PROGRESS_RE = re.compile(_NUMBER + r"\s+(?:из|of)\s+" + _NUMBER + r"(?!\w)", re.IGNORECASE)
+_SENTENCE_END_RE = re.compile(r"[.!?](?=\s)|\n")
+# An offer names, before its verb, an action of the owner or a third party
+# ("пришлите URL, и я проверю", "once you allow writes, I'll write it").
+_OFFER_RE = re.compile(
+    r"(?:пришли(?:те)?|разреши(?:те)?|напиши(?:те)?|скажи(?:те)?|дадите|дашь|ответит)(?![\w-])"
+    r"|\bвы\b|\bты\b|\byou\b|\ballow\b",
+    re.IGNORECASE,
+)
+
+
+def _number(word):
+    word = word.lower()
+    return _NUMBER_WORDS[word] if word in _NUMBER_WORDS else int(word)
+
+
+def _sentence_bounds(text, pos):
+    start = 0
+    for match in _SENTENCE_END_RE.finditer(text, 0, pos):
+        start = match.end()
+    end = _SENTENCE_END_RE.search(text, pos)
+    return start, end.end() if end else len(text)
+
+
+def _is_partial_progress(sentence):
+    return any(_number(m.group(1)) < _number(m.group(2)) for m in _PROGRESS_RE.finditer(sentence))
+
+
 def _has_done_claim(text):
+    text = _blank_quoted(text)
     for match in _DONE_RE.finditer(text):
-        if not _NEGATED_DONE_RE.search(text[: match.start()][-24:]):
+        before = text[: match.start()]
+        start, end = _sentence_bounds(text, match.start())
+        if (
+            _NEGATED_DONE_RE.search(before[-24:])
+            or _NON_ASSERTION_WORD_RE.search(before[-16:])
+            or _QUALIFIED_AFTER_RE.match(text, match.start())
+            or _is_partial_progress(text[start:end])
+        ):
+            continue
+        return True
+    return False
+
+
+def _has_unbacked_promise(text):
+    """A promise counts when the reply names no durable record of the remaining
+    work and no action of another party precedes the promise in its sentence."""
+    if _PROMISE_BACKED_RE.search(text):
+        return False
+    blanked = _blank_quoted(text)
+    for match in _PROMISE_RE.finditer(blanked):
+        start = _sentence_bounds(blanked, match.start())[0]
+        if not _OFFER_RE.search(blanked, start, match.start()):
             return True
     return False
 
@@ -1536,7 +1605,7 @@ def reply_lint_decision(last_assistant_text, stop_hook_active):
     asks_owner = _OWNER_QUESTION_RE.search(_blank_quoted(text))
     if asks_owner and not _OWNER_DOMAIN_RE.search(text):
         reasons.append(_AUTHORITY_REASON)
-    if _PROMISE_RE.search(_blank_quoted(text)) and not _PROMISE_BACKED_RE.search(text):
+    if _has_unbacked_promise(text):
         reasons.append(_PROMISE_REASON)
     if not reasons:
         return {"decision": "allow"}
