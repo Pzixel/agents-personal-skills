@@ -21,9 +21,9 @@ def linked(branch, head, dirty=False, busy=False):
     return Worktree("/wt/" + branch, branch, head, is_main=False, dirty=dirty, busy=busy)
 
 
-def decide(worktrees, local, merged, into_default=(), first_parent=("m1",), patch_merged=(), detached_in=()):
+def decide(worktrees, local, merged, into_default=(), first_parent=("m1",), content_merged=(), detached_in=()):
     return decide_cleanup([MAIN, *worktrees], local, merged, "main", set(into_default), set(first_parent),
-                          set(patch_merged), set(detached_in))
+                          set(content_merged), dict(detached_in))
 
 
 def detached(name, head):
@@ -71,8 +71,8 @@ class DecideCleanupTest(unittest.TestCase):
         c = decide([linked("feat", "x")], {"main": "m1", "feat": "x"}, {"fix": {"x"}})
         self.assertEqual((c.remove_worktrees, c.delete_local_branches), (("/wt/feat",), ("feat",)))
 
-    def test_branch_whose_commits_are_all_patch_equivalent_in_default_is_finished(self):
-        c = decide([linked("h", "y")], {"main": "m1", "h": "y"}, {}, patch_merged={"h"})
+    def test_branch_whose_content_is_in_default_is_finished(self):
+        c = decide([linked("h", "y")], {"main": "m1", "h": "y"}, {}, content_merged={"h"})
         self.assertEqual((c.remove_worktrees, c.delete_local_branches), (("/wt/h",), ("h",)))
 
     def test_branch_with_an_unmerged_commit_is_kept(self):
@@ -80,12 +80,20 @@ class DecideCleanupTest(unittest.TestCase):
         self.assertEqual((c.remove_worktrees, c.delete_local_branches), ((), ()))
 
     def test_detached_worktree_in_default_is_removed_without_branch(self):
-        c = decide([detached("d", "m0")], {"main": "m1"}, {}, detached_in={"/wt/d"})
+        c = decide([detached("d", "m0")], {"main": "m1"}, {}, detached_in={"/wt/d": 0})
         self.assertEqual((c.remove_worktrees, c.delete_local_branches), (("/wt/d",), ()))
 
     def test_detached_worktree_with_own_commit_is_kept(self):
         c = decide([detached("d", "z")], {"main": "m1"}, {})
         self.assertEqual(c.remove_worktrees, ())
+
+    def test_fresh_detached_worktree_at_first_parent_commit_is_kept(self):
+        c = decide([detached("d", "m1")], {"main": "m1"}, {}, detached_in={"/wt/d": 3600})
+        self.assertEqual(c.remove_worktrees, ())
+
+    def test_old_detached_worktree_at_first_parent_commit_is_removed(self):
+        c = decide([detached("d", "m1")], {"main": "m1"}, {}, detached_in={"/wt/d": 3 * 86400})
+        self.assertEqual(c.remove_worktrees, ("/wt/d",))
 
 
 class UncommittedWorkDecisionTest(unittest.TestCase):
@@ -100,6 +108,14 @@ class UncommittedWorkDecisionTest(unittest.TestCase):
 
     def test_files_older_than_session_are_not_reported(self):
         report, _ = uncommitted_work_decision(100.0, {"/wt/x": [("a", 50.0)]}, set())
+        self.assertEqual(report, [])
+
+    def test_fresh_handoff_inside_the_worktree_settles_it(self):
+        report, _ = uncommitted_work_decision(100.0, {"/wt/x": [("a", 150.0), ("HANDOFF.md", 160.0)]}, set())
+        self.assertEqual(report, [])
+
+    def test_handoff_outside_naming_the_worktree_settles_it(self):
+        report, _ = uncommitted_work_decision(100.0, {"/wt/x": [("a", 150.0)]}, set(), {"/wt/x"})
         self.assertEqual(report, [])
 
 

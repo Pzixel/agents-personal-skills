@@ -4,7 +4,8 @@ Cleanup contract: work is finished when it reached the default branch, whatever
 the branch was called. A branch is finished when its tip equals the head of any
 merged pull request from it, or of a pull request from any branch when the
 tip is off the default branch's first-parent line, when every commit it has beyond origin/<default> has a
-patch-equivalent commit there (and it has at least one such commit), or when
+content already there (merging it into origin/<default> leaves the tree unchanged;
+at least one own commit), or when
 its tip reached the default branch through a merge. A branch created at a
 first-parent default commit with no own commits is fresh and kept. A detached
 worktree is finished when its HEAD is an ancestor of origin/<default>; only the
@@ -16,7 +17,11 @@ never deleted. Remote branches are left to GitHub's delete-branch-on-merge.
 from __future__ import annotations
 
 import hashlib
+import os
 from dataclasses import dataclass
+
+
+DETACHED_FRESH_S = 2 * 86400
 
 
 @dataclass(frozen=True)
@@ -37,14 +42,16 @@ class Cleanup:
 
 
 def decide_cleanup(worktrees, local_branches, merged_heads, default_branch,
-                   merged_into_default, default_first_parent, patch_merged=(),
-                   detached_in_default=()):
+                   merged_into_default, default_first_parent, content_merged=(),
+                   detached_in_default=None):
     """local_branches: name -> tip; merged_heads: PR head branch name -> merged head oids;
     merged_into_default: names whose tip is an ancestor of origin/<default>;
     default_first_parent: oids on the first-parent history of origin/<default>;
-    patch_merged: names whose own commits all have patch equivalents in origin/<default>
-    (at least one own commit); detached_in_default: paths of detached worktrees whose
-    HEAD is an ancestor of origin/<default>.
+    content_merged: names with at least one own commit whose merge into origin/<default>
+    leaves its tree unchanged; detached_in_default: path -> directory age in seconds
+    for detached worktrees whose HEAD is an ancestor of origin/<default>. A detached
+    worktree at a first-parent default commit is fresh like a new branch and kept
+    until it is DETACHED_FRESH_S old.
     """
     any_head = set().union(*merged_heads.values()) if merged_heads else set()
     finished = {
@@ -56,14 +63,15 @@ def decide_cleanup(worktrees, local_branches, merged_heads, default_branch,
             # another branch's merged head: a fresh branch cut at a first-parent
             # default commit that a fast-forward merge left there is not finished
             or (tip in any_head and tip not in default_first_parent)
-            or name in patch_merged
+            or name in content_merged
             or (name in merged_into_default and tip not in default_first_parent)
         )
     }
     remove, kept, blocked = [], [], set()
     for wt in worktrees:
         if wt.branch is None:
-            if wt.path not in detached_in_default:
+            age = (detached_in_default or {}).get(wt.path)
+            if age is None or (wt.head in default_first_parent and age < DETACHED_FRESH_S):
                 continue
         elif wt.branch not in finished:
             continue
@@ -79,12 +87,14 @@ def decide_cleanup(worktrees, local_branches, merged_heads, default_branch,
     return Cleanup(tuple(remove), tuple(local), tuple(kept))
 
 
-def uncommitted_work_decision(session_start, dirty, seen):
+def uncommitted_work_decision(session_start, dirty, seen, handed_off=()):
     """Stop gate over this session's uncommitted worktree edits.
 
     session_start: epoch seconds of the session's first transcript entry;
     dirty: worktree path -> [(file, mtime)] of its uncommitted, non-ignored files;
-    seen: fingerprints this session was already stopped for.
+    seen: fingerprints this session was already stopped for;
+    handed_off: worktrees a handoff file outside them names. A handoff*.md edited
+    after session_start inside the worktree also settles it.
     A file edited after session_start belongs to this session; files that all
     predate it are someone else's. Returns (worktrees to report, fingerprints
     to remember); an empty first item lets the stop through.
@@ -92,7 +102,9 @@ def uncommitted_work_decision(session_start, dirty, seen):
     report, prints = [], []
     for path in sorted(dirty):
         fresh = sorted((f, m) for f, m in dirty[path] if m > session_start)
-        if not fresh:
+        handoff = any(os.path.basename(f).lower().startswith("handoff") and f.lower().endswith(".md")
+                      for f, _ in fresh)
+        if not fresh or handoff or path in handed_off:
             continue
         fp = hashlib.sha256(repr((path, fresh)).encode()).hexdigest()[:16]
         if fp not in seen:

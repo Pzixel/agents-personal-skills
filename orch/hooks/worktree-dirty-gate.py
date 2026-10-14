@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
 """Stop hook: refuse once to end a turn that leaves this session's edits uncommitted in a worktree.
 
-Candidates are the linked worktrees under <main-checkout>/.worktrees/ of the
-repository containing cwd and of every repository whose .worktrees/<name> path
-appears in this session's transcript. A dirty file counts as this session's
+Candidates are the .worktrees/<name> paths this session's tool inputs name,
+plus cwd when it is inside one; other sessions' worktrees are not looked at. A dirty file counts as this session's
 when its mtime is after the session's first transcript timestamp: no
 per-session ownership record exists, so mtime is the proxy. The decision is
 tools/worktree_policy.uncommitted_work_decision; fingerprints already reported
-live in ~/.claude/tmp/worktree-dirty-gate/<session>.json. Fails open.
+live in ~/.claude/tmp/worktree-dirty-gate.json, entries kept 7 days. Fails open.
 """
 
 import concurrent.futures
@@ -16,6 +15,7 @@ import json
 import os
 import re
 import subprocess
+import time
 import sys
 
 _PLUGIN_TOOLS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tools")
@@ -24,9 +24,11 @@ sys.path.insert(0, os.path.realpath(
 
 from worktree_policy import uncommitted_work_decision  # noqa: E402
 
-STATE_DIR = os.path.expanduser("~/.claude/tmp/worktree-dirty-gate")
+STATE = os.path.expanduser("~/.claude/tmp/worktree-dirty-gate.json")
 WT_PATH = re.compile(r"(/[^\s\"'`;|&<>()]+?)/\.worktrees/([A-Za-z0-9._-]+)")
+HANDOFF = re.compile(r"(/[^\s\"'`;|&<>()]*/[Hh][Aa][Nn][Dd][Oo][Ff][Ff][^/\s\"'`]*\.md)")
 MAX_WORKTREES = 24
+STATE_TTL_S = 7 * 86400
 
 
 def git(args, cwd):
@@ -34,13 +36,9 @@ def git(args, cwd):
     return p.stdout if p.returncode == 0 else ""
 
 
-def main_checkout(path):
-    out = git(["worktree", "list", "--porcelain"], path)
-    return out.split("\n", 1)[0].removeprefix("worktree ").strip() if out else ""
-
-
-def session_start_and_repos(transcript):
-    start, roots = None, set()
+def session_facts(transcript):
+    """First timestamp, worktree paths and handoff*.md paths named in tool inputs."""
+    start, wts, handoffs = None, set(), set()
     with open(transcript, errors="replace") as fh:
         for line in fh:
             if start is None:
@@ -48,14 +46,35 @@ def session_start_and_repos(transcript):
                 if m:
                     start = datetime.datetime.fromisoformat(m.group(1).replace("Z", "+00:00")).timestamp()
             if '"tool_use"' in line:
-                roots.update(m.group(1) for m in WT_PATH.finditer(line))
-    return start, roots
+                wts.update(m.group(0) for m in WT_PATH.finditer(line))
+                handoffs.update(HANDOFF.findall(line))
+    return start, wts, handoffs
 
 
-def linked_worktrees(main):
-    prefix = os.path.join(main, ".worktrees") + os.sep
-    out = git(["worktree", "list", "--porcelain"], main)
-    return [l[9:] for l in out.splitlines() if l.startswith("worktree ") and l[9:].startswith(prefix)]
+def own_worktree(cwd):
+    m = WT_PATH.match(cwd or "")
+    return m.group(0) if m else None
+
+
+def handed_off(handoffs, wts, start):
+    """Worktrees named inside a handoff file written after session start."""
+    named = set()
+    for h in handoffs:
+        try:
+            if os.path.getmtime(h) <= start:
+                continue
+            text = open(h, errors="replace").read(200_000)
+        except OSError:
+            continue
+        named.update(w for w in wts if w in text or os.path.basename(w) in text)
+    return named
+
+
+def load_state():
+    try:
+        return json.load(open(STATE))
+    except (OSError, ValueError):
+        return {}
 
 
 def dirty_files(wt):
@@ -69,10 +88,15 @@ def dirty_files(wt):
             continue
         if e[0] in "RC":
             i += 1  # rename source follows
+        path = os.path.join(wt, e[3:])
         try:
-            files.append((e[3:], os.lstat(os.path.join(wt, e[3:])).st_mtime))
+            files.append((e[3:], os.lstat(path).st_mtime))
         except OSError:
-            pass  # deleted: no mtime to date it
+            # deleted: the nearest surviving directory's mtime dates the removal
+            parent = os.path.dirname(path)
+            while not os.path.isdir(parent) and len(parent) > len(wt):
+                parent = os.path.dirname(parent)
+            files.append((e[3:], os.lstat(parent).st_mtime))
     return files
 
 
@@ -83,25 +107,27 @@ def main():
     transcript, session = payload.get("transcript_path") or "", payload.get("session_id") or ""
     if not session or not os.path.isfile(transcript):
         return
-    start, roots = session_start_and_repos(transcript)
+    start, named, handoffs = session_facts(transcript)
     if start is None:
         return
-    mains = {main_checkout(payload.get("cwd") or os.getcwd())}
-    mains.update(main_checkout(r) for r in roots if os.path.isdir(r))
-    wts = sorted({w for m in mains if m for w in linked_worktrees(m)})[:MAX_WORKTREES]
+    named.add(own_worktree(payload.get("cwd") or os.getcwd()))
+    wts = sorted(w for w in named if w and os.path.isfile(os.path.join(w, ".git")))[:MAX_WORKTREES]
     with concurrent.futures.ThreadPoolExecutor(8) as pool:
         dirty = dict(zip(wts, pool.map(dirty_files, wts)))
-    state = os.path.join(STATE_DIR, session + ".json")
-    seen = set(json.load(open(state))) if os.path.isfile(state) else set()
-    report, prints = uncommitted_work_decision(start, dirty, seen)
+    state = load_state()
+    seen = set(state.get(session, {}).get("prints", ()))
+    report, prints = uncommitted_work_decision(start, dirty, seen, handed_off(handoffs, wts, start))
     if not report:
         return
-    os.makedirs(STATE_DIR, exist_ok=True)
-    with open(state, "w") as fh:
-        json.dump(sorted(seen | set(prints)), fh)
+    now = time.time()
+    state = {k: v for k, v in state.items() if now - v["at"] < STATE_TTL_S}
+    state[session] = {"at": now, "prints": sorted(seen | set(prints))}
+    os.makedirs(os.path.dirname(STATE), exist_ok=True)
+    with open(STATE, "w") as fh:
+        json.dump(state, fh)
     reason = ("This session edited files that are still uncommitted in: " + ", ".join(report)
-              + ". Commit them there (a WIP commit is fine) or write a handoff .md naming the "
-              "worktree, what is done and the next step; then end the turn.")
+              + ". Commit them there (a WIP commit is fine), or write a HANDOFF.md (inside the "
+              "worktree, or elsewhere naming it) with what is done and the next step; then end the turn.")
     json.dump({"decision": "block", "reason": reason}, sys.stdout)
 
 

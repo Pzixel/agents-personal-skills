@@ -25,6 +25,8 @@ from worktree_policy import Worktree, decide_cleanup  # noqa: E402
 REPOS_ROOT = os.path.expanduser("~/Documents/Repos")
 TMP = os.path.expanduser("~/.claude/tmp")
 LOCK = os.path.join(TMP, "worktree-reaper.lock")
+LAST_RUN = os.path.join(TMP, "worktree-reaper.last-run")
+THROTTLE_S = 600
 LOG = os.path.join(TMP, "worktree-reaper.log")
 GITHUB = re.compile(r"github\.com[:/]([^/]+/[^/]+?)(?:\.git)?/?$")
 
@@ -98,28 +100,40 @@ def worktrees(repo, cwds):
     return result
 
 
-def all_patch_equivalent(repo, target, branch):
-    """git cherry marks own commits '+' when no patch-equivalent commit is in target."""
+def content_in_default(repo, target, branch):
+    """The branch has own commits and merging it into target changes nothing.
+
+    Merging by tree catches what patch ids miss: a patch the default branch later
+    reverted, whitespace-only differences, edits made inside a merge commit.
+    """
+    ref = "refs/heads/" + branch
     try:
-        lines = run(["git", "cherry", target, branch], repo).split()
-    except Failed as e:
+        if run(["git", "rev-list", "--count", f"{target}..{ref}"], repo).strip() == "0":
+            return False
+        merged = subprocess.run(["git", "merge-tree", "--write-tree", target, ref], cwd=repo,
+                                capture_output=True, text=True, timeout=60)
+        if merged.returncode != 0:  # conflicts: the branch differs from target
+            return False
+        return merged.stdout.split("\n", 1)[0] == run(["git", "rev-parse", target + "^{tree}"], repo).strip()
+    except (Failed, subprocess.TimeoutExpired) as e:
         log(f"{os.path.basename(repo)} keep branch {branch}: {e}")
         return False
-    signs = lines[0::2]
-    return bool(signs) and "+" not in signs
 
 
 def is_ancestor(repo, oid, target):
-    p = subprocess.run(["git", "merge-base", "--is-ancestor", oid, target], cwd=repo,
-                       capture_output=True, timeout=60)
+    try:
+        p = subprocess.run(["git", "merge-base", "--is-ancestor", oid, target], cwd=repo,
+                           capture_output=True, timeout=60)
+    except subprocess.TimeoutExpired as e:
+        raise Failed(str(e)) from e
     return p.returncode == 0
 
 
-def reap(repo, slug, cwds, dry):
+def reap(repo, slug, dry):
     name = os.path.basename(repo)
     run(["git", "fetch", "--prune", "-q", "origin"], repo, timeout=60)
     default = default_branch(repo, slug)
-    pulls = json.loads(run(["gh", "pr", "list", "--repo", slug, "--state", "merged", "--limit", "500",
+    pulls = json.loads(run(["gh", "pr", "list", "--repo", slug, "--state", "merged", "--base", default, "--limit", "500",
                             "--json", "headRefName,headRefOid"], repo))
     merged = {}
     for pr in pulls:
@@ -128,13 +142,15 @@ def reap(repo, slug, cwds, dry):
     into_default = set(run(["git", "for-each-ref", "--format=%(refname:lstrip=2)", "--merged", target,
                             "refs/heads"], repo).split())
     first_parent = set(run(["git", "rev-list", "--first-parent", target], repo).split())
-    wts = worktrees(repo, cwds)
-    patch_merged = {wt.branch for wt in wts
-                    if wt.branch and not wt.is_main and all_patch_equivalent(repo, target, wt.branch)}
-    detached_in = {wt.path for wt in wts
+    wts = worktrees(repo, busy_cwds())  # per repo: a run spans minutes
+    content_merged = {wt.branch for wt in wts
+                    if wt.branch and not wt.is_main and content_in_default(repo, target, wt.branch)}
+    now = time.time()
+    detached_in = {wt.path: now - os.stat(wt.path).st_mtime for wt in wts
                    if wt.branch is None and not wt.is_main and is_ancestor(repo, wt.head, target)}
-    c = decide_cleanup(wts, refs(repo, "refs/heads", 2), merged, default,
-                       into_default, first_parent, patch_merged, detached_in)
+    seen_tips = refs(repo, "refs/heads", 2)
+    c = decide_cleanup(wts, seen_tips, merged, default,
+                       into_default, first_parent, content_merged, detached_in)
     for path, reason in c.kept:
         log(f"{name} keep {path}: {reason}")
     verb = "would " if dry else ""
@@ -153,7 +169,8 @@ def reap(repo, slug, cwds, dry):
         log(f"{name} {verb}delete local branch {b}")
         if not dry:
             # a concurrent session may have deleted it already; gone counts as done
-            if refs(repo, f"refs/heads/{b}", 2):
+            # gone counts as done; a tip moved since the decision is new work
+            if refs(repo, f"refs/heads/{b}", 2).get(b) == seen_tips.get(b):
                 run(["git", "branch", "-D", b], repo)
 
 def main():
@@ -163,12 +180,18 @@ def main():
     lock = open(LOCK, "w")
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        # SessionStart fires on every compaction; one full run per THROTTLE_S is enough
+        if not dry and time.time() - os.path.getmtime(LAST_RUN) < THROTTLE_S:
+            return
+    except FileNotFoundError:
+        pass
     except BlockingIOError:
         return
-    cwds = busy_cwds()
+    if not dry:
+        open(LAST_RUN, "w").close()
     for repo, slug in github_repos():
         try:
-            reap(repo, slug, cwds, dry)
+            reap(repo, slug, dry)
         except (Failed, KeyError, ValueError) as e:
             log(f"{os.path.basename(repo)} skip repo: {e}")
 
