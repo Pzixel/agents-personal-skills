@@ -1843,10 +1843,18 @@ def _command_head(tokens):
     return "", [], via_xargs
 
 
+_REDIRECT = re.compile(r"^(\d*|&)(>>?|<)(&?\d+|&-)?$|^(\d*|&)(>>?|<)(.+)$")
+
+
 def _path_args(args):
-    paths, after_dashdash = [], False
+    """Path operands; a redirect and its target file are not operands."""
+    paths, after_dashdash, skip = [], False, False
     for arg in args:
-        if not after_dashdash and arg == "--":
+        if skip:
+            skip = False
+        elif m := _REDIRECT.match(arg):
+            skip = m.group(2) is not None and m.group(3) is None
+        elif not after_dashdash and arg == "--":
             after_dashdash = True
         elif after_dashdash or not arg.startswith("-"):
             paths.append(arg)
@@ -1860,6 +1868,10 @@ def _is_ours_path(path, cfg, relative_ok):
     parts = norm.split("/")
     if (relative_ok or norm.startswith(("/", "~"))) and ".worktrees" in parts[:-1]:
         return True
+    if norm.startswith(("/", "~")) and "tmp" in parts[1:-1]:
+        i = parts.index("tmp", 1)
+        if os.path.exists(os.path.join(os.path.expanduser("/".join(parts[:i]) or "/"), ".git")):
+            return True
     for prefix in cfg["ours_paths"]:
         if not relative_ok and not prefix.startswith(("/", "~")):
             continue

@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
@@ -1141,6 +1142,31 @@ class DestructiveDecisionTest(unittest.TestCase):
         for cmd, decision in cases.items():
             with self.subTest(cmd=cmd):
                 self.assertEqual(_destructive(cmd)["decision"], decision)
+
+    def test_redirects_are_not_rm_operands(self):
+        cases = {
+            "rm -rf /repo/.worktrees/task 2>&1 | head -5": "allow",
+            "rm -rf /repo/.worktrees/task >/dev/null": "allow",
+            "rm -rf /repo/.worktrees/task 2> /dev/null": "allow",
+            "rm -rf /repo/.worktrees/task > out.log": "allow",
+            "rm -rf /etc 2>&1": "deny",
+        }
+        for cmd, decision in cases.items():
+            with self.subTest(cmd=cmd):
+                self.assertEqual(_destructive(cmd)["decision"], decision)
+
+    def test_absolute_tmp_inside_a_checkout_is_ours(self):
+        with tempfile.TemporaryDirectory() as root:
+            repo, plain = os.path.join(root, "repo"), os.path.join(root, "plain")
+            os.makedirs(os.path.join(repo, ".git"))
+            cases = {
+                f"rm -rf {repo}/tmp/df167": "allow",
+                f"rm -rf {repo}/tmp": "deny",
+                f"rm -rf {repo}/tmp/../src": "deny",
+                f"rm -rf {plain}/tmp/x": "deny",
+            }
+            decisions = {cmd: _destructive(cmd)["decision"] for cmd in cases}
+        self.assertEqual(decisions, cases)
 
     def test_rm_inside_a_loop_body_is_classed(self):
         self.assertEqual(_destructive('for f in a b; do rm -rf "$f"; done')["decision"], "deny")
