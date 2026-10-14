@@ -8,6 +8,11 @@
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/session-tools-link.py\"",
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "nohup python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/worktree-reaper.py\" </dev/null >/dev/null 2>&1 &",
+            "timeout": 5
           }
         ]
       }
@@ -141,6 +146,11 @@
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/reply-lint.py\"",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/worktree-dirty-gate.py\"",
             "timeout": 5
           }
         ]

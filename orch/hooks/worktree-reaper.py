@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""SessionStart worktree reaper: removes worktrees and branches merged as-is.
+"""SessionStart worktree reaper: removes worktrees and branches whose work reached the default branch.
 
 Narrow workflow around tools/worktree_policy.decide_cleanup: observe every
 GitHub main checkout under ~/Documents/Repos, decide, execute mechanically.
@@ -98,6 +98,23 @@ def worktrees(repo, cwds):
     return result
 
 
+def all_patch_equivalent(repo, target, branch):
+    """git cherry marks own commits '+' when no patch-equivalent commit is in target."""
+    try:
+        lines = run(["git", "cherry", target, branch], repo).split()
+    except Failed as e:
+        log(f"{os.path.basename(repo)} keep branch {branch}: {e}")
+        return False
+    signs = lines[0::2]
+    return bool(signs) and "+" not in signs
+
+
+def is_ancestor(repo, oid, target):
+    p = subprocess.run(["git", "merge-base", "--is-ancestor", oid, target], cwd=repo,
+                       capture_output=True, timeout=60)
+    return p.returncode == 0
+
+
 def reap(repo, slug, cwds, dry):
     name = os.path.basename(repo)
     run(["git", "fetch", "--prune", "-q", "origin"], repo, timeout=60)
@@ -111,8 +128,13 @@ def reap(repo, slug, cwds, dry):
     into_default = set(run(["git", "for-each-ref", "--format=%(refname:lstrip=2)", "--merged", target,
                             "refs/heads"], repo).split())
     first_parent = set(run(["git", "rev-list", "--first-parent", target], repo).split())
-    c = decide_cleanup(worktrees(repo, cwds), refs(repo, "refs/heads", 2), merged, default,
-                       into_default, first_parent)
+    wts = worktrees(repo, cwds)
+    patch_merged = {wt.branch for wt in wts
+                    if wt.branch and not wt.is_main and all_patch_equivalent(repo, target, wt.branch)}
+    detached_in = {wt.path for wt in wts
+                   if wt.branch is None and not wt.is_main and is_ancestor(repo, wt.head, target)}
+    c = decide_cleanup(wts, refs(repo, "refs/heads", 2), merged, default,
+                       into_default, first_parent, patch_merged, detached_in)
     for path, reason in c.kept:
         log(f"{name} keep {path}: {reason}")
     verb = "would " if dry else ""
