@@ -10,7 +10,9 @@ the main session).
 
 The decision is gate_policy.skill_load_decision; thresholds and the list of
 process skills live in tools/orchestrate-params.json. This file only resolves
-the skill directory, measures it, reads the override, and emits the response.
+the skill directory, measures it (SKILL.md on load; SKILL.md plus every *.md
+as the documents an agent may read; scripts are executed, not counted), reads
+the override, and emits the response.
 Any error at all exits 0: the gate never stands between an agent and its work
 because something was unreadable.
 """
@@ -35,17 +37,6 @@ PARAMS_PATH = os.path.join(TOOLS_DIR, "orchestrate-params.json")
 LOG_PATH = os.path.join(STATE_DIR, "skill-load-log.jsonl")
 TAIL_BYTES = 2_000_000
 MESSAGES_SCANNED = 8
-
-# What a skill actually costs the context is its text; anything else in the
-# directory is an attachment the model does not read on load.
-TEXT_SUFFIXES = frozenset(
-    {
-        ".md", ".markdown", ".mdx", ".txt", ".rst", ".json", ".yaml", ".yml",
-        ".toml", ".csv", ".sql", ".py", ".sh", ".js", ".ts", ".tsx", ".html",
-        ".xml", ".ini", ".cfg", "",
-    }
-)
-
 
 def load_params():
     try:
@@ -81,17 +72,19 @@ def skill_dir(skill_name, cwd):
     return ""
 
 
-def text_bytes(directory):
-    total = 0
+def skill_sizes(directory):
+    """(on-load bytes, docs bytes): SKILL.md is what the harness injects; the
+    docs are SKILL.md plus every other *.md under the directory."""
+    on_load = os.path.getsize(os.path.join(directory, "SKILL.md"))
+    docs = 0
     for root, _dirs, files in os.walk(directory, followlinks=True):
         for name in files:
-            if os.path.splitext(name)[1].lower() not in TEXT_SUFFIXES:
-                continue
-            try:
-                total += os.path.getsize(os.path.join(root, name))
-            except OSError:
-                continue
-    return total
+            if name.lower().endswith(".md"):
+                try:
+                    docs += os.path.getsize(os.path.join(root, name))
+                except OSError:
+                    continue
+    return on_load, docs
 
 
 def tail_entries(path):
@@ -186,11 +179,11 @@ def main():
         })
         return 0
 
-    size = text_bytes(directory)
+    size, docs = skill_sizes(directory)
     params = load_params()
     reason = override_reason(transcript_path, params)
     decision = gate_policy.skill_load_decision(
-        True, size, skill_name, params, reason
+        True, size, skill_name, params, reason, docs
     )
 
     record = {
@@ -198,29 +191,25 @@ def main():
         "session_id": payload.get("session_id") or "",
         "skill": skill_name,
         "skill_bytes": size,
+        "docs_bytes": docs,
         "decision": decision["decision"],
     }
     if decision.get("override"):
         record["override_reason"] = decision["override"]
-        log(record)
-        return 0
-    if decision["decision"] != "deny":
-        # Every allowed load is logged: main-budget-gate reads it to learn
-        # which skills this session runs.
-        log(record)
-        return 0
-
+    # Every load is logged: main-budget-gate reads allowed loads to learn
+    # which skills this session runs.
     log(record)
-    json.dump(
-        {
-            "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": "deny",
-                "permissionDecisionReason": decision["reason"],
-            }
-        },
-        sys.stdout,
-    )
+    if decision["decision"] == "deny":
+        out = {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": decision["reason"],
+        }
+    elif decision.get("context"):
+        out = {"hookEventName": "PreToolUse", "additionalContext": decision["context"]}
+    else:
+        return 0
+    json.dump({"hookSpecificOutput": out}, sys.stdout)
     return 0
 
 

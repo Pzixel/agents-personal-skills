@@ -337,6 +337,37 @@ class SkillLoadDecisionTest(unittest.TestCase):
         )
 
 
+    def test_deny_names_on_load_and_docs_sizes(self):
+        reason = gate_policy.skill_load_decision(
+            True, 12400, "example-skill", None, None, 44000
+        )["reason"]
+        self.assertIn("12400 bytes", reason)
+        self.assertIn("threshold is 12000 bytes", reason)
+        self.assertIn("44k", reason)
+        self.assertIn("SKILL_LOAD_OVERRIDE", reason)
+
+    def test_allowed_load_with_large_docs_reports_both_sizes(self):
+        decision = gate_policy.skill_load_decision(
+            True, 8872, "infra-access", None, None, 43999
+        )
+        self.assertEqual(decision["decision"], "allow")
+        self.assertIn("9k on load", decision["context"])
+        self.assertIn("44k", decision["context"])
+
+    def test_process_skill_gets_sizes_without_delegation_advice(self):
+        context = gate_policy.skill_load_decision(
+            True, 30000, "orchestrate", None, None, 50000
+        )["context"]
+        self.assertIn("50k", context)
+        self.assertNotIn("delegate", context)
+
+    def test_allowed_load_with_small_docs_adds_no_context(self):
+        self.assertNotIn(
+            "context",
+            gate_policy.skill_load_decision(True, 2000, "small-skill", None, None, 2500),
+        )
+
+
 class ChecksDecisionTest(unittest.TestCase):
     def test_declared_check_run_after_the_last_edit_is_allowed(self):
         events = [

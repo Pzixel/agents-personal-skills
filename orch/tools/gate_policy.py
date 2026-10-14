@@ -621,7 +621,7 @@ DEFAULT_PARAMS = {
     # timeout at least (--max + 30) s, never above bash_timeout_max_ms.
     "wait_for_max_seconds": 570,
     "bash_timeout_max_ms": 600000,
-    "skill_bytes_threshold": 40000,
+    "skill_bytes_threshold": 12000,
     # An override marker needs a reason of at least this many characters.
     "override_reason_min_chars": 8,
     "process_skills": [
@@ -844,11 +844,18 @@ def agent_budget_decision(context_tokens, cost_usd, calls, agent_type, params=No
 
 _SKILL_DENY = (
     "Expert skills are loaded by the agent that does the work, not by the main "
-    "session: `{skill}` is {kb}k of instructions that would sit in this context for "
-    "the rest of the session. Hand the task to a `builder` agent; it chooses and loads "
-    "the expert skills itself. If the main session really must read it, put "
+    "session: `{skill}` puts {on_load_bytes} bytes of instructions into this context on "
+    "load (the threshold is {threshold} bytes), and its documents add up to {docs_kb}k if read in full, for the rest of the "
+    "session. Hand the task to a `builder` or `prod-probe` agent; it loads the skill "
+    "itself. If the main session really must read it, put "
     "`SKILL_LOAD_OVERRIDE: <reason>` in your message and request the skill again."
 )
+
+_SKILL_DOCS_CONTEXT = (
+    "Skill `{skill}` loaded: {on_load_kb}k on load; its documents add up to "
+    "{docs_kb}k if read in full."
+)
+_SKILL_DOCS_ADVICE = " Read one reference section at a time; delegate work that needs several."
 
 
 def _is_process_skill(skill_name, params):
@@ -860,28 +867,42 @@ def _is_process_skill(skill_name, params):
     )
 
 
-def skill_load_decision(is_main, skill_bytes, skill_name, params=None, override_reason=None):
+def skill_load_decision(
+    is_main, skill_bytes, skill_name, params=None, override_reason=None, docs_bytes=0
+):
     """Keep large expert skills out of the main session's context.
 
-    Denies only for the main session, only above ``skill_bytes_threshold``, and
-    only for skills that are not process skills. An override reason allows and
-    is reported back so the hook can log it.
+    ``skill_bytes`` is what the harness injects on load (SKILL.md);
+    ``docs_bytes`` is every document the skill can send the agent to read.
+    Denies only for the main session, only when the on-load size exceeds
+    ``skill_bytes_threshold``, and only for skills that are not process skills.
+    An override reason allows and is reported back so the hook can log it. An
+    allowed main-session load whose documents exceed the threshold carries a
+    ``context`` line with both sizes, plus reading advice unless the skill is a
+    process or main-only skill, which run in the main session by design.
     """
     p = _merged_params(params)
     if not is_main:
         return {"decision": "allow"}
-    if int(skill_bytes or 0) <= p["skill_bytes_threshold"]:
-        return {"decision": "allow"}
-    if _is_process_skill(skill_name, p):
-        return {"decision": "allow"}
-    if override_reason:
-        return {"decision": "allow", "override": override_reason}
-    return {
-        "decision": "deny",
-        "reason": _SKILL_DENY.format(
-            skill=skill_name, kb=int(round(int(skill_bytes) / 1000.0))
-        ),
+    sizes = {
+        "skill": skill_name,
+        "on_load_bytes": int(skill_bytes or 0),
+        "threshold": p["skill_bytes_threshold"],
+        "on_load_kb": int(round(int(skill_bytes or 0) / 1000.0)),
+        "docs_kb": int(round(int(docs_bytes or 0) / 1000.0)),
     }
+    threshold = p["skill_bytes_threshold"]
+    decision = {"decision": "allow"}
+    works_in_main = _is_process_skill(skill_name, p) or skill_name in p["main_only_skills"]
+    if int(skill_bytes or 0) > threshold and not works_in_main:
+        if not override_reason:
+            return {"decision": "deny", "reason": _SKILL_DENY.format(**sizes)}
+        decision["override"] = override_reason
+    if int(docs_bytes or 0) > threshold:
+        decision["context"] = _SKILL_DOCS_CONTEXT.format(**sizes) + (
+            "" if works_in_main else _SKILL_DOCS_ADVICE
+        )
+    return decision
 
 
 _CHECK_RETURN = (

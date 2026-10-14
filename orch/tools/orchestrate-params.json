@@ -27,7 +27,8 @@
   "wait_for_max_seconds": 570,
   "bash_timeout_max_ms": 600000,
   "_comment_wait_for_limits": "no-poll-gate: a subagent's foreground wait-for must pass --max <= wait_for_max_seconds and set a Bash timeout >= (--max + 30) s, at most bash_timeout_max_ms; a call reaching its timeout (default 120000 ms) is moved to the background by the harness.",
-  "skill_bytes_threshold": 40000,
+  "skill_bytes_threshold": 12000,
+  "_comment_skill_bytes_threshold": "skill-load-gate: the main session is denied an expert skill whose SKILL.md (what the harness injects on load) exceeds this many bytes; an allowed load whose SKILL.md plus every *.md under the skill directory exceeds it gets both sizes as context.",
   "override_reason_min_chars": 8,
   "_comment_override_reason_min_chars": "Every override marker is a line `NAME: <reason>` (or `NAME=\"<reason>\"`, optionally after `#`) with a reason of at least this many characters (gate_policy.override_marker).",
   "process_skills": [
