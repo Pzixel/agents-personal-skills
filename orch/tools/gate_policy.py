@@ -1747,6 +1747,9 @@ def _is_ours_path(path, cfg, relative_ok):
     if any(ch in path for ch in "$`{}") or ".." in path.split("/"):
         return False
     norm = os.path.normpath(path)
+    parts = norm.split("/")
+    if (relative_ok or norm.startswith(("/", "~"))) and ".worktrees" in parts[:-1]:
+        return True
     for prefix in cfg["ours_paths"]:
         if not relative_ok and not prefix.startswith(("/", "~")):
             continue

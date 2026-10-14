@@ -1048,6 +1048,18 @@ class DestructiveDecisionTest(unittest.TestCase):
             with self.subTest(cmd=cmd):
                 self.assertEqual(_destructive(cmd)["decision"], "allow")
 
+    def test_absolute_worktree_task_dir_is_ours(self):
+        cases = {
+            "rm -rf /repo/.worktrees/task": "allow",
+            "cd /repo && rm -rf /repo/.worktrees/task": "allow",
+            "rm -rf /repo/.worktrees": "deny",
+            "rm -rf /repo/.worktrees/../src": "deny",
+            "rm -rf /repo/src/worktrees/task": "deny",
+        }
+        for cmd, decision in cases.items():
+            with self.subTest(cmd=cmd):
+                self.assertEqual(_destructive(cmd)["decision"], decision)
+
     def test_rm_inside_a_loop_body_is_classed(self):
         self.assertEqual(_destructive('for f in a b; do rm -rf "$f"; done')["decision"], "deny")
 
