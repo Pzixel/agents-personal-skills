@@ -4,7 +4,9 @@ inside the agent's authority.
 
 Returned once, with the rule that failed, when the reply claims completion
 without an observation (command, value, time) or hands a decision to the owner
-in words ("your call", "жду вашего решения"); a trailing question mark alone
+in words ("your call", "жду вашего решения"), or promises future work in the
+first person ("I'll fix it in a follow-up PR") without doing it or naming a
+durable handoff (issue, PR, handoff file); a trailing question mark alone
 is not a hand-off, answers to the owner's questions end on one. The second stop (`stop_hook_active`) always passes, so a
 reply that genuinely needs the owner costs one extra turn, never a loop.
 Decision: gate_policy.reply_lint_decision. Any error exits 0 with no output.

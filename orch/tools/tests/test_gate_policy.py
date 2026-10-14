@@ -687,6 +687,25 @@ class ReplyLintDecisionTest(unittest.TestCase):
         text = "Добавил в хук паттерн \"решения за вами\"; проверено 12:00Z."
         self.assertEqual(gate_policy.reply_lint_decision(text, False)["decision"], "allow")
 
+    def test_unbacked_promise_is_returned(self):
+        for text in (
+            "The alert text is misleading. Поправлю текст отдельным PR.",
+            "The label is wrong; I'll fix it in a follow-up PR.",
+        ):
+            decision = gate_policy.reply_lint_decision(text, False)
+            self.assertEqual(decision["decision"], "block", text)
+            self.assertIn("promises future work", decision["reason"], text)
+
+    def test_backed_or_offered_promise_passes(self):
+        for text in (
+            "Текст алерта неверный. Поправлю отдельным PR, открыт как #42.",
+            "Текст алерта неверный. Не исправлено, записано в handoff-файле tmp/todo.md.",
+            "Причина в пороге. Поправлю по твоей команде.",
+            "The cause is the threshold. I'll fix it on your go.",
+            "Hook now matches \"I'll fix\" phrases.",
+        ):
+            self.assertEqual(gate_policy.reply_lint_decision(text, False)["decision"], "allow", text)
+
     def test_second_stop_passes(self):
         self.assertEqual(gate_policy.reply_lint_decision("Готово.", True)["decision"], "allow")
 

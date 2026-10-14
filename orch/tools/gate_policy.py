@@ -1456,6 +1456,24 @@ _OWNER_DOMAIN_RE = re.compile(
     r"необратим|деньг|приорит|irreversible|money|priorit|client data|данн\w+ клиент",
     re.IGNORECASE,
 )
+# A first-person commitment to do work later: a perfective 1st-person future
+# verb of work, a deferral phrase, or "I'll <work verb>".
+_PROMISE_RE = re.compile(
+    r"\b(?:поправлю|исправлю|сделаю|добавлю|заведу|открою|починю|допишу|проверю"
+    r"|вернусь\s+к|займусь|доделаю|перепишу)\b"
+    r"|(?:отдельн\w+|следующ\w+)\s+(?:PR|пулл?-?реквест\w*|коммит\w*)"
+    r"|\bI(?:'ll|\s+will)\s+(?:fix|open|add|do|follow\s+up|look|update|write|check)\b"
+    r"|\b(?:in\s+a\s+)?follow-?up\s+PR\b|\bseparately\s+later\b",
+    re.IGNORECASE,
+)
+# The promise is backed when the reply names a durable record of the remaining
+# work (an issue or PR number, a handoff/todo file), or when it is an offer that
+# waits on the owner's command rather than a commitment the turn left undone.
+_PROMISE_BACKED_RE = re.compile(
+    r"#\d+|handoff|хендофф|\S*(?:todo|TODO|HANDOFF)\S*\.md"
+    r"|по\s+(?:твоей|вашей)\s+команде|скажи(?:те)?\s*[\u2014\u2013-]+\s*сделаю|on\s+your\s+go",
+    re.IGNORECASE,
+)
 REPLY_LINT_MARKER = "reply-lint:"
 _CLAIM_REASON = (
     REPLY_LINT_MARKER + " the reply claims completion without its observation. Attach "
@@ -1473,6 +1491,13 @@ _AUTHORITY_REASON = (
     "a recommendation. Do the work, then give the complete final reply again."
 )
 
+_PROMISE_REASON = (
+    REPLY_LINT_MARKER + " the reply promises future work that this turn did not do. "
+    "Do it now if it is inside your authority, or state plainly that it is not done "
+    "and name where it is tracked (issue, PR, handoff file). Then give the complete "
+    "final reply again."
+)
+
 
 def _has_done_claim(text):
     for match in _DONE_RE.finditer(text):
@@ -1483,7 +1508,8 @@ def _has_done_claim(text):
 
 def reply_lint_decision(last_assistant_text, stop_hook_active):
     """Return the main session once when its final reply claims completion
-    without an observation, or hands a decision to the owner. A trailing
+    without an observation, hands a decision to the owner, or promises future
+    work with no durable record of it (issue, PR, handoff file). A trailing
     question mark alone is not a hand-off: a reply that answers the owner's
     question and ends on a follow-up question stays (2026-10-12: 4 of 11
     blocks were answers to direct questions, one never re-delivered).
@@ -1499,6 +1525,8 @@ def reply_lint_decision(last_assistant_text, stop_hook_active):
     asks_owner = _OWNER_QUESTION_RE.search(_blank_quoted(text))
     if asks_owner and not _OWNER_DOMAIN_RE.search(text):
         reasons.append(_AUTHORITY_REASON)
+    if _PROMISE_RE.search(_blank_quoted(text)) and not _PROMISE_BACKED_RE.search(text):
+        reasons.append(_PROMISE_REASON)
     if not reasons:
         return {"decision": "allow"}
     return {"decision": "block", "reason": " ".join(reasons)}
