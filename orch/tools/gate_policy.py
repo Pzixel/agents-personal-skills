@@ -1406,6 +1406,8 @@ def own_transcript_path(transcript, agent_id):
 # -- merge gate: a change reaches a shared path only with a real-path check --
 
 CHECK_RAN_TOKEN = "CHECK_RAN:"
+PROD_POSITION_TOKEN = "PROD_POSITION:"
+WAY_BACK_TOKEN = "WAY_BACK:"
 _MERGE_RE = re.compile(
     r"\bgh\s+pr\s+merge\b"
     r"|\bgit\s+push\b[^|;&\n]*\b(?:master|main)\b"
@@ -1418,15 +1420,24 @@ _MERGE_REASON = (
     "alone do not count (retro 2026-10-12: 36 merges without a real-path check "
     "cost 57 h and one irreversible mass send)."
 )
+_MERGE_FIELD_DOCS = (
+    (CHECK_RAN_TOKEN, "`CHECK_RAN: <what ran, result>`"),
+    (PROD_POSITION_TOKEN, "`PROD_POSITION: <dimension along which blast radius grows, production's number on it, source>`"),
+    (WAY_BACK_TOKEN, "`WAY_BACK: <means of undo, minutes>`"),
+)
 
 
 def merge_gate_decision(command):
     """Deny ``gh pr merge`` and pushes to master/main unless the command carries
-    ``CHECK_RAN:`` with the real-path check that ran."""
+    ``CHECK_RAN:``, ``PROD_POSITION:`` and ``WAY_BACK:``."""
     cmd = command or ""
-    if CHECK_RAN_TOKEN in cmd or not _MERGE_RE.search(cmd):
+    missing = [doc for token, doc in _MERGE_FIELD_DOCS if token not in cmd]
+    if not missing or not _MERGE_RE.search(cmd):
         return {"decision": "allow"}
-    return {"decision": "deny", "reason": _MERGE_REASON}
+    return {
+        "decision": "deny",
+        "reason": _MERGE_REASON + " Missing: " + "; ".join(missing) + ".",
+    }
 
 
 # -- reply lint: a final reply carries its observation and stays in authority --
@@ -1621,7 +1632,9 @@ def redact_secrets(text, known_tokens=()):
 _PLAN_MARKER_RE = re.compile(
     r"^\s*(?:bash|sh|zsh)\s+(\S+)\s+#\s*DESTRUCTIVE_PLAN\s+sha256=([0-9a-fA-F]{64})\s*$"
 )
-_PLAN_HEADERS = ("# scope:", "# undo:", "# count:")
+_PLAN_HEADERS = (
+    "# scope:", "# undo:", "# count:", "# contradiction:", "# prod_position:", "# way_back:"
+)
 _PLAN_INDIRECT_RE = re.compile(r"^\s*(?:(?:source|\.|exec|eval)\s|(?:bash|sh|zsh)\s+\S)")
 _SEGMENT_PUNCT = frozenset(";&|()\n`{}")
 _HEREDOC_RE = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
@@ -2117,7 +2130,10 @@ def _plan_decision(path, marker_hash, agent_type, plan_text, plan_hash, cfg):
     for header in _PLAN_HEADERS:
         found = [l for l in lines if l.strip().lower().startswith(header)]
         if not found:
-            return deny("plan header line `" + header + " ...` is missing")
+            return deny(
+                "plan header line `" + header + " ...` is missing; required: "
+                + " ".join(_PLAN_HEADERS)
+            )
         headers[header] = found[0].strip()
     max_lines, max_bytes = int(cfg["plan_max_lines"]), int(cfg["plan_max_bytes"])
     if len(lines) > max_lines or len(plan_text.encode("utf-8")) > max_bytes:
@@ -2237,5 +2253,5 @@ def _command_decision(command, cfg):
         return {"decision": "allow", "class": "none", "reason": ""}
     cls, reason = max(found, key=lambda hit: _SEVERITY[hit[0]])
     if cls == "approval":
-        reason += ": batch it into a plan script (# scope / # undo / # count) run from the main session"
+        reason += ": batch it into a plan script (# scope / # undo / # count / # contradiction / # prod_position / # way_back) run from the main session"
     return {"decision": _DECISION[cls], "class": cls, "reason": reason}

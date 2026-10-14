@@ -634,6 +634,14 @@ if __name__ == "__main__":
     unittest.main()
 
 
+_MERGE_FIELDS = (
+    "CHECK_RAN: ring r10 on prod, 3635/s",
+    "PROD_POSITION: mailboxes touched, prod 187k, outreachdb count",
+    "WAY_BACK: revert PR, 10 min",
+)
+_MERGE_FULL = "echo '" + "; ".join(_MERGE_FIELDS) + "'; gh pr merge 12 --squash"
+
+
 class MergeGateDecisionTest(unittest.TestCase):
     def test_merge_without_token_is_denied(self):
         self.assertEqual(gate_policy.merge_gate_decision("gh pr merge 12 --squash")["decision"], "deny")
@@ -643,13 +651,15 @@ class MergeGateDecisionTest(unittest.TestCase):
             gate_policy.merge_gate_decision("git push origin HEAD:master")["decision"], "deny"
         )
 
-    def test_merge_with_token_is_allowed(self):
-        self.assertEqual(
-            gate_policy.merge_gate_decision(
-                "echo 'CHECK_RAN: ring r10 on prod, 3635/s'; gh pr merge 12 --squash"
-            )["decision"],
-            "allow",
-        )
+    def test_merge_with_all_fields_is_allowed(self):
+        self.assertEqual(gate_policy.merge_gate_decision(_MERGE_FULL)["decision"], "allow")
+
+    def test_merge_missing_any_field_is_denied_naming_it(self):
+        for field in _MERGE_FIELDS:
+            cmd = _MERGE_FULL.replace(field, "")
+            result = gate_policy.merge_gate_decision(cmd)
+            self.assertEqual(result["decision"], "deny", field)
+            self.assertIn("`" + field.split(" ")[0], result["reason"].split("Missing:")[1], field)
 
     def test_branch_push_and_pr_create_are_allowed(self):
         for cmd in ("git push -u origin retro-fixes-2", "gh pr create --fill"):
@@ -792,6 +802,9 @@ _PLAN = (
     "# scope: orders table, rows of tenant acme\n"
     "# undo: restore from tmp/orders-acme.csv\n"
     "# count: 120 rows\n"
+    "# contradiction: none\n"
+    "# prod_position: rows deleted, acme has 120 of 9.1M, SELECT count(*) 10:02Z\n"
+    "# way_back: COPY from tmp/orders-acme.csv, 2 min\n"
     "psql -c \"DELETE FROM orders WHERE tenant = 'acme'\"\n"
 )
 _PLAN_HASH = "a" * 64
@@ -867,11 +880,13 @@ class DestructiveDecisionTest(unittest.TestCase):
             ("deny", "plan hash mismatch: rewrite the marker after editing the plan"),
         )
 
-    def test_plan_without_undo_header_is_denied(self):
-        text = _PLAN.replace("# undo: restore from tmp/orders-acme.csv\n", "")
-        result = _destructive(_PLAN_CMD, plan_text=text, plan_hash=_PLAN_HASH)
-        self.assertEqual(result["decision"], "deny")
-        self.assertIn("# undo:", result["reason"])
+    def test_plan_missing_any_header_is_denied_naming_it(self):
+        for line in _PLAN.splitlines()[:6]:
+            header = line.split(":")[0] + ":"
+            text = _PLAN.replace(line + "\n", "")
+            result = _destructive(_PLAN_CMD, plan_text=text, plan_hash=_PLAN_HASH)
+            self.assertEqual(result["decision"], "deny", header)
+            self.assertIn("`" + header + " ...` is missing", result["reason"], header)
 
     def test_plan_from_a_subagent_is_denied(self):
         result = _destructive(_PLAN_CMD, "builder", _PLAN, _PLAN_HASH)

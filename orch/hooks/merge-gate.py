@@ -3,9 +3,10 @@
 real-path check named in the command.
 
 `gh pr merge` and `git push` to master/main are refused unless the command
-carries `CHECK_RAN: <what ran on the real path, result>`. The token is the
-agent's own statement; the gate only makes the statement unavoidable at the
-moment of merging. Decision: gate_policy.merge_gate_decision. Any error exits 0.
+carries `CHECK_RAN: <what ran on the real path, result>`, `PROD_POSITION:
+<blast-radius dimension, production's number, source>` and `WAY_BACK: <undo,
+minutes>`. The tokens are the agent's own statements; the gate only makes
+them unavoidable at the moment of merging. Decision: gate_policy.merge_gate_decision. Any error exits 0.
 """
 import json
 import os
