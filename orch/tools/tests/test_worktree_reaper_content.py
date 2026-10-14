@@ -39,12 +39,12 @@ class ContentInDefaultTest(unittest.TestCase):
 
     def test_squash_merged_branch_is_in_default(self):
         commit(self.repo, "a", "base\nfeature\n", "squash of work")
-        self.assertTrue(reaper.content_in_default(self.repo, "main", "work"))
+        self.assertTrue(reaper.content_in_default(self.repo, "main", "work", "work"))
 
     def test_patch_reverted_on_default_is_not_in_default(self):
         commit(self.repo, "a", "base\nfeature\n", "squash of work")
         git(self.repo, "revert", "--no-edit", "HEAD")
-        self.assertFalse(reaper.content_in_default(self.repo, "main", "work"))
+        self.assertFalse(reaper.content_in_default(self.repo, "main", "work", "work"))
 
 
 if __name__ == "__main__":

@@ -100,13 +100,13 @@ def worktrees(repo, cwds):
     return result
 
 
-def content_in_default(repo, target, branch):
+def content_in_default(repo, target, branch, tip):
     """The branch has own commits and merging it into target changes nothing.
 
     Merging by tree catches what patch ids miss: a patch the default branch later
     reverted, whitespace-only differences, edits made inside a merge commit.
     """
-    ref = "refs/heads/" + branch
+    ref = tip  # the observed oid: a later commit is judged by the next run
     try:
         if run(["git", "rev-list", "--count", f"{target}..{ref}"], repo).strip() == "0":
             return False
@@ -143,12 +143,13 @@ def reap(repo, slug, dry):
                             "refs/heads"], repo).split())
     first_parent = set(run(["git", "rev-list", "--first-parent", target], repo).split())
     wts = worktrees(repo, busy_cwds())  # per repo: a run spans minutes
+    seen_tips = refs(repo, "refs/heads", 2)
     content_merged = {wt.branch for wt in wts
-                    if wt.branch and not wt.is_main and content_in_default(repo, target, wt.branch)}
+                      if wt.branch in seen_tips and not wt.is_main
+                      and content_in_default(repo, target, wt.branch, seen_tips[wt.branch])}
     now = time.time()
     detached_in = {wt.path: now - os.stat(wt.path).st_mtime for wt in wts
                    if wt.branch is None and not wt.is_main and is_ancestor(repo, wt.head, target)}
-    seen_tips = refs(repo, "refs/heads", 2)
     c = decide_cleanup(wts, seen_tips, merged, default,
                        into_default, first_parent, content_merged, detached_in)
     for path, reason in c.kept:
@@ -170,8 +171,11 @@ def reap(repo, slug, dry):
         if not dry:
             # a concurrent session may have deleted it already; gone counts as done
             # gone counts as done; a tip moved since the decision is new work
-            if refs(repo, f"refs/heads/{b}", 2).get(b) == seen_tips.get(b):
-                run(["git", "branch", "-D", b], repo)
+            # compare-and-delete: a tip that moved since the decision is new work
+            try:
+                run(["git", "update-ref", "-d", f"refs/heads/{b}", seen_tips[b]], repo)
+            except Failed as e:
+                log(f"{name} keep branch {b}: {e}")
 
 def main():
     dry = "--dry-run" in sys.argv[1:]

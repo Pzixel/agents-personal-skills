@@ -45,9 +45,14 @@ def session_facts(transcript):
                 m = re.search(r'"timestamp":"([^"]+)"', line)
                 if m:
                     start = datetime.datetime.fromisoformat(m.group(1).replace("Z", "+00:00")).timestamp()
-            if '"tool_use"' in line:
-                wts.update(m.group(0) for m in WT_PATH.finditer(line))
-                handoffs.update(HANDOFF.findall(line))
+            if '"tool_use"' not in line:
+                continue
+            content = (json.loads(line).get("message") or {}).get("content")
+            for item in content if isinstance(content, list) else ():
+                if isinstance(item, dict) and item.get("type") == "tool_use":
+                    text = json.dumps(item.get("input"))
+                    wts.update(m.group(0) for m in WT_PATH.finditer(text))
+                    handoffs.update(HANDOFF.findall(text))
     return start, wts, handoffs
 
 
@@ -66,7 +71,7 @@ def handed_off(handoffs, wts, start):
             text = open(h, errors="replace").read(200_000)
         except OSError:
             continue
-        named.update(w for w in wts if w in text or os.path.basename(w) in text)
+        named.update(w for w in wts if w in text)
     return named
 
 

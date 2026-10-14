@@ -95,6 +95,10 @@ class DecideCleanupTest(unittest.TestCase):
         c = decide([detached("d", "m1")], {"main": "m1"}, {}, detached_in={"/wt/d": 3 * 86400})
         self.assertEqual(c.remove_worktrees, ("/wt/d",))
 
+    def test_branch_at_first_parent_commit_another_pr_merged_is_kept(self):
+        c = decide([linked("g", "m1")], {"main": "m1", "g": "m1"}, {"other": {"m1"}})
+        self.assertEqual((c.remove_worktrees, c.delete_local_branches), ((), ()))
+
 
 class UncommittedWorkDecisionTest(unittest.TestCase):
     def test_file_edited_after_session_start_is_reported(self):
