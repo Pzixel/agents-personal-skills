@@ -18,7 +18,35 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 from dataclasses import dataclass
+
+
+WT_PATH = re.compile(r"(/[^\s\"'`;|&<>()]+?)/\.worktrees/([A-Za-z0-9._-]+)")
+WT_REL = re.compile(r"(?<![\w/])(?:\./)?\.worktrees/([A-Za-z0-9._-]+)")
+_FILE_WRITERS = frozenset({"Edit", "Write", "MultiEdit", "NotebookEdit"})
+
+
+def written_worktrees(tool_name, tool_input, cwd=None):
+    """Worktree paths a tool call may have written into.
+
+    File-writing tools count by file_path (NotebookEdit also notebook_path),
+    Bash by its command text; a relative .worktrees/<name> resolves against cwd,
+    the call's working directory, and counts for nothing without it. Delegation
+    and read-only tools name worktrees without writing there, so they count for
+    nothing.
+    """
+    tool_input = tool_input if isinstance(tool_input, dict) else {}
+    if tool_name in _FILE_WRITERS:
+        text = " ".join(str(tool_input.get(k) or "") for k in ("file_path", "notebook_path"))
+    elif tool_name == "Bash":
+        text = str(tool_input.get("command") or "")
+    else:
+        return set()
+    found = {m.group(0) for m in WT_PATH.finditer(text)}
+    if cwd:
+        found.update(os.path.normpath(os.path.join(cwd, m.group(0))) for m in WT_REL.finditer(text))
+    return found
 
 
 DETACHED_FRESH_S = 2 * 86400

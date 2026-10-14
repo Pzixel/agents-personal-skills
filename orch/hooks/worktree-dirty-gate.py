@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 """Stop hook: refuse once to end a turn that leaves this session's edits uncommitted in a worktree.
 
-Candidates are the .worktrees/<name> paths this session's tool inputs name,
-plus cwd when it is inside one; other sessions' worktrees are not looked at. A dirty file counts as this session's
-when its mtime is after the session's first transcript timestamp: no
-per-session ownership record exists, so mtime is the proxy. The decision is
+Candidates are the .worktrees/<name> paths this session's writing tools named
+(Edit, Write, MultiEdit, NotebookEdit by file path; Bash by command text, a
+relative path resolved against the entry's cwd), plus cwd when it is inside
+one. Delegation (Agent, Task, SendMessage) and read-only tools never make a
+worktree this session's: a builder's edits there are its own. A dirty file
+counts as this session's when its mtime is after the session's first
+transcript timestamp: no per-session ownership record exists, so mtime is the
+proxy. The decision is
 tools/worktree_policy.uncommitted_work_decision; fingerprints already reported
 live in ~/.claude/tmp/worktree-dirty-gate.json, entries kept 7 days. Fails open.
 """
@@ -22,10 +26,9 @@ _PLUGIN_TOOLS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "
 sys.path.insert(0, os.path.realpath(
     _PLUGIN_TOOLS if os.path.isdir(_PLUGIN_TOOLS) else os.path.expanduser("~/.claude/tools")))
 
-from worktree_policy import uncommitted_work_decision  # noqa: E402
+from worktree_policy import WT_PATH, uncommitted_work_decision, written_worktrees  # noqa: E402
 
 STATE = os.path.expanduser("~/.claude/tmp/worktree-dirty-gate.json")
-WT_PATH = re.compile(r"(/[^\s\"'`;|&<>()]+?)/\.worktrees/([A-Za-z0-9._-]+)")
 HANDOFF = re.compile(r"(/[^\s\"'`;|&<>()]*/[Hh][Aa][Nn][Dd][Oo][Ff][Ff][^/\s\"'`]*\.md)")
 MAX_WORKTREES = 24
 STATE_TTL_S = 7 * 86400
@@ -37,7 +40,7 @@ def git(args, cwd):
 
 
 def session_facts(transcript):
-    """First timestamp, worktree paths and handoff*.md paths named in tool inputs."""
+    """First timestamp, worktrees written by tool calls, handoff*.md paths named in any tool input."""
     start, wts, handoffs = None, set(), set()
     with open(transcript, errors="replace") as fh:
         for line in fh:
@@ -47,11 +50,12 @@ def session_facts(transcript):
                     start = datetime.datetime.fromisoformat(m.group(1).replace("Z", "+00:00")).timestamp()
             if '"tool_use"' not in line:
                 continue
-            content = (json.loads(line).get("message") or {}).get("content")
+            entry = json.loads(line)
+            content = (entry.get("message") or {}).get("content")
             for item in content if isinstance(content, list) else ():
                 if isinstance(item, dict) and item.get("type") == "tool_use":
                     text = json.dumps(item.get("input"))
-                    wts.update(m.group(0) for m in WT_PATH.finditer(text))
+                    wts.update(written_worktrees(item.get("name"), item.get("input"), entry.get("cwd")))
                     handoffs.update(HANDOFF.findall(text))
     return start, wts, handoffs
 

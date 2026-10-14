@@ -12,7 +12,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 
-from worktree_policy import Worktree, decide_cleanup, uncommitted_work_decision  # noqa: E402
+from worktree_policy import Worktree, decide_cleanup, uncommitted_work_decision, written_worktrees  # noqa: E402
 
 MAIN = Worktree("/r", "main", "m1", is_main=True, dirty=False, busy=False)
 
@@ -121,6 +121,32 @@ class UncommittedWorkDecisionTest(unittest.TestCase):
     def test_handoff_outside_naming_the_worktree_settles_it(self):
         report, _ = uncommitted_work_decision(100.0, {"/wt/x": [("a", 150.0)]}, set(), {"/wt/x"})
         self.assertEqual(report, [])
+
+
+class WrittenWorktreesTest(unittest.TestCase):
+    def test_agent_prompt_naming_a_worktree_is_not_a_write(self):
+        self.assertEqual(written_worktrees("Agent", {"prompt": "workspace: /r/.worktrees/x"}), set())
+
+    def test_read_inside_a_worktree_is_not_a_write(self):
+        self.assertEqual(written_worktrees("Read", {"file_path": "/r/.worktrees/x/a.py"}), set())
+
+    def test_edit_inside_a_worktree_is_a_write(self):
+        self.assertEqual(written_worktrees("Edit", {"file_path": "/r/.worktrees/y/a.py"}), {"/r/.worktrees/y"})
+
+    def test_bash_command_naming_a_worktree_is_a_write(self):
+        self.assertEqual(written_worktrees("Bash", {"command": "cd /r/.worktrees/z && git add -A"}),
+                         {"/r/.worktrees/z"})
+
+    def test_notebook_edit_by_notebook_path_is_a_write(self):
+        self.assertEqual(written_worktrees("NotebookEdit", {"notebook_path": "/r/.worktrees/n/a.ipynb"}),
+                         {"/r/.worktrees/n"})
+
+    def test_relative_bash_path_resolves_against_cwd(self):
+        self.assertEqual(written_worktrees("Bash", {"command": "git -C .worktrees/x add -A"}, "/r"),
+                         {"/r/.worktrees/x"})
+
+    def test_relative_bash_path_without_cwd_is_not_a_candidate(self):
+        self.assertEqual(written_worktrees("Bash", {"command": "cd .worktrees/x && touch f"}), set())
 
 
 if __name__ == "__main__":
