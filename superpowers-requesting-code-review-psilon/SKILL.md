@@ -5,44 +5,12 @@ description: Use for one independent review after a coherent implementation cros
 
 # Requesting Code Review
 
-> **Codex 5.6 adaptation:** The description is the scope gate. Review once at a meaningful risk boundary; repeat only for a distinct evidenced risk.
+Dispatch one independent read-only reviewer with [code-reviewer.md](code-reviewer.md). Fill its brief: target scope, binding requirements and references, the review target (`<base>..<head>`, or a PR, branch, or path), and the implementer's claimed result labelled as a claim. Never pass session history, and never state an implementation conclusion as fact.
 
-Dispatch an independent read-only reviewer with exact task context, never session history.
-
-**Core principle:** Give the reviewer the target, binding requirements, current evidence, raw diff, and labeled implementation claims or plan. The reviewer inspects the diff first; claims and plans are second-pass context, never proof.
-
-## Trigger
-
-Use after a coherent high-risk implementation, before a release or merge that crosses a listed risk boundary, or on explicit request.
+Review once at a risk boundary. Repeat only for a distinct evidenced risk.
 
 Use optionally only for a named uncertainty: a stuck investigation, risky-refactor baseline, or complex fix with uncertain integrated effects.
 
-## Dispatch
+## Handling the findings
 
-1. Record the coherent range:
-
-   ```bash
-   BASE_SHA=$(git merge-base HEAD origin/main) # or recorded change start
-   HEAD_SHA=$(git rev-parse HEAD)
-   ```
-
-2. Dispatch an isolated or minimally forked reviewer with [code-reviewer.md](code-reviewer.md):
-
-   - `[TARGET_SCOPE]` — exact users, data, environment, deployment, or contract
-   - `[AUTHORITATIVE_REQUIREMENTS]` — binding requirements and contracts
-   - `[AUTHORITATIVE_REFERENCES]` — current sources that can prove or disprove prerequisites
-   - `[DESCRIPTION]` — implementer's claimed result; label it as a claim
-   - `[PLAN]` — optional decision record; never factual proof
-   - `[DIFF_FILE]` — optional exact review package; blank uses the Git range
-   - `[BASE_SHA]`, `[HEAD_SHA]` — exact review boundaries
-
-3. Verify every finding against current code, requirements, and target evidence. Fix confirmed findings before proceeding. Push back with evidence when the reviewer is wrong.
-
-## Hard Rules
-
-- Never skip review after the trigger truly matches.
-- Never ignore Critical issues or proceed with confirmed Important issues open.
-- Never give the reviewer session history or an implementation conclusion as fact.
-- Never argue with valid feedback; challenge invalid feedback with code, checks, and technical reasoning.
-
-Template: [code-reviewer.md](code-reviewer.md)
+The reviewer returns a JSON array of findings. Verify each one against the current code and the requirements. Fix confirmed findings before proceeding. When a finding is wrong, push back with evidence: file:line references or command output.

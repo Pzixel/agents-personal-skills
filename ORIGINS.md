@@ -16,6 +16,27 @@ name so users can identify its lineage. The current set also contains the reposi
 and `pareto-design-selection` skills and the adapted `test-audit` and `retro` skills. The retired ClickHouse guard described below is historical and was not
 derived from an upstream Superpowers skill.
 
+## Code review export: 2026-10-14
+
+`superpowers-requesting-code-review-psilon/code-reviewer.md` copies the body of
+Claude Code's built-in `/code-review` skill verbatim, in its high-effort recipe,
+as loaded through the Skill tool on 2026-10-14 (Claude Code built-in; no source
+file or version pin is available). A short brief header for the dispatcher
+precedes it: target scope, binding requirements and references, the review
+target, and the implementer's claimed result labelled as a claim. The only adaptation
+in the body: the Conventions angle names `AGENTS.md` alongside `CLAUDE.md`,
+because Codex reads `AGENTS.md`; every other line is verbatim. This export
+drops from the old template: the Independent First Pass, the What to Check
+rubric, the read-only and no-helpers rules, the `[DIFF_FILE]` placeholder, the
+severity scale, the Strengths and Assessment sections, the report template, and
+the `SKILL.md` Hard Rules, along with its Codex adaptation note. The
+requirement check now lives in the brief header as one sentence. This section
+supersedes the statement in the `superpowers-requesting-code-review-psilon`
+entry under "Clause-level deviations" that the upstream review dimensions,
+severity rubric, and output contract remain, and its `[DIFF_FILE]` row.
+`SKILL.md` now only says how to dispatch the reviewer and handle its JSON
+findings. The description is unchanged.
+
 ## Global-rule dedupe: 2026-10-14
 
 Removed clauses that restate the owner's global rules from the bodies of the
