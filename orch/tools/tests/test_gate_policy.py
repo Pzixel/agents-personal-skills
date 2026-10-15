@@ -668,6 +668,32 @@ class MergeGateDecisionTest(unittest.TestCase):
 
 
 class ReplyLintDecisionTest(unittest.TestCase):
+    def _d(self, text):
+        return gate_policy.reply_lint_decision(text, False)["decision"]
+
+    def test_russian_not_verified_disclosure_is_an_observation(self):
+        for text in (
+            "Готово; цифру не перепроверял.",
+            "Исправлено, на проде не воспроизводил.",
+            "Сделано, по словам владельца сервиса всё работает.",
+        ):
+            self.assertEqual(self._d(text), "allow", text)
+        self.assertEqual(self._d("Исправлено, всё работает."), "block")
+
+    def test_done_word_before_colon_is_a_label(self):
+        for text in ("Что сделано: ничего, жду CI.", "Done: nothing yet."):
+            self.assertEqual(self._d(text), "allow", text)
+        self.assertEqual(self._d("Прогоны готовы: 27 сессий."), "block")
+
+    def test_done_word_with_manner_complement_describes_shape(self):
+        for text in ("Фильтр сделан allowlist'ом.", "The filter is done as a denylist.", "Он сделан через хук."):
+            self.assertEqual(self._d(text), "allow", text)
+        self.assertEqual(self._d("Шаги 1-4 готовы в ветке X."), "block")
+
+    def test_permission_request_is_a_legitimate_hand_off(self):
+        self.assertEqual(self._d("Запись в каталог запрещена агентам хуком. Нужно ваше разрешение, решение за вами."), "allow")
+        self.assertEqual(self._d("Есть два варианта, решение за вами."), "block")
+
     def test_done_claim_without_observation_is_returned(self):
         self.assertEqual(gate_policy.reply_lint_decision("Готово, PR влит.", False)["decision"], "block")
 
@@ -1270,3 +1296,14 @@ class ApprovalSpellingAndParseTest(unittest.TestCase):
         for prompt, expected in cases:
             with self.subTest(prompt=prompt):
                 self.assertEqual(gate_policy.approved_hashes(prompt), expected)
+
+
+class ReplyLintHookLogTest(unittest.TestCase):
+    def test_payload_without_transcript_file_writes_no_log_line(self):
+        import subprocess, tempfile
+        hook = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "hooks", "reply-lint.py")
+        with tempfile.TemporaryDirectory() as home:
+            os.makedirs(os.path.join(home, ".claude"))
+            payload = json.dumps({"session_id": "p", "last_assistant_message": "Done.", "transcript_path": "/nonexistent"})
+            subprocess.run([sys.executable, hook], input=payload, text=True, capture_output=True, env={**os.environ, "HOME": home}, check=True)
+            self.assertFalse(os.path.exists(os.path.join(home, ".claude", "reply-lint-log.jsonl")))

@@ -1455,7 +1455,7 @@ _NEGATED_DONE_RE = re.compile(
 )
 _OBSERVATION_RE = re.compile(
     r"```"
-    r"|measured|observed|assumed|замер|наблюда|измер|не провер|not verified|unverified"
+    r"|measured|observed|assumed|замер|наблюда|измер|не\s+(?:пере)?провер|не\s+повторял|не\s+воспроизв|по\s+словам|со\s+слов|not verified|unverified"
     r"|\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}:\d{2}(?::\d{2})?Z?\b"
     r"|\b\d+(?:[.,]\d+)?\s?(?:ms|мс|s|с|sec|сек|min|мин|h|ч|%|/s|/с|[KMG]i?B|[КМГ]Б|rows|строк|LOC|cores?)\b"
     r"|(?<![\w-])(?=[0-9a-f]*\d)[0-9a-f]{7,40}(?![\w-])|(?<![\w-])[A-Za-z][\w-]*\s+#\d+\b"
@@ -1466,11 +1466,12 @@ _OBSERVATION_RE = re.compile(
 )
 _OWNER_QUESTION_RE = re.compile(
     r"решени[яе]\s+за\s+(?:вами|тобой)|если\s+скаж|жду\s+(?:вашего|твоего)"
-    r"|по\s+вашему\s+слову|if you say|your call|open the PR yourself|PR\s+открывать\s+тебе",
+    r"|по\s+вашему\s+слову(?!\s+из)|if you say|your call|open the PR yourself|PR\s+открывать\s+тебе",
     re.IGNORECASE,
 )
 _OWNER_DOMAIN_RE = re.compile(
-    r"необратим|деньг|приорит|irreversible|money|priorit|client data|данн\w+ клиент",
+    r"необратим|деньг|приорит|irreversible|money|priorit|client data|данн\w+ клиент"
+    r"|разрешени|права\s+файл|permission|запрещен\w*\s+агент|forbidden\s+to\s+agents",
     re.IGNORECASE,
 )
 # A first-person commitment to do work later: a perfective 1st-person future
@@ -1521,7 +1522,12 @@ _NON_ASSERTION_WORD_RE = re.compile(
     r"\b(?:как|how|когда|when|once|будет|будут|станет|will|если|if)\s+$", re.IGNORECASE
 )
 # A condition right after the done word qualifies the status, it does not claim it.
-_QUALIFIED_AFTER_RE = re.compile(r"(?:готов\w*,?\s+когда|done\s+when)\b", re.IGNORECASE)
+_QUALIFIED_AFTER_RE = re.compile(
+    r"(?:готов\w*,?\s+когда|done\s+when)\b"
+    r"|(?:сделан\w*|done)\s*:"
+    r"|(?:сделан\w*|done)\s+(?:как|через|в\s+виде|as|via|\S+(?:ом|ем|ой|ью)\b)",
+    re.IGNORECASE,
+)
 _NUMBER_WORDS = {
     "один": 1, "одна": 1, "одного": 1, "первый": 1, "первая": 1, "первое": 1, "first": 1,
     "one": 1, "два": 2, "две": 2, "двух": 2, "второй": 2, "two": 2, "три": 3, "трёх": 3,
@@ -1593,6 +1599,9 @@ def reply_lint_decision(last_assistant_text, stop_hook_active):
     question mark alone is not a hand-off: a reply that answers the owner's
     question and ends on a follow-up question stays (2026-10-12: 4 of 11
     blocks were answers to direct questions, one never re-delivered).
+    Not claims or hand-offs (2026-10-15): a Russian not-verified disclosure,
+    a done word as a section label or with a manner complement, and a request
+    for a permission the hooks forbid to agents.
     The second stop (``stop_hook_active``) always passes."""
     if stop_hook_active:
         return {"decision": "allow"}
