@@ -679,13 +679,14 @@ class ReplyLintDecisionTest(unittest.TestCase):
             "Сделано, по словам владельца сервиса всё работает.",
         ):
             self.assertEqual(self._d(text), "allow", text)
-        for text in ("Исправлено, всё работает.", "Исправлено, ошибка не воспроизводится."):
+        for text in ("Исправлено, всё работает.", "Исправлено, ошибка не воспроизводится.", "Исправлено, раньше не воспроизводилось."):
             self.assertEqual(self._d(text), "block", text)
 
     def test_done_word_before_colon_is_a_label(self):
         for text in ("Что сделано: ничего не записано.", "What was done: nothing yet."):
             self.assertEqual(self._d(text), "allow", text)
-        for text in ("Прогоны готовы: 27 сессий.", "Сделано: задеплоил.", "Done: merged and deployed."):
+        for text in ("Прогоны готовы: 27 сессий.", "Сделано: задеплоил.", "Done: merged and deployed.",
+                     "Вижу, что готово.", "Подтверждаю, что сделано.", "Сообщаю, что исправлено.", "I confirm what is done."):
             self.assertEqual(self._d(text), "block", text)
 
     def test_done_word_with_manner_complement_describes_shape(self):

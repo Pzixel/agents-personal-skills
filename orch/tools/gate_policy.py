@@ -1455,7 +1455,7 @@ _NEGATED_DONE_RE = re.compile(
 )
 _OBSERVATION_RE = re.compile(
     r"```"
-    r"|measured|observed|assumed|замер|наблюда|измер|не\s+(?:пере)?провер|не\s+повторял|не\s+воспроизводил|по\s+словам|со\s+слов\b|not verified|unverified"
+    r"|measured|observed|assumed|замер|наблюда|измер|не\s+(?:пере)?провер|не\s+повторял|не\s+воспроизводил[аи]?\b|по\s+словам|со\s+слов\b|not verified|unverified"
     r"|\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}:\d{2}(?::\d{2})?Z?\b"
     r"|\b\d+(?:[.,]\d+)?\s?(?:ms|мс|s|с|sec|сек|min|мин|h|ч|%|/s|/с|[KMG]i?B|[КМГ]Б|rows|строк|LOC|cores?)\b"
     r"|(?<![\w-])(?=[0-9a-f]*\d)[0-9a-f]{7,40}(?![\w-])|(?<![\w-])[A-Za-z][\w-]*\s+#\d+\b"
@@ -1518,8 +1518,11 @@ _PROMISE_REASON = (
 
 # The one word before a done word that makes it a question, a relative clause, a condition or a
 # future, not an assertion ("как работает", "когда будут готовы", "once done").
+_DONE_LABEL_RE = re.compile(
+    r"^\W*(?:что\s+сделано|what(?:\s+(?:was|is))?\s+done)\s*:", re.IGNORECASE
+)
 _NON_ASSERTION_WORD_RE = re.compile(
-    r"\b(?:что|what(?:\s+(?:was|is))?|как|how|когда|when|once|будет|будут|станет|will|если|if)\s+$", re.IGNORECASE
+    r"\b(?:как|how|когда|when|once|будет|будут|станет|will|если|if)\s+$", re.IGNORECASE
 )
 # A condition right after the done word qualifies the status, it does not claim it.
 _QUALIFIED_AFTER_RE = re.compile(
@@ -1571,6 +1574,7 @@ def _has_done_claim(original):
             _NEGATED_DONE_RE.search(before[-24:])
             or _NON_ASSERTION_WORD_RE.search(before[-16:])
             or _QUALIFIED_AFTER_RE.match(original, match.start())
+            or _DONE_LABEL_RE.match(text[start:end])
             or _is_partial_progress(text[start:end])
         ):
             continue
