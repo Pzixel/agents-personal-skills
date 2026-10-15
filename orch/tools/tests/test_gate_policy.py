@@ -683,9 +683,10 @@ class ReplyLintDecisionTest(unittest.TestCase):
             self.assertEqual(self._d(text), "block", text)
 
     def test_done_word_before_colon_is_a_label(self):
-        for text in ("Что сделано: ничего не записано.", "What was done: nothing yet."):
+        for text in ("Что сделано: ничего не записано.", "What was done: nothing yet.",
+                     "Блокер: нет прав.\n- **Что сделано:** ничего не записано."):
             self.assertEqual(self._d(text), "allow", text)
-        for text in ("Прогоны готовы: 27 сессий.", "Сделано: задеплоил.", "Done: merged and deployed.",
+        for text in ("Прогоны готовы: 27 сессий.", "Сделано: задеплоил.", "Done: merged and deployed.", "Что сделано: PR влит.",
                      "Вижу, что готово.", "Подтверждаю, что сделано.", "Сообщаю, что исправлено.", "I confirm what is done."):
             self.assertEqual(self._d(text), "block", text)
 

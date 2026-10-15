@@ -1565,6 +1565,13 @@ def _is_partial_progress(sentence):
     return any(_number(m.group(1)) < _number(m.group(2)) for m in _PROGRESS_RE.finditer(sentence))
 
 
+def _label_covers(text, start, pos):
+    """The done word ending at ``pos`` sits inside a "what was done:" label that
+    opens the sentence starting at ``start``."""
+    label = _DONE_LABEL_RE.match(text[start:])
+    return bool(label) and pos - start <= label.end()
+
+
 def _has_done_claim(original):
     text = _blank_quoted(original)
     for match in _DONE_RE.finditer(text):
@@ -1574,7 +1581,7 @@ def _has_done_claim(original):
             _NEGATED_DONE_RE.search(before[-24:])
             or _NON_ASSERTION_WORD_RE.search(before[-16:])
             or _QUALIFIED_AFTER_RE.match(original, match.start())
-            or _DONE_LABEL_RE.match(text[start:end])
+            or _label_covers(text, start, match.end())
             or _is_partial_progress(text[start:end])
         ):
             continue
