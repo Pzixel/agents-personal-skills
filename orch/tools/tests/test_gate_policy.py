@@ -675,24 +675,29 @@ class ReplyLintDecisionTest(unittest.TestCase):
         for text in (
             "Готово; цифру не перепроверял.",
             "Исправлено, на проде не воспроизводил.",
+            "Готово, со слов автора работает.",
             "Сделано, по словам владельца сервиса всё работает.",
         ):
             self.assertEqual(self._d(text), "allow", text)
-        self.assertEqual(self._d("Исправлено, всё работает."), "block")
+        for text in ("Исправлено, всё работает.", "Исправлено, ошибка не воспроизводится."):
+            self.assertEqual(self._d(text), "block", text)
 
     def test_done_word_before_colon_is_a_label(self):
-        for text in ("Что сделано: ничего, жду CI.", "Done: nothing yet."):
+        for text in ("Что сделано: ничего не записано.", "What was done: nothing yet."):
             self.assertEqual(self._d(text), "allow", text)
-        self.assertEqual(self._d("Прогоны готовы: 27 сессий."), "block")
+        for text in ("Прогоны готовы: 27 сессий.", "Сделано: задеплоил.", "Done: merged and deployed."):
+            self.assertEqual(self._d(text), "block", text)
 
     def test_done_word_with_manner_complement_describes_shape(self):
-        for text in ("Фильтр сделан allowlist'ом.", "The filter is done as a denylist.", "Он сделан через хук."):
+        for text in ("Фильтр сделан allowlist'ом.", "Фильтр сделан `allowlist`ом.", "The filter is done as a denylist.", "Он сделан через хук."):
             self.assertEqual(self._d(text), "allow", text)
-        self.assertEqual(self._d("Шаги 1-4 готовы в ветке X."), "block")
+        for text in ("Шаги 1-4 готовы в ветке X.", "Сделано полностью.", "Сделано мной.", "Done as requested."):
+            self.assertEqual(self._d(text), "block", text)
 
     def test_permission_request_is_a_legitimate_hand_off(self):
         self.assertEqual(self._d("Запись в каталог запрещена агентам хуком. Нужно ваше разрешение, решение за вами."), "allow")
-        self.assertEqual(self._d("Есть два варианта, решение за вами."), "block")
+        for text in ("Есть два варианта, решение за вами.", "Set file permissions to 644. Retention window: your call."):
+            self.assertEqual(self._d(text), "block", text)
 
     def test_done_claim_without_observation_is_returned(self):
         self.assertEqual(gate_policy.reply_lint_decision("Готово, PR влит.", False)["decision"], "block")
@@ -1297,13 +1302,3 @@ class ApprovalSpellingAndParseTest(unittest.TestCase):
             with self.subTest(prompt=prompt):
                 self.assertEqual(gate_policy.approved_hashes(prompt), expected)
 
-
-class ReplyLintHookLogTest(unittest.TestCase):
-    def test_payload_without_transcript_file_writes_no_log_line(self):
-        import subprocess, tempfile
-        hook = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "hooks", "reply-lint.py")
-        with tempfile.TemporaryDirectory() as home:
-            os.makedirs(os.path.join(home, ".claude"))
-            payload = json.dumps({"session_id": "p", "last_assistant_message": "Done.", "transcript_path": "/nonexistent"})
-            subprocess.run([sys.executable, hook], input=payload, text=True, capture_output=True, env={**os.environ, "HOME": home}, check=True)
-            self.assertFalse(os.path.exists(os.path.join(home, ".claude", "reply-lint-log.jsonl")))

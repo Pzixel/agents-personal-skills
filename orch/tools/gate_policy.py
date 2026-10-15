@@ -1455,7 +1455,7 @@ _NEGATED_DONE_RE = re.compile(
 )
 _OBSERVATION_RE = re.compile(
     r"```"
-    r"|measured|observed|assumed|замер|наблюда|измер|не\s+(?:пере)?провер|не\s+повторял|не\s+воспроизв|по\s+словам|со\s+слов|not verified|unverified"
+    r"|measured|observed|assumed|замер|наблюда|измер|не\s+(?:пере)?провер|не\s+повторял|не\s+воспроизводил|по\s+словам|со\s+слов\b|not verified|unverified"
     r"|\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}:\d{2}(?::\d{2})?Z?\b"
     r"|\b\d+(?:[.,]\d+)?\s?(?:ms|мс|s|с|sec|сек|min|мин|h|ч|%|/s|/с|[KMG]i?B|[КМГ]Б|rows|строк|LOC|cores?)\b"
     r"|(?<![\w-])(?=[0-9a-f]*\d)[0-9a-f]{7,40}(?![\w-])|(?<![\w-])[A-Za-z][\w-]*\s+#\d+\b"
@@ -1471,7 +1471,7 @@ _OWNER_QUESTION_RE = re.compile(
 )
 _OWNER_DOMAIN_RE = re.compile(
     r"необратим|деньг|приорит|irreversible|money|priorit|client data|данн\w+ клиент"
-    r"|разрешени|права\s+файл|permission|запрещен\w*\s+агент|forbidden\s+to\s+agents",
+    r"|ваше\w*\s+разрешени|нужн\w*\s+разрешени|разреши(?:те)?\b|your\s+permission|permission\s+to|запрещен\w*\s+агент|forbidden\s+to\s+agents",
     re.IGNORECASE,
 )
 # A first-person commitment to do work later: a perfective 1st-person future
@@ -1519,13 +1519,12 @@ _PROMISE_REASON = (
 # The one word before a done word that makes it a question, a relative clause, a condition or a
 # future, not an assertion ("как работает", "когда будут готовы", "once done").
 _NON_ASSERTION_WORD_RE = re.compile(
-    r"\b(?:как|how|когда|when|once|будет|будут|станет|will|если|if)\s+$", re.IGNORECASE
+    r"\b(?:что|what(?:\s+(?:was|is))?|как|how|когда|when|once|будет|будут|станет|will|если|if)\s+$", re.IGNORECASE
 )
 # A condition right after the done word qualifies the status, it does not claim it.
 _QUALIFIED_AFTER_RE = re.compile(
     r"(?:готов\w*,?\s+когда|done\s+when)\b"
-    r"|(?:сделан\w*|done)\s*:"
-    r"|(?:сделан\w*|done)\s+(?:как|через|в\s+виде|as|via|\S+(?:ом|ем|ой|ью)\b)",
+    r"|(?:сделан\w*|done)\s+(?:через|в\s+виде|via|as\s+an?\b|\S+['`](?:ом|ем)\b)",
     re.IGNORECASE,
 )
 _NUMBER_WORDS = {
@@ -1563,15 +1562,15 @@ def _is_partial_progress(sentence):
     return any(_number(m.group(1)) < _number(m.group(2)) for m in _PROGRESS_RE.finditer(sentence))
 
 
-def _has_done_claim(text):
-    text = _blank_quoted(text)
+def _has_done_claim(original):
+    text = _blank_quoted(original)
     for match in _DONE_RE.finditer(text):
         before = text[: match.start()]
         start, end = _sentence_bounds(text, match.start())
         if (
             _NEGATED_DONE_RE.search(before[-24:])
             or _NON_ASSERTION_WORD_RE.search(before[-16:])
-            or _QUALIFIED_AFTER_RE.match(text, match.start())
+            or _QUALIFIED_AFTER_RE.match(original, match.start())
             or _is_partial_progress(text[start:end])
         ):
             continue
