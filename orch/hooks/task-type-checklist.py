@@ -60,6 +60,13 @@ CHECKLISTS = [
         "- Rollback line ready before the change; proof of the original scenario on production before 'done'.",
     ),
     (
+        r"(\b(?:есть|нет|остал\w*|появил\w*|бывает|работают|работает|активн\w*)\s+ли\b|\bвы\s+смотрели\b|\bесть\b[^.?!\n]{0,60}\?|\bактивн\w*\s+вообще\b|\b(?:is|are)\s+there\b|\bany\b[^.?!\n]{0,40}\?)",
+        "Presence question (yes/no first; AGENTS.md 'Response style'):\n"
+        "- Run the cheapest check that decides it: a local sample with its time, one page, one workspace, the last N records; finding where to look counts as part of it.\n"
+        "- Then a visible yes/no with two to five concrete examples and the data's source and time; 'did you look?' is answered 'no, looking now'.\n"
+        "- A wider check (a full workspace, table, or log) runs before that answer only when its wall time, with the basis of the estimate, is at most 3-5 times the minimal check's; otherwise it runs after the answer, which the owner can stop.",
+    ),
+    (
         r"(статус|что сделано|как успехи|как дела|чего жд|что происходит|status\b)",
         "Status format: 1) goal metric now vs target, measured when and how; 2) what changed since the last status, with evidence; "
         "3) the one blocker, whether it is a real dependency, and the resume signal; 4) next step. No narrative, no owner decisions.",
