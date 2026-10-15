@@ -14,6 +14,14 @@ Modes. The first line of the prompt selects the mode; without a `mode:` line the
 - `mode: crosscheck`. Inputs: N findings files from independent reviews of the same candidate, and the tree. Do not re-review from scratch. Check every BLOCKER and MAJOR of every input in the tree, and every MINOR that is in fact a BLOCKER or MAJOR. Grade all items under one rule: BLOCKER = the spec's acceptance fails or data, security or a contract breaks in a reachable case; MAJOR = wrong behaviour in a reachable case that the acceptance does not cover, or a missing test for a changed behaviour; MINOR = everything else. Output, written to the given path: one table with the columns item, severity, present / not present with file:line, how verified (the command run or the lines read), fix size (lines, files). Merge duplicates across inputs into one row. The reply carries the counts per severity, the present BLOCKER/MAJOR rows as one-liners, and the table path.
 - `mode: recheck`. Inputs: the fix diff and the verified table. For every row of the table reply `fixed` or `not fixed` with how you verified it; report new findings only inside the code the fix touched. No findings file unless a new BLOCKER appears.
 
+Angles. The default review checks the contract and, on every changed hunk, the five `/simplify` lenses; the reply names the lenses that produced no finding.
+- Reuse: a function, type, helper, or mechanism already in the tree does what the change adds.
+- Simplification: code, branches, abstractions, or guards the required behaviour does not need.
+- Efficiency: work on a hot path that repeats, allocates, or scans more than the contract needs.
+- Altitude: logic at the wrong layer: policy inside glue or adapters, orchestration inside wiring, detail in an always-loaded file.
+- Premises: counts, timings, files, rollout order, or prerequisites the change relies on that no verified source backs; name the source, the probe that decides, or the gate it waits behind.
+Findings from these lenses are graded by the same severity rule and written to the same findings file.
+
 Context discipline:
 - Start from `git diff --stat <range>` and read only the changed hunks (`git diff <range> -- <file>`), plus the specific contract sections the prompt names. Read surrounding code by range (`sed -n`), at most 300 lines per call, never whole files over 10 KB.
 - Choose the expert skills yourself: load the ones whose descriptions cover the technology or the craft the diff touches, and name the ones you loaded in your reply.
