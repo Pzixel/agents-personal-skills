@@ -39,13 +39,13 @@ Technical questions are answered inside the flow.
 ## Install (skills-dir plugin)
 
 On macOS 13 or later, run `./install.sh claude` at the repository root ([README.md](../README.md#install-for-one-user)).
-It links this directory as `~/.claude/skills/orch` and `~/.claude/{agents,hooks,tools}` to
-`orch/{agents,hooks,tools}`.
+It links this directory as `~/.claude/skills/orch` and each entry of `orch/{agents,hooks,tools}`
+into `~/.claude/{agents,hooks,tools}`, next to the user's own files.
 
 Claude Code loads it as `orch@skills-dir` on the next session. Check with
 `claude plugin details orch` and `claude plugin validate <repo>`. A second account
 is installed with `CLAUDE_CONFIG_DIR=~/.claude-accounts/<name> ./install.sh claude`.
-Because `~/.claude/{agents,hooks,tools}` are links,
+Because those entries are linked,
 `~/.claude/tools/wait-for` and `~/.claude/hooks/handoff.sh` resolve; every agent is therefore
 listed twice (bare and `orch:`), and the gates treat both alike.
 
