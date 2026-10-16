@@ -1292,6 +1292,7 @@ class DestructiveWorkingDirectoryTest(unittest.TestCase):
             ("rm -rf tmp/../x", "{wt}"): "allow",
             ("rm -rf {wt}/{{../../src,}}", "{main}"): "deny",
             ("rm -rf {wt}/tmp/{{a,b}}", "{main}"): "allow",
+            ("printf '{{\"a\":1,\"b\":2}}'; rm -rf src", "{main}"): "deny",
         })
 
     def test_variables_bind_literal_values_only(self):

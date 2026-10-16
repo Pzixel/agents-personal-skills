@@ -2496,6 +2496,38 @@ def _walk(script, cfg, ctx):
     return hits
 
 
+def _quoted_positions(text):
+    """Indexes of characters inside single or double quotes."""
+    quoted, quote, escape = set(), None, False
+    for i, ch in enumerate(text):
+        if escape:
+            escape = False
+        elif ch == "\\" and quote != "'":
+            escape = True
+        elif quote and ch == quote:
+            quote = None
+        elif not quote and ch in "'\"":
+            quote = ch
+        elif quote:
+            quoted.add(i)
+    return quoted
+
+
+def _expand_brace_lists(script):
+    """Expand comma braces the shell expands (outside quotes)."""
+    for _ in range(8):
+        quoted = _quoted_positions(script)
+        expanded = _BRACE_LIST_RE.sub(
+            lambda m: m.group(0) if m.start(2) - 1 in quoted
+            else " ".join(m.group(1) + alt + m.group(3) for alt in m.group(2).split(",")),
+            script,
+        )
+        if expanded == script:
+            return script
+        script = expanded
+    return script
+
+
 def _classify_text(command, cfg, depth=0, dir_="", variables=None, cd_seen=False):
     """``dir_`` is the working directory the text starts in (see ``_new_ctx``);
     ``cd_seen``: a cd already ran, so relative prefixes no longer count."""
@@ -2508,13 +2540,7 @@ def _classify_text(command, cfg, depth=0, dir_="", variables=None, cd_seen=False
     script = script.replace("\\\n", " ")
     script = _MKTEMP_RE.sub(lambda m: m.group(1) + "=" + _temp_prefixes()[0] + "mktemp", script)
     script = _BRACED_VAR_RE.sub(lambda m: "$" + m.group(1) + "\x01", script)
-    for _ in range(8):
-        expanded = _BRACE_LIST_RE.sub(
-            lambda m: " ".join(m.group(1) + alt + m.group(3) for alt in m.group(2).split(",")), script
-        )
-        if expanded == script:
-            break
-        script = expanded
+    script = _expand_brace_lists(script)
     hits = _walk(script, cfg, ctx)
     # Heredoc shells start where the command started unless a cd ran
     # somewhere in it: which cd applies to them is not tracked.
