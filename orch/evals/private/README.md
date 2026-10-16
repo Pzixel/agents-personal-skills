@@ -3,7 +3,7 @@
 Everything here except this file is ignored by git: tier B checkpoints are cut from real
 session transcripts and tier C replays clone a private repository, so neither may be
 tracked. The eval runner discovers cases by filesystem, so the ignored cases still run
-(`evals/run.sh iterate tierB-1`, `--tag tierB`, `--tag tierC`).
+(`evals/run.sh iterate tierB-<n>`, `--tag tierB`, `--tag tierC`).
 
 ## Regenerating
 
@@ -17,18 +17,11 @@ tracked. The eval runner discovers cases by filesystem, so the ignored cases sti
   says the repositories are unreachable in the replay) and the owner's real next message
   (or `Continue.`). Graders: one `tool_used: Agent` step grader and one result grader,
   criteria written from what the real session did next, with no private names.
-- **Tier C (PR replay, `tierC-<repo>-<pr>/`).** The scaffold clones the local checkout at
-  the replay base, drops every other ref, and installs the toolchain the sandbox cannot
-  read from `$HOME` (`lib/pyenv.sh`: a relocatable CPython and the project's
-  site-packages, cached once under `cache/` and APFS-cloned into `.evaltools/`). The
-  prompt is the replay spec verbatim plus the worktree/check line and
-  "Write the check output to check-output.txt".
-- **Cache.** `cache/` is rebuilt by the first scaffold that finds it absent.
-- **Shared scaffold pieces (`lib/`).** `replay.sh` (`replay_checkout <repo> <base> <branch>`:
-  clone at the base, no remote, no other refs, no reflog), `pyenv.sh` (CPython + a project's
-  site-packages), `rust.sh` (`rust_tools_copy <channel>`: the pinned toolchain and the
-  `~/.cargo` registry/git caches clone-copied into `.evaltools/`, offline cargo, clang and SDK
-  paths, a workspace `TMPDIR`; writes `.evaltools/env.sh`), `node.sh` (Node plus
-  `node_modules` unpacked from a tar keyed by the lockfile hash). A repository-specific
-  `lib/<repo>-replay.sh` composes them and installs `.evaltools/check.sh`, which prints
-  `check: passed|failed` last. `probe-<repo>-rust/` is the cheap sandbox probe of that setup.
+- **Tier C (PR replay, `tierC-<repo>-<pr>/`).** A scaffold clones the local checkout at the
+  replay base with no remote and no other refs, and copies into the workspace the toolchain
+  the sandbox cannot read from `$HOME` (APFS clone-copy, cached under `cache/`). The prompt is
+  the replay spec verbatim plus the worktree/check line and "Write the check output to
+  check-output.txt"; the repository's check prints `check: passed|failed` last.
+- **Current state.** This directory holds only this file in a fresh checkout; `run.sh full`
+  then runs tier A alone. Scaffold helpers for tier C are built per repository and stay here,
+  untracked.

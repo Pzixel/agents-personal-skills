@@ -56,19 +56,16 @@ a suite run from the recorded `costUsd` means.
   the main session, and the declared `check:` passes; an investigation goes to one
   `orch:Explore` or `orch:prod-probe` and reports without fixing; `general-purpose` is never
   spawned.
-- **Tier B — checkpoints (`evals/private/tierB-*`, ignored).** A real main-session history
-  cut at a decision point (`context.history_file`): sizing (design step first), rulings on
-  review findings plus one fix round, escalation of an owner question without code work.
-  About $1.5–2.5 per run (a ~60–250 KB history).
-- **Tier C — real PR replay (`evals/private/tierC-*`, ignored).** A merged PR's replay
-  spec on a clone of the private repository at its base, graded by the repository's own
-  check. $15–40 per run.
+- **Tiers B and C — private (`evals/private/`, ignored).** Checkpoint replays cut from
+  real session histories (B) and replays of merged changes on a private clone (C). They exist
+  only in the checkout that built them; `run.sh full` selects them by tag, and in a checkout
+  without them it runs tier A only.
 - **Negatives.** A knowledge question loads no skill and spawns no agent; a one-line edit
   is done in place. Both must score 1.0 in both arms.
 
-Private material (transcripts, private repositories) is never tracked: tiers B and C live
-under the ignored `evals/private/`; how to regenerate them is in `evals/private/README.md`,
-the transcript cutter is `evals/tools/cut_history.py`.
+Private material (transcripts, private repositories) is never tracked; how to build a
+private case is in `evals/private/README.md`, the transcript cutter is
+`evals/tools/cut_history.py`.
 
 ## Writing a case
 

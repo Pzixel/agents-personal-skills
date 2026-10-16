@@ -1,6 +1,6 @@
 # agents-personal-skills
 
-Personal skills for Codex and Claude Code, plus `orch`, a Claude Code plugin that runs a measured build-and-review flow. Five skills are forks of [obra/superpowers](https://github.com/obra/superpowers) cut down to their skill-specific contracts; the rest are repository-authored or adapted from other MIT-licensed sources. The original Superpowers plugin is not required.
+Personal skills for Codex and Claude Code, plus `orch`, a Claude Code plugin that runs a measured build-and-review flow. Five skills are forks of [obra/superpowers](https://github.com/obra/superpowers) cut down to their skill-specific contracts; `codex-simplify` and the reviewer prompt of `superpowers-requesting-code-review-psilon` are exports of Claude Code built-in skills; the rest are repository-authored or adapted from other MIT-licensed sources. The original Superpowers plugin is not required.
 
 ## Skills
 
@@ -47,7 +47,7 @@ GitHub Actions runs the same checks on every push and scans the full history for
 
 ## Maintenance rules
 
-- Descriptions carry positive and negative trigger boundaries. The validator caps them at 120 words and 1,024 characters and a `SKILL.md` body at 250 lines.
+- Descriptions carry positive and negative trigger boundaries. The validator caps them at 120 words and 1,024 characters and a `SKILL.md` body at 250 lines and 2,500 words.
 - A skill body keeps only what moves decisions: decision rules the model gets wrong on its own, output shapes, named thresholds, and tokens a hook or tool checks. Examples and procedures go to one-level companion files.
 - Record lineage and every behaviour change with its evidence in [ORIGINS.md](ORIGINS.md).
 - How changes land, and what must never be committed, is in [AGENTS.md](AGENTS.md).

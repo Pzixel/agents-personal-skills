@@ -55,7 +55,7 @@ Repository-authored Dragonfly v1.34.0 Lua/EVALSHA skill grounded in a local dock
 
 ### `test-audit`
 
-From the openclaw commit above: three modes, four authoring questions, junk-pattern entries, campaign stages, with source-repository paths and branded tools replaced by generic commands. On 2026-10-14 the 1385-word body (at `a0d0266`) was replaced by a 209-word stub. Evidence: 82 blind-graded runs over the 20 synthetic workbench cases (`test-audit-workbench/benchmark.md`). The stub passed 20/20; no skill text passed 19/20; the only difference was T10 (a read-only audit over a red test exposing a product defect), which no text and the old body failed 0/6 and the stub passed 5/5. The stub restates T10's Accept item, so T10 is not independent of the rubric.
+From the openclaw commit above: three modes, four authoring questions, junk-pattern entries, campaign stages, with source-repository paths and branded tools replaced by generic commands. On 2026-10-14 the 1385-word body (at `d83326d`) was replaced by a 209-word stub. Evidence: 82 blind-graded runs over the 20 synthetic workbench cases (`test-audit-workbench/benchmark.md`). The stub passed 20/20; no skill text passed 19/20; the only difference was T10 (a read-only audit over a red test exposing a product defect), which no text and the old body failed 0/6 and the stub passed 5/5. The stub restates T10's Accept item, so T10 is not independent of the rubric.
 
 ### `pareto-design-selection`
 
