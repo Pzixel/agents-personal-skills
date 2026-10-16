@@ -40,14 +40,14 @@ Technical questions are answered inside the flow.
 
 ## Install (skills-dir plugin)
 
-```
-ln -s ~/Documents/Repos/claude-orch ~/.claude/skills/orch
-```
+Run `./install.sh` at the repository root ([README.md](../README.md#install-for-one-user)).
+It links this directory as `~/.claude/skills/orch` and `~/.claude/{agents,hooks,tools}` to
+`orch/{agents,hooks,tools}`.
 
 Claude Code loads it as `orch@skills-dir` on the next session. Check with
 `claude plugin details orch` and `claude plugin validate <repo>`. A second account
-(`CLAUDE_CONFIG_DIR=~/.claude-accounts/<name>`) gets the same link in its own `skills/`.
-`~/.claude/{agents,hooks,tools}` link to this repository's directories, so
+is installed with `CLAUDE_CONFIG_DIR=~/.claude-accounts/<name> ./install.sh`.
+Because `~/.claude/{agents,hooks,tools}` are links,
 `~/.claude/tools/wait-for` and `~/.claude/hooks/handoff.sh` resolve; every agent is therefore
 listed twice (bare and `orch:`), and the gates treat both alike.
 

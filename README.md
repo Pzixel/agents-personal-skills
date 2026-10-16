@@ -24,29 +24,13 @@ Development material lives next to its skill and is not a skill: `dragonfly-scri
 
 ## Install for one user
 
-Clone the repository and link the skills into the personal skill directories of both clients. An existing link to this checkout is reused; a conflicting destination stops installation without replacing it. `orch` is linked into the Claude Code directory only; its hooks and settings are described in [orch/README.md](orch/README.md).
+Clone the repository and run the installer. It links the skills into the personal skill directories of both clients (`codex-simplify` into the Codex directory only, `orch` into the Claude Code directory only) and links `agents`, `hooks` and `tools` of the Claude Code directory to `orch/`; `CLAUDE_CONFIG_DIR` selects the Claude Code directory, default `~/.claude`. An existing link to this checkout is kept; any other existing destination stops the installer before it changes anything. Links into this checkout whose skill was retired are removed. The hooks and settings of `orch` are described in [orch/README.md](orch/README.md).
 
 ```bash
-git clone https://github.com/Pzixel/agents-personal-skills.git
-cd agents-personal-skills
-
-link() {
-  dest="$1/$2"
-  if [ -e "$dest" ] || [ -L "$dest" ]; then
-    [ "$(realpath "$dest")" = "$(realpath "$2")" ] && return
-    printf 'Conflicting skill destination: %s\n' "$dest" >&2
-    exit 1
-  fi
-  ln -s "$PWD/$2" "$dest"
-}
-
-common="superpowers-*-psilon dragonfly-scripting test-audit pareto-design-selection retro"
-mkdir -p "$HOME/.agents/skills" "$HOME/.claude/skills"
-for skill in $common codex-simplify; do link "$HOME/.agents/skills" "$skill"; done
-for skill in $common orch; do link "$HOME/.claude/skills" "$skill"; done
+git clone https://github.com/Pzixel/agents-personal-skills.git && cd agents-personal-skills && ./install.sh
 ```
 
-Both clients follow the links, so updating the checkout updates the skills; a running session keeps the body it loaded. When a skill is retired here, delete its link in both directories by hand: the loop never removes links.
+Rerun `./install.sh` after every pull. Both clients follow the links, so updating the checkout updates the skills; a running session keeps the body it loaded.
 
 ## Validate changes
 
