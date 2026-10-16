@@ -1319,6 +1319,7 @@ class DestructiveWorkingDirectoryTest(unittest.TestCase):
             ("W={wt} rm -rf $W/x", "{main}"): "deny",
             ("W={wt}; sh -c 'rm -rf $W/tmp'", "{main}"): "deny",
             ("T=$(mktemp -d); rm -rf $T", "{main}"): "allow",
+            ('W="tmp/x /etc"; rm -rf $W', "{main}"): "deny",
         })
 
     def test_any_other_write_to_a_name_unbinds_it(self):
@@ -1442,6 +1443,7 @@ class DestructiveKubectlParsingTest(unittest.TestCase):
             "kubectl -n x port-forward \\\n svc/a 8080:80": "allow",
             "kubectl apply --dry-run=server -f x.yaml": "allow",
             "kubectl $V delete po x": "ask",
+            'C="--context x"; kubectl $C get po': "allow",
             "kubectl --cache-dir /x delete po y": "ask",
             "kubectl exec p -- sh -c 'rm -rf /data' --dry-run": "deny",
             "kubectl exec p -- psql -c 'DR" "OP TABLE t' --dry-run": "deny",

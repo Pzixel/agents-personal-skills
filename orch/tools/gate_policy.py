@@ -2208,6 +2208,8 @@ def _classify_inner(tokens, cfg, ctx):
 def _cd_target(program, args, ctx):
     """The directory a literal ``cd``/``pushd`` moves to, None when unknown."""
     operands = [a for a in args if not a.startswith("-") or a == "-"]
+    if len(operands) > 1:
+        return None
     if not operands:
         return os.path.realpath(os.path.expanduser("~")) if program == "cd" else None
     target = operands[0]
@@ -2557,8 +2559,16 @@ def _walk(script, cfg, ctx):
             key = target and body is not None and _sql_key(_substitute(target, ctx["vars"]), ctx)
             if key:
                 cfg["sql_files"][key] = body
-        ctx.update(raw=tokens, before=before, after=after)
-        hits.extend(_classify_tokens([_substitute(t, ctx["vars"]) for t in tokens], cfg, ctx))
+        # A bound value with whitespace splits into words, as an unquoted
+        # expansion does (for a quoted one each word is then judged alone).
+        words, raw = [], []
+        for t in tokens:
+            value = _substitute(t, ctx["vars"])
+            split = value.split() if value != t and not any(c.isspace() for c in t) else [value]
+            words.extend(split)
+            raw.extend([t] * len(split))
+        ctx.update(raw=raw, before=before, after=after)
+        hits.extend(_classify_tokens(words, cfg, ctx))
     return hits
 
 
