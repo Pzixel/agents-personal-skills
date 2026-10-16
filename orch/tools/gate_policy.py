@@ -1920,28 +1920,36 @@ def _temp_prefixes():
     return sorted({base.rstrip("/") + "/", os.path.realpath(base).rstrip("/") + "/"})
 
 
+def _scratch_roots():
+    """Directories whose entries are scratch: /tmp and the system temp dir,
+    as written and resolved."""
+    return sorted({"/tmp/", os.path.realpath("/tmp") + "/"} | set(_temp_prefixes()))
+
+
 def _resolve(path, ctx):
-    """Absolute normalized path of an operand, None when the directory a
-    relative operand is taken from is not known."""
+    """Real path of an operand (symlinks resolved before each ``..``, as the
+    kernel walks it), None when the directory a relative operand is taken
+    from is not known."""
     if path.startswith("/"):
-        return os.path.normpath(path)
+        return os.path.realpath(path)
     if path == "~" or path.startswith("~/"):
-        return os.path.normpath(os.path.expanduser(path))
+        return os.path.realpath(os.path.expanduser(path))
     if ctx["dir"]:
-        return os.path.normpath(os.path.join(ctx["dir"], path))
+        return os.path.realpath(os.path.join(ctx["dir"], path))
     return None
 
 
 def _ours(path, cfg, ctx):
-    """An operand is ours by its literal text while no cd ran (relative
-    prefixes such as ``tmp/`` count), else by its resolved absolute path."""
-    if any(ch in path for ch in "$`{}"):
-        return False
-    if not ctx["cd_seen"] and _is_ours_path(path, cfg, True):
-        return True
-    # A resolved path is normalized, so ".." in it climbs to a known place.
+    """An operand is ours by its real path; only when no working directory
+    was given and no cd ran is a relative operand judged by its text."""
+    if any(ch in path for ch in "$`{}") or (
+        any(ch in path for ch in "*?[") and ".." in path.split("/")
+    ):
+        return False  # a glob before ".." may match a symlink
     resolved = _resolve(path, ctx)
-    return resolved is not None and _is_ours_path(resolved, cfg, False)
+    if resolved is None:
+        return ctx["dir"] == "" and not ctx["cd_seen"] and _is_ours_path(path, cfg, True)
+    return _is_ours_path(resolved, cfg, False)
 
 
 def _path_args_keep_flags(args):
@@ -1966,7 +1974,11 @@ def _is_plain_relative(path):
     )
 
 
-_RM_OWN_HINT = "; for a path inside a worktree, <repo>/tmp or /tmp run ~/.claude/tools/rm-own -r <path> (it checks the real path)"
+_RM_OWN_HINT = (
+    "; write each path absolute (a relative path counts only after an unconditional"
+    " top-level cd to an existing directory), or run ~/.claude/tools/rm-own -r <path>..."
+    " for paths inside a worktree, <repo>/tmp or /tmp (it checks the real path)"
+)
 
 
 def own_removal_refusal(path, params=None):
@@ -2015,9 +2027,18 @@ def _flag_value(args, flag):
     return None
 
 
+_KUBECTL_BOOL_FLAGS = frozenset({
+    "--insecure-skip-tls-verify", "--match-server-version", "--warnings-as-errors",
+    "--disable-compression", "-h", "--help",
+})
+
+
 def _kubectl_class(args, cfg, ctx):
+    """Options, redirects and the verb are read before ``--``; what follows
+    ``--`` is the command an exec runs, its redirects included."""
+    end = args.index("--") if "--" in args else len(args)
     rest, i = [], 0
-    while i < len(args):
+    while i < end:
         redirect = _REDIRECT.match(args[i])
         if args[i] in _KUBECTL_VALUE_FLAGS:
             i += 2
@@ -2032,12 +2053,15 @@ def _kubectl_class(args, cfg, ctx):
     if not words:
         return []
     verb = words[0]
+    for a in rest[:next(i for i, a in enumerate(rest) if not a.startswith("-"))]:
+        if "=" not in a and a not in _KUBECTL_BOOL_FLAGS:
+            return [("approval", "kubectl option " + a + " before the verb is not known; its value may be read as the verb")]
     if "$" not in verb and not re.match(r"^[a-z][a-z-]*$", verb):
         return []  # not a kubectl command (a comment or prose read as one); kubectl rejects it
     if any(a.startswith("--dry-run") and a != "--dry-run=none" for a in rest):
         return []
     if verb == "exec":
-        return _classify_inner(rest[rest.index("--") + 1:], cfg, ctx) if "--" in rest else []
+        return _classify_inner(args[end + 1:], cfg, ctx) if end < len(args) else []
     if verb in _KUBECTL_READS:
         return []
     if verb in _KUBECTL_READ_PAIRS and len(words) > 1 and words[1] in _KUBECTL_READ_PAIRS[verb]:
@@ -2059,12 +2083,25 @@ def _kubectl_class(args, cfg, ctx):
     return [("approval", "kubectl " + verb + " changes live cluster state")]
 
 
-def _git_in_worktree(repo, cfg):
-    """A repository directory below a ``.worktrees`` directory, or in an ours
-    scratch path: an agent's own checkout, whose uncommitted work it owns."""
-    return repo is not None and (
-        ".worktrees" in repo.split("/")[:-1] or _is_ours_path(repo, cfg, False)
-    )
+_GIT_VALUE_OPTIONS = frozenset({
+    "-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix", "--config-env",
+})
+_GIT_REDIRECT_RE = re.compile(r"--work-tree|--git-dir|\bGIT_WORK_TREE\b|\bGIT_DIR\b")
+
+
+def _git_own_repository(directory):
+    """True when the repository holding ``directory`` (the nearest ``.git``
+    entry up the tree) is an agent's own checkout: a linked worktree below a
+    ``.worktrees`` directory, or a repository under /tmp or the temp dir."""
+    root = directory
+    while root and not os.path.lexists(os.path.join(root, ".git")):
+        parent = os.path.dirname(root)
+        root = None if parent == root else parent
+    if not root:
+        return False
+    if ".worktrees" in root.split("/")[:-1] and os.path.isfile(os.path.join(root, ".git")):
+        return True
+    return any(root.startswith(prefix) for prefix in _scratch_roots())
 
 
 def _git_class(args, cfg, ctx):
@@ -2072,9 +2109,9 @@ def _git_class(args, cfg, ctx):
     while i < len(args) and args[i].startswith("-"):
         if args[i] == "-C" and i + 1 < len(args):
             target = args[i + 1]
-            literal = not any(ch in target for ch in "$`{}*?[") and ".." not in target.split("/")
+            literal = not any(ch in target for ch in "$`{}*?[")
             repo = _resolve(target, dict(ctx, dir=repo)) if literal else None
-        i += 2 if args[i] in ("-C", "-c") else 1
+        i += 2 if args[i] in _GIT_VALUE_OPTIONS else 1
     if i >= len(args):
         return []
     sub, rest = args[i], _path_args_keep_flags(args[i + 1:])
@@ -2090,7 +2127,7 @@ def _git_class(args, cfg, ctx):
     ):
         discard = "git restore discards uncommitted work"
     if discard:
-        if _git_in_worktree(repo, cfg):
+        if not _GIT_REDIRECT_RE.search(ctx["text"]) and _git_own_repository(repo):
             return [("ours", discard + " in an agent worktree")]
         return [("impossible", discard + " outside an agent worktree (.worktrees/<task>); commit or stash first, or work in a worktree")]
     if sub == "push" and any(
@@ -2138,18 +2175,30 @@ def _after_options(args, value_flags):
 
 
 def _classify_inner(tokens, cfg, ctx):
-    """A command run elsewhere (exec, ssh): one quoted string is re-parsed. Its
-    working directory and variables are not ours to know."""
+    """A command run elsewhere (exec, ssh), ``tokens`` the tail of the current
+    segment: one quoted string is re-parsed. Its working directory and
+    variables are not ours to know, so the raw (unsubstituted) words count. A
+    ``<`` redirect is opened by the local shell: its file resolves here."""
+    raw = ctx.get("raw", tokens)
+    raw = raw[len(raw) - len(tokens):] if len(raw) >= len(tokens) else tokens
     if len(tokens) == 1:
-        return _classify_text(tokens[0], cfg, ctx["depth"] + 1)
-    return _classify_tokens(tokens, cfg, _new_ctx("", ctx["depth"], ctx["text"]))
+        return _classify_text(raw[0], cfg, ctx["depth"] + 1, None, None, True)
+    local = list(tokens)
+    for i, tok in enumerate(local):
+        if tok == "<" and i + 1 < len(local):
+            local[i + 1] = _resolve(local[i + 1], ctx) or local[i + 1]
+        elif tok.startswith("<") and not tok.startswith("<<") and len(tok) > 1:
+            local[i] = "<" + (_resolve(tok[1:], ctx) or tok[1:])
+    inner = _new_ctx(None, ctx["depth"], ctx["text"])
+    inner.update(cd_seen=True, raw=raw)
+    return _classify_tokens(local, cfg, inner)
 
 
-def _cd_target(args, ctx):
+def _cd_target(program, args, ctx):
     """The directory a literal ``cd``/``pushd`` moves to, None when unknown."""
     operands = [a for a in args if not a.startswith("-") or a == "-"]
     if not operands:
-        return os.path.expanduser("~")
+        return os.path.realpath(os.path.expanduser("~")) if program == "cd" else None
     target = operands[0]
     if target == "-" or any(ch in target for ch in "$`{}*?[") or target.startswith("~") and not (
         target == "~" or target.startswith("~/")
@@ -2163,21 +2212,30 @@ def _lone(char, punct):
     return bool(re.search(r"(?<!\%s)\%s(?!\%s)" % (char, char, char), punct))
 
 
+def _unconditional(ctx, before, after):
+    """A segment the command's own shell surely runs: the first of its
+    ``&&``/``||`` chain, outside ``( )``, ``{ }``, blocks, loops, function
+    bodies, pipelines and background jobs."""
+    return not (
+        ctx["parens"] or ctx["brace"] or ctx["block"] or "&&" in before or "||" in before
+        or _lone("|", before + after) or _lone("&", after)
+    )
+
+
 def _change_dir(program, args, ctx, before, after):
-    """Track the working directory through a cd. A cd whose scope is unclear
-    (a block, a loop, a function body, a pipeline, a background job, before
-    ``||``) or whose target is not literal makes the directory unknown; one
-    followed by ``;`` must name an existing directory, since a failed cd lets
-    the next command run where the shell already was."""
+    """Track the working directory through a cd. Only an unconditional cd
+    (see ``_unconditional``, and not followed by ``||``) to a literal existing
+    directory moves it; any other cd makes it unknown for the rest of the
+    command, after an enclosing subshell too."""
     ctx["cd_seen"] = True
-    if program == "popd" or ctx["brace"] or ctx["block"] or _lone("|", before + after) \
-            or _lone("&", after) or "||" in after:
-        ctx["dir"] = None
-        return
-    target = _cd_target(args, ctx)
-    if target is not None and "&&" not in after and not os.path.isdir(target):
-        target = None
+    target = None
+    if program != "popd" and _unconditional(ctx, before, after) and "||" not in after:
+        target = _cd_target(program, args, ctx)
+        if target is not None and not os.path.isdir(target):
+            target = None
     ctx["dir"] = target
+    if target is None:
+        ctx["parens"] = [None] * len(ctx["parens"])
 
 
 def _classify_tokens(tokens, cfg, ctx):
@@ -2202,7 +2260,7 @@ def _classify_tokens(tokens, cfg, ctx):
         operands = _path_args(args)[1:]
         if operands and all(_ours(p, cfg, ctx) for p in operands):
             return [("ours", "chmod of project-owned scratch paths")]
-        return [("privileged", "chmod outside the project-owned paths: file modes are not changed by agents; chmod works on files inside a worktree, <repo>/tmp or /tmp")]
+        return [("privileged", "chmod outside the project-owned paths: file modes are not changed by agents; chmod works on absolute paths inside a worktree, <repo>/tmp or /tmp; to delete such paths run ~/.claude/tools/rm-own -r <path>...")]
     if program == "chown":
         return [("privileged", "chown: file owners are not changed by agents")]
     if program == "eval":
@@ -2212,8 +2270,9 @@ def _classify_tokens(tokens, cfg, ctx):
         i = args.index(shell_flag) + 1
         if i >= len(raw_args):
             return []
-        inner = re.sub(r"\$(\w+)\x01", r"${\1}", raw_args[i])
-        return _classify_text(inner, cfg, ctx["depth"] + 1, ctx["dir"], None, ctx["cd_seen"])
+        if any(ch in raw_args[i] for ch in "$`"):
+            return [("privileged", program + " " + shell_flag + " with a variable or substitution in its command text: run the command directly")]
+        return _classify_text(raw_args[i], cfg, ctx["depth"] + 1, ctx["dir"], None, ctx["cd_seen"])
     if program == "rm":
         return [_rm_rule([] if via_xargs else _path_args(args), cfg, ctx, "rm")]
     if program == "mv":
@@ -2222,7 +2281,7 @@ def _classify_tokens(tokens, cfg, ctx):
             return [("ours", "mv within project-owned paths")]
         if ctx["dir"] is not None and paths and all(_is_plain_relative(p) for p in paths):
             return []
-        return [("approval", "mv outside the project-owned paths; move within a worktree, <repo>/tmp or /tmp, or rename with relative paths")]
+        return [("approval", "mv outside the project-owned paths; move within a worktree, <repo>/tmp or /tmp by absolute paths, or rename with relative paths; to delete instead run ~/.claude/tools/rm-own -r <path>...")]
     if program == "find":
         exec_rm = any(
             a in ("-exec", "-execdir") and args[i + 1:i + 2] == ["rm"] for i, a in enumerate(args)
@@ -2282,6 +2341,8 @@ def _sql_file_args(args):
     for i, a in enumerate(args):
         if a in _SQL_FILE_FLAGS and i + 1 < len(args):
             paths.append(args[i + 1])
+        elif a.startswith("<") and not a.startswith("<<") and len(a) > 1:
+            paths.append(a[1:])
         elif a.startswith(("--file=", "--queries-file=")):
             paths.append(a.split("=", 1)[1])
     return paths
@@ -2303,15 +2364,23 @@ def sql_file_paths(command, params=None, cwd=None):
     the command runs (relative ones against ``cwd``); the hook reads them and
     passes their text to ``destructive_decision`` as ``sql_file_texts``."""
     cfg = _decision_cfg(params, None)
-    _classify_text(command, cfg, 0, os.path.abspath(cwd) if cwd else "")
+    _classify_text(command, cfg, 0, os.path.realpath(cwd) if cwd else "")
     return list(dict.fromkeys(cfg["sql_paths"]))
 
 
-_HOME_VARS = ("HOME",)
-_ASSIGN_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$", re.S)
+_ASSIGN_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)(\+?)=(.*)$", re.S)
+_NAME_WORD_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)(?:\+?=|\[|$)")
+_VAR_WRITERS = frozenset({
+    "declare", "local", "typeset", "export", "readonly", "unset", "read", "getopts",
+    "let", "mapfile", "readarray",
+})
+_KEYWORDS = frozenset({"if", "then", "else", "elif", "while", "until", "do", "!"})
 _VAR_RE = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)\x01?")
 _BRACED_VAR_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _MKTEMP_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)=\"?(?:\$\(\s*mktemp\b[^)`]*\)|`\s*mktemp\b[^)`]*`)\"?")
+# A comma brace inside a word: ``a/{b,c}d`` -> ``a/bd a/cd`` (the lexer would
+# split it at ``{``, hiding the alternatives from the operand checks).
+_BRACE_LIST_RE = re.compile(r"([^\s;&|()<>{}]*)\{([^{}\s]*,[^{}\s]*)\}([^\s;&|()<>]*)")
 _BLOCK_OPEN = frozenset({"if", "for", "while", "until", "case", "select"})
 _BLOCK_CLOSE = frozenset({"fi", "done", "esac"})
 
@@ -2348,31 +2417,47 @@ def _scope(punct, ctx):
             ctx["brace"] = max(0, ctx["brace"] - 1)
 
 
-def _bind(tokens, ctx):
-    """Bind ``NAME=value`` assignments of a segment that runs no command; a
-    value with an unknown expansion unbinds the name. True when handled."""
-    words = tokens[1:] if tokens[0] in ("export", "local", "declare", "readonly") else tokens
-    if not words or not all(_ASSIGN_RE.match(w) for w in words):
-        return False
-    for word in words:
-        name, value = _ASSIGN_RE.match(word).groups()
+def _bind(tokens, ctx, before, after):
+    """Bind the ``NAME=<literal>`` words of an unconditional segment that is
+    only assignments; every other write to a name (a nested or conditional
+    assignment, ``+=``, an assignment prefix of a command, declare/local/
+    export/unset/read/getopts...) unbinds it. True when the segment runs no
+    command."""
+    i = 0
+    while i < len(tokens) and tokens[i] in _KEYWORDS:
+        i += 1
+    words, assigns = tokens[i:], []
+    while len(assigns) < len(words) and _ASSIGN_RE.match(words[len(assigns)]):
+        assigns.append(_ASSIGN_RE.match(words[len(assigns)]).groups())
+    standalone = bool(assigns) and len(assigns) == len(words)
+    bind = standalone and _unconditional(ctx, before, after)
+    for name, plus, value in assigns:
         value = _substitute(value, ctx["vars"])
-        if any(ch in value for ch in "$`"):
-            ctx["vars"].pop(name, None)
-        else:
+        if bind and not plus and not any(ch in value for ch in "$`"):
             ctx["vars"][name] = value
-    return True
+        else:
+            ctx["vars"].pop(name, None)
+    program, args, _ = _command_head(words[len(assigns):])
+    if program in _VAR_WRITERS or program == "printf" and "-v" in args:
+        for word in args:
+            match = _NAME_WORD_RE.match(word)
+            if match:
+                ctx["vars"].pop(match.group(1), None)
+    return standalone
 
 
 def _walk(script, cfg, ctx):
     hits, function = [], None
     for tokens, before, after in _segments_meta(script):
         _scope(before, ctx)
-        if tokens[0] in _BLOCK_OPEN:
-            ctx["block"] += 1
-            if tokens[0] in ("for", "select") and len(tokens) > 1:
-                ctx["vars"].pop(tokens[1], None)
-        elif tokens[0] in _BLOCK_CLOSE:
+        for i, word in enumerate(tokens):
+            if word in _BLOCK_OPEN:
+                ctx["block"] += 1
+            if word in ("for", "select"):
+                ctx["vars"].pop(tokens[i + 1] if i + 1 < len(tokens) else "", None)
+            if word not in _KEYWORDS:
+                break
+        if tokens[0] in _BLOCK_CLOSE:
             ctx["block"] = max(0, ctx["block"] - 1)
             continue
         if function and "{" in before:
@@ -2390,17 +2475,15 @@ def _walk(script, cfg, ctx):
             continue
         if tokens[0] in cfg["functions"]:
             tokens = cfg["functions"][tokens[0]] + tokens[1:]
-        if _bind(tokens, ctx):
+        # A quoted substitution runs here, with the directory and variables
+        # of this point (an unquoted one is split into segments).
+        for m in _INNER_SUBST_RE.finditer(" ".join(tokens)):
+            hits.extend(_classify_text(
+                m.group(1) or m.group(2) or "", cfg, ctx["depth"] + 1, ctx["dir"],
+                dict(ctx["vars"]), ctx["cd_seen"],
+            ))
+        if _bind(tokens, ctx, before, after):
             continue
-        program, args, _ = _command_head(tokens)
-        if program == "read":
-            for word in args:
-                ctx["vars"].pop(word, None)
-        for word in tokens:
-            match = _ASSIGN_RE.match(word)
-            if not match:
-                break
-            ctx["vars"].pop(match.group(1), None)
         if any(t.startswith("<<") and not t.startswith("<<<") for t in tokens):
             # The next heredoc body in order is what a `> file` redirect here writes.
             body = ctx["heredoc_bodies"].pop(0) if ctx.get("heredoc_bodies") else None
@@ -2425,12 +2508,17 @@ def _classify_text(command, cfg, depth=0, dir_="", variables=None, cd_seen=False
     script = script.replace("\\\n", " ")
     script = _MKTEMP_RE.sub(lambda m: m.group(1) + "=" + _temp_prefixes()[0] + "mktemp", script)
     script = _BRACED_VAR_RE.sub(lambda m: "$" + m.group(1) + "\x01", script)
+    for _ in range(8):
+        expanded = _BRACE_LIST_RE.sub(
+            lambda m: " ".join(m.group(1) + alt + m.group(3) for alt in m.group(2).split(",")), script
+        )
+        if expanded == script:
+            break
+        script = expanded
     hits = _walk(script, cfg, ctx)
-    # Substitutions and heredoc shells start where the command started unless
-    # a cd ran somewhere in it: which cd applies to them is not tracked.
+    # Heredoc shells start where the command started unless a cd ran
+    # somewhere in it: which cd applies to them is not tracked.
     inner_dir = dir_ if not ctx["cd_seen"] else None
-    for m in _INNER_SUBST_RE.finditer(script):
-        hits.extend(_classify_text(m.group(1) or m.group(2) or "", cfg, depth + 1, inner_dir, ctx["vars"]))
     for line, body, quoted in heredocs:
         if not quoted:
             for m in _INNER_SUBST_RE.finditer(body):
@@ -2468,7 +2556,7 @@ def _heredoc_hits(line, body, cfg, depth, dir_):
         if program in _SHELLS:
             return _classify_text(body, cfg, depth + 1, dir_)
         if program == "ssh":
-            return _classify_text(body, cfg, depth + 1)
+            return _classify_text(body, cfg, depth + 1, None, None, True)
         if _INLINE_INTERPRETER_RE.match(program) and _inline_code_hits(program, body):
             return _inline_code_hits(program, body)
         if program in cfg["sql_clients"]:
@@ -2602,7 +2690,7 @@ def destructive_decision(
                 "with the line: APPROVE " + marker[1] + "\nthen run the same command again"
             )}
     else:
-        result = _command_decision(command or "", cfg, os.path.abspath(cwd) if cwd else "")
+        result = _command_decision(command or "", cfg, os.path.realpath(cwd) if cwd else "")
     if (
         result["decision"] == "ask"
         and permission_mode == "bypassPermissions"
@@ -2619,7 +2707,10 @@ def _decision_cfg(params, sql_file_texts):
     cfg = dict(_merged_params(params)["destructive"])
     cfg.update(
         sql_files=dict(sql_file_texts or {}), sql_paths=[], functions={},
-        ours_paths=list(cfg["ours_paths"]) + _temp_prefixes(),
+        ours_paths=list(cfg["ours_paths"]) + _temp_prefixes() + [
+            os.path.realpath(os.path.expanduser(p)) + "/"
+            for p in cfg["ours_paths"] if p.startswith(("/", "~"))
+        ],
     )
     return cfg
 

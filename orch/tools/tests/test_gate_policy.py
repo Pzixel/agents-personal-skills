@@ -1231,15 +1231,21 @@ def _at(command, cwd, sql_file_texts=None):
 
 
 class DestructiveWorkingDirectoryTest(unittest.TestCase):
-    """A main checkout ``main`` with a linked-worktree path ``wt`` below its
-    .worktrees, outside the system temp dir (which is ours as a whole)."""
+    """A main checkout ``main`` (with ``src`` and ``tmp/sub``) and a linked
+    worktree ``wt`` below its .worktrees whose ``link`` points at
+    ``main/src``, outside the system temp dir (which is ours as a whole)."""
 
     def setUp(self):
-        self.root = tempfile.mkdtemp(dir=os.path.expanduser("~"))
+        self.root = os.path.realpath(tempfile.mkdtemp(dir=os.path.expanduser("~")))
         self.main = os.path.join(self.root, "main")
         self.wt = os.path.join(self.main, ".worktrees", "task")
         os.makedirs(os.path.join(self.wt, "tmp"))
         os.makedirs(os.path.join(self.main, ".git"))
+        os.makedirs(os.path.join(self.main, "src"))
+        os.makedirs(os.path.join(self.main, "tmp", "sub"))
+        with open(os.path.join(self.wt, ".git"), "w") as f:
+            f.write("gitdir: " + os.path.join(self.main, ".git", "worktrees", "task") + "\n")
+        os.symlink(os.path.join(self.main, "src"), os.path.join(self.wt, "link"))
 
     def tearDown(self):
         shutil.rmtree(self.root)
@@ -1258,7 +1264,7 @@ class DestructiveWorkingDirectoryTest(unittest.TestCase):
             ("cd {wt}; rm -rf src", "{main}"): "allow",
             ("cd {main}/.worktrees/gone; rm -rf src", "{main}"): "deny",
             ("(cd {wt}); rm -rf b", "{main}"): "deny",
-            ("(cd {wt} && rm -rf b)", "{main}"): "allow",
+            ("(cd {wt} && rm -rf b)", "{main}"): "deny",
             ('cd "$X" && rm -rf foo', "{wt}"): "deny",
             ("cd {wt} | true; rm -rf src", "{main}"): "deny",
             ("cd {wt} || rm -rf src", "{main}"): "deny",
@@ -1269,6 +1275,25 @@ class DestructiveWorkingDirectoryTest(unittest.TestCase):
             ("chmod +x run.sh", "{main}"): "deny",
         })
 
+    def test_cd_that_may_not_run_makes_the_directory_unknown(self):
+        self._table({
+            ("cd {wt} && rm -rf src", "{main}"): "allow",
+            ("true || cd {wt}; rm -rf src", "{main}"): "deny",
+            ("false && cd {wt}; rm -rf src", "{main}"): "deny",
+            ("cd {main}/.worktrees/gone && echo; rm -rf src", "{main}"): "deny",
+            ("cd .worktrees/gone && echo\nrm -rf src", "{main}"): "deny",
+            ("if true; then cd {wt}; fi; rm -rf src", "{main}"): "deny",
+        })
+
+    def test_symlinks_are_resolved_before_the_ours_check(self):
+        self._table({
+            ("rm -rf link/../main.rs", "{wt}"): "deny",
+            ("cd link && rm -rf main.rs", "{wt}"): "deny",
+            ("rm -rf tmp/../x", "{wt}"): "allow",
+            ("rm -rf {wt}/{{../../src,}}", "{main}"): "deny",
+            ("rm -rf {wt}/tmp/{{a,b}}", "{main}"): "allow",
+        })
+
     def test_variables_bind_literal_values_only(self):
         self._table({
             ("W={wt}; rm -rf $W/tmp ${{W}}/x", "{main}"): "allow",
@@ -1276,6 +1301,28 @@ class DestructiveWorkingDirectoryTest(unittest.TestCase):
             ("W={wt} rm -rf $W/x", "{main}"): "deny",
             ("W={wt}; sh -c 'rm -rf $W/tmp'", "{main}"): "deny",
             ("T=$(mktemp -d); rm -rf $T", "{main}"): "allow",
+        })
+
+    def test_any_other_write_to_a_name_unbinds_it(self):
+        self._table({
+            ("W=/etc; (W={wt}); rm -rf $W/x", "{main}"): "deny",
+            ("W={wt}; if true; then W=/etc; fi; rm -rf $W/x", "{main}"): "deny",
+            ("W={wt}; while true; do W=/etc; break; done; rm -rf $W/x", "{main}"): "deny",
+            ("W={wt}; declare -x W={main}; rm -rf $W/src", "{main}"): "deny",
+            ("W={wt}; local -r W={main}; rm -rf $W/src", "{main}"): "deny",
+            ("W={wt}; typeset W={main}; rm -rf $W/src", "{main}"): "deny",
+            ("W={wt}; W+=/../..; rm -rf $W/src", "{main}"): "deny",
+            ("W={main}; f(){{ W={wt}; }}; rm -rf $W/src", "{main}"): "deny",
+            ("W={wt}; unset W; rm -rf $W/x", "{main}"): "deny",
+            ("true && W={wt}; rm -rf $W/x", "{main}"): "deny",
+            ('W=/etc; x="$(rm -rf $W/a)"; W={wt}', "{main}"): "deny",
+        })
+
+    def test_shell_c_text_must_be_literal(self):
+        self._table({
+            ("CMD='rm -rf /'; sh -c \"$CMD\"", "{main}"): "deny",
+            ("bash -c \"$(printf 'rm -rf /')\"", "{main}"): "deny",
+            ("bash -c 'rm -rf tmp/x'", "{wt}"): "allow",
         })
 
     def test_git_discards_only_in_an_agent_worktree(self):
@@ -1290,7 +1337,25 @@ class DestructiveWorkingDirectoryTest(unittest.TestCase):
             ("git restore --staged f", "{main}"): "allow",
             ("git checkout -q origin/master -- 2>/dev/null", "{main}"): "allow",
             ("git push --force", "{wt}"): "deny",
+            ("cd {main}/tmp/sub && git reset --hard", "{main}"): "deny",
+            ("git reset --hard", "{main}/tmp/sub"): "deny",
+            ("git -C tmp/sub reset --hard", "{main}"): "deny",
+            ("git checkout -- src/a", "{main}/tmp/sub"): "deny",
+            ("git -C {wt}/.. reset --hard", "{main}"): "deny",
+            ("git --work-tree={main} reset --hard", "{wt}"): "deny",
+            ("git --git-dir {main}/.git reset --hard", "{wt}"): "deny",
+            ("GIT_WORK_TREE={main} git reset --hard", "{wt}"): "deny",
         })
+
+    def test_sql_file_redirected_into_exec_is_read_locally(self):
+        path = os.path.join(self.main, "q.sql")
+        for cmd in ("kubectl exec -i p -- psql < q.sql",
+                    "kubectl exec -i p -- clickhouse-client --multiquery < q.sql",
+                    "docker exec -i c psql <q.sql"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(gate_policy.sql_file_paths(cmd, cwd=self.main), [path])
+                self.assertEqual(_at(cmd, self.main, {path: "DR" + "OP TABLE t;"}), "deny")
+                self.assertEqual(_at(cmd, self.main, {path: "SELECT 1;"}), "allow")
 
     def test_sql_file_after_cd_is_read_from_its_resolved_path(self):
         cmd = "cd {wt} && psql -f q.sql".format(wt=self.wt)
@@ -1329,6 +1394,11 @@ class DestructiveKubectlParsingTest(unittest.TestCase):
             "kubectl -n x port-forward \\\n svc/a 8080:80": "allow",
             "kubectl apply --dry-run=server -f x.yaml": "allow",
             "kubectl $V delete po x": "ask",
+            "kubectl --cache-dir /x delete po y": "ask",
+            "kubectl exec p -- sh -c 'rm -rf /data' --dry-run": "deny",
+            "kubectl exec p -- psql -c 'DR" "OP TABLE t' --dry-run": "deny",
+            "kubectl exec p -- sh -c 'rm -rf tmp/x'": "deny",
+            "ssh host 'rm -rf tmp/x'": "deny",
         }
         for cmd, decision in cases.items():
             with self.subTest(cmd=cmd):
