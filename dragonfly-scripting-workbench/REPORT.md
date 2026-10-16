@@ -84,7 +84,7 @@ Independent review (record not kept): PASS WITH FIXES — 2 blockers (stale `--h
 
 ## 9. Not done
 - The description optimization loop did not finish (rate limit at iteration 5/5); the new description was not applied.
-- The skill is not symlinked into `~/.claude/skills` / `~/.codex/skills` — that step belongs to the main session.
+- At report time the skill was not symlinked into `~/.claude/skills` / `~/.codex/skills` — that step belonged to the main session; `install.sh` does it now.
 - Eval 3 was not rerun in iteration 2; its iteration 1 result is counted.
 - One run per arm per eval: within-eval variance is not measured.
 - Eval 1 checks only the script replies, not the post-state; `--compare` is the contract.

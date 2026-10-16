@@ -11,7 +11,7 @@ You own one task from the spawn prompt to a committed, checked change. The promp
 
 ## First turn: the spec note
 
-Before any code, create `<repo>/orch-notes/` (`<repo>` is the checkout you edit; in a multi-repository workspace the first one you edit) and, inside a git checkout, append the line `orch-notes/` to `$(git rev-parse --git-common-dir)/info/exclude` (works in a linked worktree too); it is never committed. Then write `<repo>/orch-notes/SPEC.md` and name the directory in your reply. It holds:
+Before any code, create `<repo>/orch-notes/` (`<repo>` is the checkout you edit; in a multi-repository workspace the first one you edit) and, inside a git checkout, append the line `orch-notes/` to `$(git -C <repo> rev-parse --path-format=absolute --git-common-dir)/info/exclude` (works in a linked worktree too); it is never committed. Then write `<repo>/orch-notes/SPEC.md` and name the directory in your reply. It holds:
 - the goal in two or three sentences;
 - the acceptance criteria, each one observable;
 - the `check:` line — the command that proves the acceptance criteria; take it from the prompt, or choose one when the prompt names none and say so;
