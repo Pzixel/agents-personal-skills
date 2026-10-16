@@ -2,12 +2,13 @@
 """rm-own [-r] <path>...
 
 Removes project-owned scratch paths only. The shell has already expanded
-variables, cd and globs, so each operand is a real path: its parent directory
-is resolved through symlinks (the final component is removed itself, never
-followed) and it is accepted only when the destructive gate's ours rule holds
-on that path (gate_policy.own_removal_refusal). Every operand is checked
-before anything is removed; one refusal removes nothing and exits 2 with one
-line per refused path. Directories need -r.
+variables, cd and globs. Each operand is taken physically: its parent
+directory is resolved through symlinks before any ``..`` applies, the final
+component is the object itself (a symlink is removed, never followed). That
+real path is accepted only when the destructive gate's ours rule holds on it
+(gate_policy.own_removal), and it is what gets removed. Every operand is
+checked before anything is removed; one refusal removes nothing and exits 2
+with one line per refused path. Directories need -r.
 """
 
 import os
@@ -25,20 +26,20 @@ def main(argv):
         print("usage: rm-own [-r] <path>...", file=sys.stderr)
         return 2
     params = gate_policy.load_params()
-    refusals = [gate_policy.own_removal_refusal(p, params) for p in paths]
-    for p in paths:
-        if os.path.isdir(p) and not os.path.islink(p) and not recursive:
+    checked = [gate_policy.own_removal(p, params) for p in paths]
+    refusals = [why for _, why in checked if why]
+    for p, (real, _) in zip(paths, checked):
+        if real and os.path.isdir(real) and not os.path.islink(real) and not recursive:
             refusals.append(p + ": is a directory (use -r)")
-    refusals = [r for r in refusals if r]
     if refusals:
         for r in refusals:
             print("rm-own: refused " + r, file=sys.stderr)
         return 2
-    for p in paths:
-        if os.path.isdir(p) and not os.path.islink(p):
-            shutil.rmtree(p)
-        elif os.path.lexists(p):
-            os.remove(p)
+    for real, _ in checked:
+        if os.path.isdir(real) and not os.path.islink(real):
+            shutil.rmtree(real)
+        elif os.path.lexists(real):
+            os.remove(real)
     return 0
 
 

@@ -1201,7 +1201,7 @@ class DestructiveDecisionTest(unittest.TestCase):
             os.makedirs(os.path.join(repo, ".git"))
             cases = {
                 f"rm -rf {repo}/tmp/df167": "allow",
-                f"rm -rf {repo}/tmp": "deny",
+                f"rm -rf {repo}/tmp": "allow",
                 f"rm -rf {repo}/tmp/../src": "deny",
                 f"rm -rf {plain}/tmp/x": "deny",
             }
@@ -1264,7 +1264,11 @@ class DestructiveWorkingDirectoryTest(unittest.TestCase):
             ("cd {wt}; rm -rf src", "{main}"): "allow",
             ("cd {main}/.worktrees/gone; rm -rf src", "{main}"): "deny",
             ("(cd {wt}); rm -rf b", "{main}"): "deny",
-            ("(cd {wt} && rm -rf b)", "{main}"): "deny",
+            ("(cd {wt} && rm -rf b)", "{main}"): "allow",
+            ("X=$(cd {wt} && git rev-parse HEAD); rm -rf tmp/x", "{main}"): "allow",
+            ("cd {wt}; (cd $X); rm -rf src", "{main}"): "allow",
+            ("W={wt}; (W=/etc); rm -rf $W/x", "{main}"): "allow",
+            ("rm -rf tmp", "{main}"): "allow",
             ('cd "$X" && rm -rf foo', "{wt}"): "deny",
             ("cd {wt} | true; rm -rf src", "{main}"): "deny",
             ("cd {wt} || rm -rf src", "{main}"): "deny",
@@ -1289,11 +1293,18 @@ class DestructiveWorkingDirectoryTest(unittest.TestCase):
             ("cd {main}/.worktrees/gone && rm -rf x; rm -rf y", "{main}"): "deny",
             ("false || cd {wt} && rm -rf x", "{main}"): "deny",
             ("true && cd {wt} && true || rm -rf src", "{main}"): "deny",
+            ("mkdir -p {wt}/new && cd {wt}/new && rm -rf x", "{main}"): "allow",
+            ("cd {wt}/new && rm -rf x", "{main}"): "allow",
+            ("cd {wt}/new; rm -rf x", "{main}"): "deny",
+            ("! cd {wt} && rm -rf src", "{main}"): "deny",
         })
 
     def test_symlinks_are_resolved_before_the_ours_check(self):
         self._table({
             ("rm -rf link/../main.rs", "{wt}"): "deny",
+            ("rm -f link", "{wt}"): "allow",
+            ("rm -rf link/", "{wt}"): "deny",
+            ("rm -rf link/.", "{wt}"): "deny",
             ("cd link && rm -rf main.rs", "{wt}"): "deny",
             ("rm -rf tmp/../x", "{wt}"): "allow",
             ("rm -rf {wt}/{{../../src,}}", "{main}"): "deny",
@@ -1330,6 +1341,19 @@ class DestructiveWorkingDirectoryTest(unittest.TestCase):
             ("CMD='rm -rf /'; sh -c \"$CMD\"", "{main}"): "deny",
             ("bash -c \"$(printf 'rm -rf /')\"", "{main}"): "deny",
             ("bash -c 'rm -rf tmp/x'", "{wt}"): "allow",
+            ("sh -c 'echo \"v=[$V]\"; s=$(date +%s); rm -rf tmp/x'", "{wt}"): "allow",
+            ("sh -c 'rm -rf $V/x'", "{wt}"): "deny",
+            ("sh -c 'X=1 $CMD'", "{wt}"): "deny",
+            ("sh -c 'echo a; `cat cmd.txt`'", "{wt}"): "deny",
+            ("sh -c 'echo `date`'", "{wt}"): "allow",
+        })
+
+    def test_only_the_real_rm_own_is_exempt(self):
+        tool = os.path.join(os.path.dirname(os.path.realpath(gate_policy.__file__)), "rm-own")
+        self._table({
+            (tool + " -r /etc", "{wt}"): "allow",
+            ("./rm-own -r /etc", "{wt}"): "deny",
+            ("./rm-own -r tmp/x", "{wt}"): "allow",
         })
 
     def test_git_discards_only_in_an_agent_worktree(self):
@@ -1352,6 +1376,7 @@ class DestructiveWorkingDirectoryTest(unittest.TestCase):
             ("git --work-tree={main} reset --hard", "{wt}"): "deny",
             ("git --git-dir {main}/.git reset --hard", "{wt}"): "deny",
             ("GIT_WORK_TREE={main} git reset --hard", "{wt}"): "deny",
+            ("git -c core.worktree={main} reset --hard", "{wt}"): "deny",
         })
 
     def test_sql_file_redirected_into_exec_is_read_locally(self):
@@ -1380,12 +1405,28 @@ class DestructiveWorkingDirectoryTest(unittest.TestCase):
             link: True,
             os.path.join(link, "keep.txt"): False,
             os.path.join(self.wt, "..", "..", "keep.txt"): False,
+            os.path.join(self.wt, "link", "..", "keep.txt"): False,
+            os.path.join(self.main, "tmp"): True,
             os.path.join(self.main, ".worktrees"): False,
             self.main: False,
         }
         for path, allowed in cases.items():
             with self.subTest(path=path):
-                self.assertEqual(gate_policy.own_removal_refusal(path) is None, allowed)
+                self.assertEqual(gate_policy.own_removal(path)[1] is None, allowed)
+
+    def test_rm_own_removes_the_checked_real_path(self):
+        import subprocess
+        tool = os.path.join(os.path.dirname(os.path.realpath(gate_policy.__file__)), "rm-own")
+        os.symlink(self.main, os.path.join(self.wt, "tmp", "up"))
+        open(os.path.join(self.main, "keep.txt"), "w").close()
+        refused = subprocess.run([sys.executable, tool, "-r", "link/../keep.txt", "tmp/up/"],
+                                 cwd=self.wt, stderr=subprocess.DEVNULL)
+        self.assertEqual(refused.returncode, 2)
+        self.assertTrue(os.path.exists(os.path.join(self.main, "keep.txt")))
+        removed = subprocess.run([sys.executable, tool, "-r", "tmp/up/"], cwd=self.wt)
+        self.assertEqual(removed.returncode, 0)
+        self.assertEqual((os.path.lexists(os.path.join(self.wt, "tmp", "up")),
+                          os.path.isdir(os.path.join(self.main, "src"))), (False, True))
 
     def test_heredoc_sql_file_written_after_cd_is_classed(self):
         cmd = "cd {wt} && cat > q.sql <<'EOF'\nDR" "OP TABLE t;\nEOF\npsql -f q.sql"

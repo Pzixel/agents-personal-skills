@@ -1897,7 +1897,7 @@ def _is_ours_path(path, cfg, relative_ok):
     parts = norm.split("/")
     if (relative_ok or norm.startswith("/")) and ".worktrees" in parts[:-1]:
         return True
-    if norm.startswith("/") and "tmp" in parts[1:-1]:
+    if norm.startswith("/") and "tmp" in parts[1:]:
         i = parts.index("tmp", 1)
         if os.path.exists(os.path.join("/".join(parts[:i]) or "/", ".git")):
             return True
@@ -1926,27 +1926,37 @@ def _scratch_roots():
     return sorted({"/tmp/", os.path.realpath("/tmp") + "/"} | set(_temp_prefixes()))
 
 
-def _resolve(path, ctx):
-    """Real path of an operand (symlinks resolved before each ``..``, as the
-    kernel walks it), None when the directory a relative operand is taken
-    from is not known."""
+def _real_operand(path, keep_final=False):
+    """Real path of an absolute ``path``, symlinks resolved before each
+    ``..`` as the kernel walks it. ``keep_final``: the final component is the
+    object itself (``rm`` of a symlink removes the link) unless it is ``.``,
+    ``..`` or ends in ``/``."""
+    name = os.path.basename(path)
+    if keep_final and name not in ("", ".", ".."):
+        return os.path.join(os.path.realpath(os.path.dirname(path)), name)
+    return os.path.realpath(path)
+
+
+def _resolve(path, ctx, keep_final=False):
+    """Real path of an operand (see ``_real_operand``), None when the
+    directory a relative operand is taken from is not known."""
     if path.startswith("/"):
-        return os.path.realpath(path)
+        return _real_operand(path, keep_final)
     if path == "~" or path.startswith("~/"):
-        return os.path.realpath(os.path.expanduser(path))
+        return _real_operand(os.path.expanduser(path), keep_final)
     if ctx["dir"]:
-        return os.path.realpath(os.path.join(ctx["dir"], path))
+        return _real_operand(os.path.join(ctx["dir"], path), keep_final)
     return None
 
 
-def _ours(path, cfg, ctx):
+def _ours(path, cfg, ctx, keep_final=False):
     """An operand is ours by its real path; only when no working directory
     was given and no cd ran is a relative operand judged by its text."""
     if any(ch in path for ch in "$`{}") or (
         any(ch in path for ch in "*?[") and ".." in path.split("/")
     ):
         return False  # a glob before ".." may match a symlink
-    resolved = _resolve(path, ctx)
+    resolved = _resolve(path, ctx, keep_final)
     if resolved is None:
         return ctx["dir"] == "" and not ctx["cd_seen"] and _is_ours_path(path, cfg, True)
     return _is_ours_path(resolved, cfg, False)
@@ -1981,24 +1991,25 @@ _RM_OWN_HINT = (
 )
 
 
-def own_removal_refusal(path, params=None):
-    """Why rm-own refuses ``path`` (one line), None when it may remove it.
-    The parent directory is resolved, the final component is not followed."""
+def own_removal(path, params=None):
+    """(real path rm-own removes, None) or (None, why it refuses ``path``).
+    The path is taken physically: the parent is resolved through symlinks
+    before any ``..`` is applied, the final component is the object itself."""
     cfg = _decision_cfg(params, None)
-    absolute = os.path.abspath(os.path.expanduser(path))
-    name = os.path.basename(absolute)
-    real = os.path.join(os.path.realpath(os.path.dirname(absolute)), name)
+    expanded = os.path.expanduser(path).rstrip("/") or "/"
+    name = os.path.basename(expanded)
     if name in ("", ".", "..") or name == ".worktrees":
-        return path + ": the .worktrees directory or a root is never removed"
+        return None, path + ": the .worktrees directory, a root, . or .. is never removed"
+    real = _real_operand(os.path.join(os.getcwd(), expanded), True)
     if os.path.exists(os.path.join(real, ".git")) and not os.path.islink(real):
-        return path + ": a repository root is never removed (use git worktree remove)"
+        return None, path + ": a repository root is never removed (use git worktree remove)"
     if not _is_ours_path(real, cfg, False):
-        return path + ": resolves to " + real + ", outside a worktree, <repo>/tmp, /tmp/<x>, the temp dir, ~/.claude/tmp or ~/Library/Caches"
-    return None
+        return None, path + ": resolves to " + real + ", outside a worktree, <repo>/tmp, /tmp/<x>, the temp dir, ~/.claude/tmp or ~/Library/Caches"
+    return real, None
 
 
-def _rm_rule(paths, cfg, ctx, what):
-    if paths and all(_ours(p, cfg, ctx) for p in paths):
+def _rm_rule(paths, cfg, ctx, what, keep_final=False):
+    if paths and all(_ours(p, cfg, ctx, keep_final) for p in paths):
         return ("ours", what + " of project-owned scratch paths")
     return ("impossible", what + " outside the project-owned paths has no undo" + _RM_OWN_HINT)
 
@@ -2086,7 +2097,7 @@ def _kubectl_class(args, cfg, ctx):
 _GIT_VALUE_OPTIONS = frozenset({
     "-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix", "--config-env",
 })
-_GIT_REDIRECT_RE = re.compile(r"--work-tree|--git-dir|\bGIT_WORK_TREE\b|\bGIT_DIR\b")
+_GIT_REDIRECT_RE = re.compile(r"--work-tree|--git-dir|\bGIT_WORK_TREE\b|\bGIT_DIR\b|\bcore\.(?:worktree|bare)\b")
 
 
 def _git_own_repository(directory):
@@ -2213,10 +2224,11 @@ def _lone(char, punct):
 
 
 def _top_level(ctx, before, after):
-    """Outside ``( )``, ``{ }``, blocks, loops, function bodies, pipelines
-    and background jobs."""
+    """Outside ``{ }``, blocks, loops, function bodies, pipelines and
+    background jobs. A subshell ``( )`` counts as its own top level: its
+    state is restored when it ends (``_scope``)."""
     return not (
-        ctx["parens"] or ctx["brace"] or ctx["block"]
+        ctx["brace"] or ctx["block"]
         or _lone("|", before + after) or _lone("&", after)
     )
 
@@ -2239,28 +2251,48 @@ def _chain_step(ctx, before):
     if ctx.get("cd_pending") and ("||" in before or not continues):
         ctx["cd_pending"] = False
         ctx["dir"] = None
-        ctx["parens"] = [None] * len(ctx["parens"])
 
 
-def _change_dir(program, args, ctx, before, after):
+def _change_dir(program, args, ctx, before, after, negated):
     """Track the working directory through a cd. A top-level cd (see
-    ``_top_level``) to a literal existing directory, reached only through
-    ``&&`` and not followed by ``||``, moves it: for the rest of the command
-    when it is first of its chain, else for the rest of its ``&&`` chain
-    (``_chain_step``). Any other cd makes it unknown for the rest of the
-    command, after an enclosing subshell too."""
+    ``_top_level``) to a literal directory, not negated by ``!``, reached
+    only through ``&&`` and not followed by ``||``, moves it: for the rest of
+    the command when it is first of its chain and the directory exists, else
+    for the rest of its ``&&`` chain (``_chain_step``; a missing directory
+    may be created earlier in the chain). Any other cd makes it unknown for
+    the rest of the command or of the enclosing subshell."""
     ctx["cd_seen"] = True
     target = None
-    if program != "popd" and _top_level(ctx, before, after) and "||" not in after \
-            and not ctx.get("chain_or"):
+    if program != "popd" and not negated and _top_level(ctx, before, after) \
+            and "||" not in after and not ctx.get("chain_or"):
         target = _cd_target(program, args, ctx)
-        if target is not None and not os.path.isdir(target):
+    if target is not None and ("&&" in before or not os.path.isdir(target)):
+        if "&&" in before or "&&" in after:
+            ctx["cd_pending"] = True
+        else:
             target = None
-    if target is not None and "&&" in before:
-        ctx["cd_pending"] = True
     ctx["dir"] = target
-    if target is None:
-        ctx["parens"] = [None] * len(ctx["parens"])
+
+
+def _is_rm_own(head, ctx):
+    """True when ``head`` is the installed rm-own tool or this repository's."""
+    real = _resolve(os.path.expanduser(head), ctx) if "/" in head else None
+    tools = (os.path.expanduser("~/.claude/tools/rm-own"),
+             os.path.join(os.path.dirname(os.path.realpath(__file__)), "rm-own"))
+    return real is not None and real in {os.path.realpath(t) for t in tools}
+
+
+def _runs_computed_command(text):
+    """True when a command head in shell ``text`` is a variable or the output
+    of a substitution (what ``eval`` does), so the command is not visible."""
+    segments = _segments_meta(text)
+    for n, (tokens, before, _) in enumerate(segments):
+        if _command_head(tokens)[0].startswith("$"):
+            return True
+        opens = before.replace(" ", "")
+        if opens.endswith("`") and (opens == "`" and n == 0 or opens[-2:-1] in tuple(";&|(\n")):
+            return True
+    return False
 
 
 def _classify_tokens(tokens, cfg, ctx):
@@ -2271,9 +2303,12 @@ def _classify_tokens(tokens, cfg, ctx):
     if not program:
         return []
     if program == "rm-own":
-        return []  # the tool checks each real path itself
+        if _is_rm_own(tokens[len(tokens) - len(args) - 1], ctx):
+            return []  # the tool checks each real path itself
+        program = "rm"  # another script by that name is judged as rm
     if program in ("cd", "pushd", "popd"):
-        _change_dir(program, args, ctx, ctx.get("before", ""), ctx.get("after", ""))
+        negated = "!" in tokens[:len(tokens) - len(args) - 1]
+        _change_dir(program, args, ctx, ctx.get("before", ""), ctx.get("after", ""), negated)
         return []
     if program == "alias" and not any("=" in a for a in args):
         return []  # prints aliases
@@ -2295,11 +2330,11 @@ def _classify_tokens(tokens, cfg, ctx):
         i = args.index(shell_flag) + 1
         if i >= len(raw_args):
             return []
-        if any(ch in raw_args[i] for ch in "$`"):
-            return [("privileged", program + " " + shell_flag + " with a variable or substitution in its command text: run the command directly")]
+        if _runs_computed_command(raw_args[i]):
+            return [("privileged", program + " " + shell_flag + " runs a command named by a variable or substitution: run the command directly")]
         return _classify_text(raw_args[i], cfg, ctx["depth"] + 1, ctx["dir"], None, ctx["cd_seen"])
     if program == "rm":
-        return [_rm_rule([] if via_xargs else _path_args(args), cfg, ctx, "rm")]
+        return [_rm_rule([] if via_xargs else _path_args(args), cfg, ctx, "rm", True)]
     if program == "mv":
         paths = _path_args(args)
         if paths and all(_ours(p, cfg, ctx) for p in paths):
@@ -2426,14 +2461,19 @@ def _substitute(token, variables):
 
 def _scope(punct, ctx):
     """Apply the grouping characters between two segments: a subshell ``( )``
-    or backtick restores the directory on exit, a ``{ }`` group or function
-    body does not."""
+    or backtick restores the directory, the bindings and the chain state on
+    exit, a ``{ }`` group or function body does not."""
+    saved = ("dir", "vars", "cd_pending", "chain_or")
     for ch in punct:
         if ch == "(" or ch == "`" and not ctx["backtick"]:
-            ctx["parens"].append(ctx["dir"])
+            ctx["parens"].append({k: ctx.get(k) for k in saved})
+            ctx["vars"] = dict(ctx["vars"])
             ctx["backtick"] = ctx["backtick"] or ch == "`"
         elif ch == ")" or ch == "`":
-            ctx["dir"] = ctx["parens"].pop() if ctx["parens"] else None
+            if ctx["parens"]:
+                ctx.update(ctx["parens"].pop())
+            else:
+                ctx["dir"] = None
             if ch == "`":
                 ctx["backtick"] = False
         elif ch == "{":
