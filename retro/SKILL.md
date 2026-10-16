@@ -78,8 +78,9 @@ Read these events first. Each line: what it is; how to find it; what to record.
   decision to its correction, compactions, discarded work); name the proxy.
   Merge episodes that share a cause.
 - Before proposing a rule, search the loaded instructions (global and project
-  `CLAUDE.md`/`AGENTS.md`, skills, memory, hooks); compare creation date with
-  the episode and whether that session loaded it. Classify: absent (write
+  `CLAUDE.md`/`AGENTS.md`, skills, memory, hooks); find when it was added (the
+  first transcript that holds its key phrase, or git history where the file is
+  versioned) and whether that session loaded it. Classify: absent (write
   the rule); present but not loaded (move it to an owner every affected
   session loads); loaded but not applied (add a mechanism at the decision
   point: a hook, a skill step, a mandatory first artifact). A loaded rule

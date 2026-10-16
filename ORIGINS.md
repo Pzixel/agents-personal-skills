@@ -65,6 +65,10 @@ Repository-authored method for choosing a decision strategy by simulation: isola
 
 Adapted from the Russian draft the owner supplied on 2026-10-09; no upstream SHA pinned. Kept: look for evidence-backed improvements to the agent and its environment after a session. Added: period scope by event time, partial-history disclosure, bounded metadata-first extraction, a check of loaded instructions before proposing a rule, a change format naming the owning file and exact wording, a read-only contract, a valid zero-change result. Manual-only in both clients; `context: fork` unused because a forked context cannot see the current conversation. The eval protocol is in `retro-workbench/EVALS.md` and has not been run.
 
+### `orch`
+
+Explore agent model choice, measured 2026-09-18 on 58 held-out questions: Opus with Grep/Read output clamped by the `scout-bounds` hook scored 0.897 accuracy, 6 accepted-wrong, $0.033 per question; Sonnet (0.862) and Haiku (0.828) under the same clamp were cheaper and not significantly worse at n=58. The numbers lived in `orch/agents/Explore.md` until 2026-10-17; they are provenance, not behaviour, so they moved here.
+
 ### `codex-simplify`
 
 Verbatim export of Claude Code's built-in `simplify` body for Codex, which reads "the Agent tool" as its own subagent mechanism. The description makes any `/simplify` in a request an unconditional trigger. Installed for Codex only.
