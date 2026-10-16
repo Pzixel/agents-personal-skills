@@ -13,4 +13,4 @@ dragonfly-scripting-workbench/lab/data/
 dragonfly-scripting-workbench/**/iteration-*/**/outputs/
 .tokensave
 /.worktrees/
-/retro/suggestions/
+/retro/suggestions/orch-notes/
