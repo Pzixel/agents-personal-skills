@@ -2207,7 +2207,7 @@ def _classify_inner(tokens, cfg, ctx):
 
 def _cd_target(program, args, ctx):
     """The directory a literal ``cd``/``pushd`` moves to, None when unknown."""
-    operands = [a for a in args if not a.startswith("-") or a == "-"]
+    operands = [a for a in _path_args_keep_flags(args) if not a.startswith("-") or a == "-"]
     if len(operands) > 1:
         return None
     if not operands:

@@ -1296,6 +1296,7 @@ class DestructiveWorkingDirectoryTest(unittest.TestCase):
             ("mkdir -p {wt}/new && cd {wt}/new && rm -rf x", "{main}"): "allow",
             ("cd {wt}/new && rm -rf x", "{main}"): "allow",
             ("cd {wt}/new; rm -rf x", "{main}"): "deny",
+            ("cd {wt} 2>/dev/null; rm -rf src", "{main}"): "allow",
             ("! cd {wt} && rm -rf src", "{main}"): "deny",
         })
 
