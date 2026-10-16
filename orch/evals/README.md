@@ -17,6 +17,7 @@ evals/run.sh full                           # tags tierA tierB tierC, 3 runs, wi
 Every mode passes `--trust-plugin --no-publish --scaffold --allow-tools Bash Write Edit` and
 writes `evals/results/<mode>-<timestamp>.json` and `.html` (`evals/results/` is ignored).
 Extra arguments go to `claude plugin eval` (`--max-cost-usd 5`, `--case 'feature-*'`, ...).
+`EVAL_MODEL=<model>` pins the main-session model (`--model`); without it runs follow the account default.
 `--keep-temp` keeps the run directory; the full trace is only there (`<dir>/out/trace.jsonl`,
 `chmod 700 <dir> <dir>/sealed` first). Subagent records appear in the same trace with a
 non-null `parent_tool_use_id`, and `tool_used` graders count their tool calls too; to grade

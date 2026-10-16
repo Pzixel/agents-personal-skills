@@ -8,14 +8,12 @@ two rounds), and one reviewer rechecks each fix. Hooks enforce spawn rights, con
 check, and the waiting protocol. Why this shape: `evals/REPORT-2026-09.md` and the research
 package cited in the skill.
 
-## Two CRITICAL rules
+## Nothing private
 
-1. **This repository never gets a git remote.** No `git remote add`, no push, no `gh repo create`.
-   It exists as a local `.git` only.
-2. **Nothing from private work repositories is tracked here** — no code, repository names, PR
-   numbers, workspace ids, task names or transcripts. Tracked texts use generic wording; the
-   specifics live in the ignored `evals/NOTES-private.md`. Before every commit:
-   `git grep -nE '<private names>'` on the staged tree must return nothing.
+This repository is public. Nothing from private work repositories is tracked here: no code,
+repository names, PR numbers, workspace ids, task names or transcripts. Tracked texts use
+generic wording; the specifics live in the ignored `evals/NOTES-private.md` and
+`evals/private/`. How changes land is in the repository's [AGENTS.md](../AGENTS.md).
 
 ## Using it
 
@@ -72,9 +70,25 @@ listed twice (bare and `orch:`), and the gates treat both alike.
   - `secret-vault-gate.py` — refuses any tool call that would read `~/.secrets`, Secret payloads or a known value.
   - `redact-secrets.py` — masks known vault values and key-shaped tokens in Bash/Read/Grep results.
   - `session-tools-link.py` — links `~/.claude/{tools,hooks}` in a fresh HOME (eval runs).
+  - `bash-output-clamp.py` — routes long Bash output of agents to a file, shows head and tail.
+  - `deny-destructive.py`, `plan-approval.py` — class destructive commands; the owner
+    approves one plan run with `APPROVE <sha256>`.
+  - `merge-gate.py` — landing on master/main needs `CHECK_RAN`, `PROD_POSITION` and
+    `WAY_BACK` in the command.
+  - `reply-lint.py` — returns a final reply that claims completion without an observation or
+    hands a decision inside the agent's authority to the owner.
+  - `task-type-checklist.py` — injects the first-artifact checklist for the task type.
+  - `memory-routing.py` — reminds that user-level rules belong in `~/.codex/AGENTS.md`; not
+    registered in `hooks/hooks.json`, wire it in `settings.json` to use it.
+  - `worktree-dirty-gate.py` — refuses once to end a turn with this session's edits
+    uncommitted in a worktree.
+  - `worktree-reaper.py` — at session start removes worktrees and branches whose work reached
+    the default branch.
 - `tools/` — `gate_policy.py` (pure decisions for every gate), `orchestrate-params.json`
   (thresholds, spawn rights, `build.fix_rounds_max`, `build.reviewers`), `check-run`,
-  `wait-for`, `secretctl` + `vault_policy.py`/`vault_files.py` (use secret values without printing them), `scout.py`/`scout_policy.py`, `tests/`.
+  `wait-for`, `secretctl` + `vault_policy.py`/`vault_files.py` (use secret values without printing them), `scout.py`/`scout_policy.py`/`scout-mcp-empty.json`,
+  `clamp.py` (head and tail of long output), `worktree_policy.py` (reaper and dirty-gate
+  decisions), `tests/`.
 - `evals/` — the eval suite; the synthetic fixture `evals/fixtures/mini/` is tracked, results
   and `NOTES-private.md` are ignored.
 

@@ -21,7 +21,7 @@ Read the code the task points at before writing the spec. A decision is a risk o
 
 ## Design note, only when a risk exists
 
-When `SPEC.md` has at least one `risk:` line, write `<repo>/orch-notes/DESIGN.md`, at most 600 words: the decisions, the rejected alternatives with the reason each lost, the operational facts the decisions depend on (volumes, rates, latencies, consistency, data lifetime), and the open questions. Then STOP and reply with the paths of both notes and the `risk:` lines. A design review runs before any code. You are resumed with "design reviewed, proceed to code", possibly with design fixes; apply them to `DESIGN.md` and continue into code without asking again.md` and continue into code without asking again.
+When `SPEC.md` has at least one `risk:` line, write `<repo>/orch-notes/DESIGN.md`, at most 600 words: the decisions, the rejected alternatives with the reason each lost, the operational facts the decisions depend on (volumes, rates, latencies, consistency, data lifetime), and the open questions. Then STOP and reply with the paths of both notes and the `risk:` lines. A design review runs before any code. You are resumed with "design reviewed, proceed to code", possibly with design fixes; apply them to `DESIGN.md` and continue into code without asking again.
 
 Without a `risk:` line, go straight to code in the same turn sequence.
 
