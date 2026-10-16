@@ -28,7 +28,7 @@ plan() {
     else
       for s in $common orch; do echo "$claude/skills/$s $s"; done
       for d in agents hooks tools; do
-        for e in $(cd "$root/orch/$d" && echo *); do echo "$claude/$d/$e orch/$d/$e"; done
+        for e in $(cd "$root/orch/$d" && echo *); do [ "$e" = __pycache__ ] || echo "$claude/$d/$e orch/$d/$e"; done
       done
     fi
   done
