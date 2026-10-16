@@ -1,0 +1,46 @@
+#!/usr/bin/env python3
+"""rm-own [-r] <path>...
+
+Removes project-owned scratch paths only. The shell has already expanded
+variables, cd and globs, so each operand is a real path: its parent directory
+is resolved through symlinks (the final component is removed itself, never
+followed) and it is accepted only when the destructive gate's ours rule holds
+on that path (gate_policy.own_removal_refusal). Every operand is checked
+before anything is removed; one refusal removes nothing and exits 2 with one
+line per refused path. Directories need -r.
+"""
+
+import os
+import shutil
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import gate_policy  # noqa: E402
+
+
+def main(argv):
+    recursive = bool(argv) and argv[0] == "-r"
+    paths = argv[1:] if recursive else argv
+    if not paths:
+        print("usage: rm-own [-r] <path>...", file=sys.stderr)
+        return 2
+    params = gate_policy.load_params()
+    refusals = [gate_policy.own_removal_refusal(p, params) for p in paths]
+    for p in paths:
+        if os.path.isdir(p) and not os.path.islink(p) and not recursive:
+            refusals.append(p + ": is a directory (use -r)")
+    refusals = [r for r in refusals if r]
+    if refusals:
+        for r in refusals:
+            print("rm-own: refused " + r, file=sys.stderr)
+        return 2
+    for p in paths:
+        if os.path.isdir(p) and not os.path.islink(p):
+            shutil.rmtree(p)
+        elif os.path.lexists(p):
+            os.remove(p)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

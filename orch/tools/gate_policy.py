@@ -1966,10 +1966,29 @@ def _is_plain_relative(path):
     )
 
 
+_RM_OWN_HINT = "; for a path inside a worktree, <repo>/tmp or /tmp run ~/.claude/tools/rm-own -r <path> (it checks the real path)"
+
+
+def own_removal_refusal(path, params=None):
+    """Why rm-own refuses ``path`` (one line), None when it may remove it.
+    The parent directory is resolved, the final component is not followed."""
+    cfg = _decision_cfg(params, None)
+    absolute = os.path.abspath(os.path.expanduser(path))
+    name = os.path.basename(absolute)
+    real = os.path.join(os.path.realpath(os.path.dirname(absolute)), name)
+    if name in ("", ".", "..") or name == ".worktrees":
+        return path + ": the .worktrees directory or a root is never removed"
+    if os.path.exists(os.path.join(real, ".git")) and not os.path.islink(real):
+        return path + ": a repository root is never removed (use git worktree remove)"
+    if not _is_ours_path(real, cfg, False):
+        return path + ": resolves to " + real + ", outside a worktree, <repo>/tmp, /tmp/<x>, the temp dir, ~/.claude/tmp or ~/Library/Caches"
+    return None
+
+
 def _rm_rule(paths, cfg, ctx, what):
     if paths and all(_ours(p, cfg, ctx) for p in paths):
         return ("ours", what + " of project-owned scratch paths")
-    return ("impossible", what + " outside the project-owned paths has no undo: leave the file or overwrite it")
+    return ("impossible", what + " outside the project-owned paths has no undo" + _RM_OWN_HINT)
 
 
 def _selector_keys(args):
@@ -2073,7 +2092,7 @@ def _git_class(args, cfg, ctx):
     if discard:
         if _git_in_worktree(repo, cfg):
             return [("ours", discard + " in an agent worktree")]
-        return [("impossible", discard + " outside an agent worktree (.worktrees/<task>)")]
+        return [("impossible", discard + " outside an agent worktree (.worktrees/<task>); commit or stash first, or work in a worktree")]
     if sub == "push" and any(
         a in ("-f", "--force") or a.startswith("+") for a in rest
     ):
@@ -2168,6 +2187,8 @@ def _classify_tokens(tokens, cfg, ctx):
     raw_args = ctx.get("raw", tokens)[len(tokens) - len(args):]
     if not program:
         return []
+    if program == "rm-own":
+        return []  # the tool checks each real path itself
     if program in ("cd", "pushd", "popd"):
         _change_dir(program, args, ctx, ctx.get("before", ""), ctx.get("after", ""))
         return []
@@ -2181,7 +2202,7 @@ def _classify_tokens(tokens, cfg, ctx):
         operands = _path_args(args)[1:]
         if operands and all(_ours(p, cfg, ctx) for p in operands):
             return [("ours", "chmod of project-owned scratch paths")]
-        return [("privileged", "chmod outside the project-owned paths: file modes are not changed by agents")]
+        return [("privileged", "chmod outside the project-owned paths: file modes are not changed by agents; chmod works on files inside a worktree, <repo>/tmp or /tmp")]
     if program == "chown":
         return [("privileged", "chown: file owners are not changed by agents")]
     if program == "eval":
@@ -2201,7 +2222,7 @@ def _classify_tokens(tokens, cfg, ctx):
             return [("ours", "mv within project-owned paths")]
         if ctx["dir"] is not None and paths and all(_is_plain_relative(p) for p in paths):
             return []
-        return [("approval", "mv outside the project-owned paths")]
+        return [("approval", "mv outside the project-owned paths; move within a worktree, <repo>/tmp or /tmp, or rename with relative paths")]
     if program == "find":
         exec_rm = any(
             a in ("-exec", "-execdir") and args[i + 1:i + 2] == ["rm"] for i, a in enumerate(args)

@@ -1299,6 +1299,22 @@ class DestructiveWorkingDirectoryTest(unittest.TestCase):
         self.assertEqual(_at(cmd, self.main, {path: "SELECT 1;"}), "allow")
         self.assertEqual(_at(cmd, self.main, {path: "DR" + "OP TABLE t;"}), "deny")
 
+    def test_own_removal_accepts_only_resolved_ours_paths(self):
+        link = os.path.join(self.wt, "tmp", "up")
+        os.symlink(self.main, link)
+        cases = {
+            os.path.join(self.wt, "tmp"): True,
+            os.path.join(self.wt, "src"): True,
+            link: True,
+            os.path.join(link, "keep.txt"): False,
+            os.path.join(self.wt, "..", "..", "keep.txt"): False,
+            os.path.join(self.main, ".worktrees"): False,
+            self.main: False,
+        }
+        for path, allowed in cases.items():
+            with self.subTest(path=path):
+                self.assertEqual(gate_policy.own_removal_refusal(path) is None, allowed)
+
     def test_heredoc_sql_file_written_after_cd_is_classed(self):
         cmd = "cd {wt} && cat > q.sql <<'EOF'\nDR" "OP TABLE t;\nEOF\npsql -f q.sql"
         self.assertEqual(_at(cmd.format(wt=self.wt), self.main), "deny")
