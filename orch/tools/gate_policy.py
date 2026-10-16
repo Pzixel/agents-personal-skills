@@ -14,6 +14,7 @@ import json
 import os
 import re
 import shlex
+import tempfile
 
 POLL = "poll"
 WAIT_FOR = "wait_for"
@@ -683,7 +684,7 @@ DEFAULT_PARAMS = {
         "local_hosts": ["localhost", "127.0.0.1", "::1", "host.docker.internal"],
     },
     "destructive": {
-        "ours_paths": ["/tmp/", "tmp/", ".worktrees/", "~/.claude/tmp/"],
+        "ours_paths": ["/tmp/", "tmp/", ".worktrees/", "~/.claude/tmp/", "~/Library/Caches/"],
         "ours_labels": ["orch.session"],
         "sql_clients": ["psql", "mysql", "sqlite3", "clickhouse-client", "clickhouse", "mongosh"],
         "plan_max_lines": 40,
@@ -1792,9 +1793,10 @@ def plan_marker(command):
     return (m.group(1), m.group(2).lower()) if m else None
 
 
-def _shell_segments(command):
-    """Token lists per shell segment; quoted text stays one token, so a quoted
-    word never becomes a command head. Backticks split like ``;``."""
+def _segments_meta(command):
+    """[tokens, separators before, separators after] per shell segment; quoted
+    text stays one token, so a quoted word never becomes a command head.
+    Backticks split like ``;``."""
     lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()\n`{}")
     lexer.whitespace = " \t\r"
     lexer.whitespace_split = True
@@ -1805,22 +1807,30 @@ def _shell_segments(command):
         tokens = command.split()
     # A comment ends at the next separator, not only at a newline: over-reading
     # a comment as a command can only raise a class, never hide one.
-    segments, current, comment = [], [], False
+    segments, current, comment, punct = [], None, False, ""
     for tok in tokens:
-        if tok == "{}":
-            if not comment:
-                current.append(tok)
-        elif tok and set(tok) <= _SEGMENT_PUNCT:
-            if current:
-                segments.append(current)
-            current, comment = [], False
-        elif comment or tok.startswith("#"):
+        if tok and tok != "{}" and set(tok) <= _SEGMENT_PUNCT:
+            current, comment = None, False
+            punct += " " + tok
+            continue
+        if comment or tok != "{}" and tok.startswith("#"):
             comment = True
-        else:
-            current.append(tok)
-    if current:
-        segments.append(current)
+            continue
+        if current is None:
+            if segments:
+                segments[-1][2] = punct
+            current = [[], punct, ""]
+            segments.append(current)
+            punct = ""
+        current[0].append(tok)
+    if segments:
+        segments[-1][2] = punct
     return segments
+
+
+def _shell_segments(command):
+    """Token lists per shell segment (see ``_segments_meta``)."""
+    return [seg[0] for seg in _segments_meta(command)]
 
 
 def _command_head(tokens):
@@ -1883,21 +1893,69 @@ def _path_args(args):
 def _is_ours_path(path, cfg, relative_ok):
     if any(ch in path for ch in "$`{}") or ".." in path.split("/"):
         return False
-    norm = os.path.normpath(path)
+    norm = os.path.normpath(os.path.expanduser(path))
     parts = norm.split("/")
-    if (relative_ok or norm.startswith(("/", "~"))) and ".worktrees" in parts[:-1]:
+    if (relative_ok or norm.startswith("/")) and ".worktrees" in parts[:-1]:
         return True
-    if norm.startswith(("/", "~")) and "tmp" in parts[1:-1]:
+    if norm.startswith("/") and "tmp" in parts[1:-1]:
         i = parts.index("tmp", 1)
-        if os.path.exists(os.path.join(os.path.expanduser("/".join(parts[:i]) or "/"), ".git")):
+        if os.path.exists(os.path.join("/".join(parts[:i]) or "/", ".git")):
             return True
     for prefix in cfg["ours_paths"]:
-        if not relative_ok and not prefix.startswith(("/", "~")):
-            continue
+        if not prefix.startswith(("/", "~")):
+            if not relative_ok:
+                continue
+        else:
+            prefix = os.path.expanduser(prefix)
         root = prefix.rstrip("/")
         if norm.startswith(prefix) or norm == root and not root.startswith("/"):
             return True
     return False
+
+
+def _temp_prefixes():
+    """The system temp dir (``$TMPDIR`` on macOS) as given and resolved; only
+    entries below it are ours, not the directory itself."""
+    base = tempfile.gettempdir()
+    return sorted({base.rstrip("/") + "/", os.path.realpath(base).rstrip("/") + "/"})
+
+
+def _resolve(path, ctx):
+    """Absolute normalized path of an operand, None when the directory a
+    relative operand is taken from is not known."""
+    if path.startswith("/"):
+        return os.path.normpath(path)
+    if path == "~" or path.startswith("~/"):
+        return os.path.normpath(os.path.expanduser(path))
+    if ctx["dir"]:
+        return os.path.normpath(os.path.join(ctx["dir"], path))
+    return None
+
+
+def _ours(path, cfg, ctx):
+    """An operand is ours by its literal text while no cd ran (relative
+    prefixes such as ``tmp/`` count), else by its resolved absolute path."""
+    if any(ch in path for ch in "$`{}"):
+        return False
+    if not ctx["cd_seen"] and _is_ours_path(path, cfg, True):
+        return True
+    # A resolved path is normalized, so ".." in it climbs to a known place.
+    resolved = _resolve(path, ctx)
+    return resolved is not None and _is_ours_path(resolved, cfg, False)
+
+
+def _path_args_keep_flags(args):
+    """``args`` without redirects and their target files."""
+    out, skip = [], False
+    for arg in args:
+        redirect = _REDIRECT.match(arg)
+        if skip:
+            skip = False
+        elif redirect:
+            skip = redirect.group(2) is not None and redirect.group(3) is None
+        else:
+            out.append(arg)
+    return out
 
 
 def _is_plain_relative(path):
@@ -1908,8 +1966,8 @@ def _is_plain_relative(path):
     )
 
 
-def _rm_rule(paths, cfg, relative_ok, what):
-    if paths and all(_is_ours_path(p, cfg, relative_ok) for p in paths):
+def _rm_rule(paths, cfg, ctx, what):
+    if paths and all(_ours(p, cfg, ctx) for p in paths):
         return ("ours", what + " of project-owned scratch paths")
     return ("impossible", what + " outside the project-owned paths has no undo: leave the file or overwrite it")
 
@@ -1941,15 +1999,24 @@ def _flag_value(args, flag):
 def _kubectl_class(args, cfg, ctx):
     rest, i = [], 0
     while i < len(args):
+        redirect = _REDIRECT.match(args[i])
         if args[i] in _KUBECTL_VALUE_FLAGS:
             i += 2
             continue
-        rest.append(args[i])
+        if redirect:
+            i += 2 if redirect.group(2) is not None and redirect.group(3) is None else 1
+            continue
+        if args[i] != "\\":
+            rest.append(args[i])
         i += 1
-    words = [a for a in rest if not a.startswith("-")]
+    words = [a.rstrip("\\") for a in rest if not a.startswith("-")]
     if not words:
         return []
     verb = words[0]
+    if "$" not in verb and not re.match(r"^[a-z][a-z-]*$", verb):
+        return []  # not a kubectl command (a comment or prose read as one); kubectl rejects it
+    if any(a.startswith("--dry-run") and a != "--dry-run=none" for a in rest):
+        return []
     if verb == "exec":
         return _classify_inner(rest[rest.index("--") + 1:], cfg, ctx) if "--" in rest else []
     if verb in _KUBECTL_READS:
@@ -1973,19 +2040,40 @@ def _kubectl_class(args, cfg, ctx):
     return [("approval", "kubectl " + verb + " changes live cluster state")]
 
 
-def _git_class(args):
-    i = 0
+def _git_in_worktree(repo, cfg):
+    """A repository directory below a ``.worktrees`` directory, or in an ours
+    scratch path: an agent's own checkout, whose uncommitted work it owns."""
+    return repo is not None and (
+        ".worktrees" in repo.split("/")[:-1] or _is_ours_path(repo, cfg, False)
+    )
+
+
+def _git_class(args, cfg, ctx):
+    i, repo = 0, ctx["dir"] or None
     while i < len(args) and args[i].startswith("-"):
+        if args[i] == "-C" and i + 1 < len(args):
+            target = args[i + 1]
+            literal = not any(ch in target for ch in "$`{}*?[") and ".." not in target.split("/")
+            repo = _resolve(target, dict(ctx, dir=repo)) if literal else None
         i += 2 if args[i] in ("-C", "-c") else 1
     if i >= len(args):
         return []
-    sub, rest = args[i], args[i + 1:]
+    sub, rest = args[i], _path_args_keep_flags(args[i + 1:])
+    discard = None
     if sub == "clean":
-        return [("impossible", "git clean deletes untracked files")]
-    if sub == "reset" and "--hard" in rest:
-        return [("impossible", "git reset --hard discards uncommitted work")]
-    if sub == "checkout" and "--" in rest and rest.index("--") < len(rest) - 1:
-        return [("impossible", "git checkout -- <path> discards uncommitted work")]
+        discard = "git clean deletes untracked files"
+    elif sub == "reset" and "--hard" in rest:
+        discard = "git reset --hard discards uncommitted work"
+    elif sub == "checkout" and "--" in rest and rest.index("--") < len(rest) - 1:
+        discard = "git checkout -- <path> discards uncommitted work"
+    elif sub == "restore" and not (
+        any(a in ("--staged", "-S") for a in rest) and not any(a in ("--worktree", "-W") for a in rest)
+    ):
+        discard = "git restore discards uncommitted work"
+    if discard:
+        if _git_in_worktree(repo, cfg):
+            return [("ours", discard + " in an agent worktree")]
+        return [("impossible", discard + " outside an agent worktree (.worktrees/<task>)")]
     if sub == "push" and any(
         a in ("-f", "--force") or a.startswith("+") for a in rest
     ):
@@ -2031,39 +2119,87 @@ def _after_options(args, value_flags):
 
 
 def _classify_inner(tokens, cfg, ctx):
-    """A command run elsewhere (exec, ssh): one quoted string is re-parsed."""
+    """A command run elsewhere (exec, ssh): one quoted string is re-parsed. Its
+    working directory and variables are not ours to know."""
     if len(tokens) == 1:
         return _classify_text(tokens[0], cfg, ctx["depth"] + 1)
-    return _classify_tokens(tokens, cfg, ctx)
+    return _classify_tokens(tokens, cfg, _new_ctx("", ctx["depth"], ctx["text"]))
+
+
+def _cd_target(args, ctx):
+    """The directory a literal ``cd``/``pushd`` moves to, None when unknown."""
+    operands = [a for a in args if not a.startswith("-") or a == "-"]
+    if not operands:
+        return os.path.expanduser("~")
+    target = operands[0]
+    if target == "-" or any(ch in target for ch in "$`{}*?[") or target.startswith("~") and not (
+        target == "~" or target.startswith("~/")
+    ):
+        return None
+    return _resolve(target, ctx)
+
+
+def _lone(char, punct):
+    """True when ``punct`` holds ``char`` alone (``|`` not ``||``)."""
+    return bool(re.search(r"(?<!\%s)\%s(?!\%s)" % (char, char, char), punct))
+
+
+def _change_dir(program, args, ctx, before, after):
+    """Track the working directory through a cd. A cd whose scope is unclear
+    (a block, a loop, a function body, a pipeline, a background job, before
+    ``||``) or whose target is not literal makes the directory unknown; one
+    followed by ``;`` must name an existing directory, since a failed cd lets
+    the next command run where the shell already was."""
+    ctx["cd_seen"] = True
+    if program == "popd" or ctx["brace"] or ctx["block"] or _lone("|", before + after) \
+            or _lone("&", after) or "||" in after:
+        ctx["dir"] = None
+        return
+    target = _cd_target(args, ctx)
+    if target is not None and "&&" not in after and not os.path.isdir(target):
+        target = None
+    ctx["dir"] = target
 
 
 def _classify_tokens(tokens, cfg, ctx):
-    """Hits for one segment; ``ctx`` carries the raw text and the cd state."""
+    """Hits for one segment; ``ctx`` carries the raw text, the working
+    directory, variables and the raw tokens of the segment (``raw``)."""
     program, args, via_xargs = _command_head(tokens)
-    relative_ok = not ctx["cd"]
+    raw_args = ctx.get("raw", tokens)[len(tokens) - len(args):]
     if not program:
         return []
-    if program in ("cd", "pushd"):
-        ctx["cd"] = True
+    if program in ("cd", "pushd", "popd"):
+        _change_dir(program, args, ctx, ctx.get("before", ""), ctx.get("after", ""))
         return []
+    if program == "alias" and not any("=" in a for a in args):
+        return []  # prints aliases
     if program in ("sudo", "doas", "alias", "apt", "apt-get") or program == "brew" and args[:1] == ["uninstall"]:
         return [("privileged", "privileged package or system command")]
     if program in ("kill", "pkill", "killall"):
         return [("privileged", "kill: stop a job with its own tool or let it finish")]
-    if program in ("chmod", "chown"):
-        return [("privileged", "chmod/chown: file modes are not changed by agents")]
+    if program == "chmod":
+        operands = _path_args(args)[1:]
+        if operands and all(_ours(p, cfg, ctx) for p in operands):
+            return [("ours", "chmod of project-owned scratch paths")]
+        return [("privileged", "chmod outside the project-owned paths: file modes are not changed by agents")]
+    if program == "chown":
+        return [("privileged", "chown: file owners are not changed by agents")]
     if program == "eval":
         return [("privileged", "eval wrapper: run the command directly")]
     shell_flag = next((a for a in args if re.match(r"^-[a-z]*c[a-z]*$", a)), None)
-    if program in ("sh", "bash", "zsh") and shell_flag:
-        return [("privileged", program + " " + shell_flag + " wrapper: run the command directly")]
+    if program in _SHELLS and shell_flag:
+        i = args.index(shell_flag) + 1
+        if i >= len(raw_args):
+            return []
+        inner = re.sub(r"\$(\w+)\x01", r"${\1}", raw_args[i])
+        return _classify_text(inner, cfg, ctx["depth"] + 1, ctx["dir"], None, ctx["cd_seen"])
     if program == "rm":
-        return [_rm_rule([] if via_xargs else _path_args(args), cfg, relative_ok, "rm")]
+        return [_rm_rule([] if via_xargs else _path_args(args), cfg, ctx, "rm")]
     if program == "mv":
         paths = _path_args(args)
-        if paths and all(_is_ours_path(p, cfg, relative_ok) for p in paths):
+        if paths and all(_ours(p, cfg, ctx) for p in paths):
             return [("ours", "mv within project-owned paths")]
-        if relative_ok and paths and all(_is_plain_relative(p) for p in paths):
+        if ctx["dir"] is not None and paths and all(_is_plain_relative(p) for p in paths):
             return []
         return [("approval", "mv outside the project-owned paths")]
     if program == "find":
@@ -2076,10 +2212,10 @@ def _classify_tokens(tokens, cfg, ctx):
                 if a.startswith(("-", "(", "!")):
                     break
                 start.append(a)
-            return [_rm_rule(start, cfg, relative_ok, "find -delete")]
+            return [_rm_rule(start, cfg, ctx, "find -delete")]
         return []
     if program == "git":
-        return _git_class(args)
+        return _git_class(args, cfg, ctx)
     if program == "kubectl":
         return _kubectl_class(args, cfg, ctx)
     if program == "docker":
@@ -2101,11 +2237,14 @@ def _classify_tokens(tokens, cfg, ctx):
         )
         return _inline_code_hits(program, code)
     if program in cfg["sql_clients"]:
-        return _sql_hits(args, _sql_file_texts(args, cfg["sql_files"], relative_ok))
+        keys = [_sql_key(p, ctx) for p in _sql_file_args(args)]
+        cfg["sql_paths"].extend(k for k in keys if k is not None)
+        return _sql_hits(args, [None if k is None else cfg["sql_files"].get(k) for k in keys])
     if program in ("echo", "printf"):
         target = _redirect_target(args)
-        if target:
-            cfg["sql_files"][target] = " ".join(args[:args.index(target) - 1])
+        key = target and _sql_key(target, ctx)
+        if key:
+            cfg["sql_files"][key] = " ".join(args[:args.index(target) - 1])
     return []
 
 
@@ -2127,50 +2266,155 @@ def _sql_file_args(args):
     return paths
 
 
-def _sql_file_texts(args, files, relative_ok):
-    """Text of every SQL file the client reads; None where it is not known: a
-    variable or glob path, a relative path after a cd, a file nobody read."""
-    texts = []
-    for p in _sql_file_args(args):
-        if re.search(r"[$*?`{]", p) or not relative_ok and not p.startswith(("/", "~")):
-            texts.append(None)
+def _sql_key(path, ctx):
+    """The path a SQL file is known by: as written while no cd ran and no
+    working directory is known, else resolved; None for a variable or glob
+    path or a relative path whose directory is unknown."""
+    if re.search(r"[$*?`{]", path):
+        return None
+    if not ctx["dir"] and not ctx["cd_seen"] and not path.startswith(("/", "~")):
+        return path
+    return _resolve(path, ctx)
+
+
+def sql_file_paths(command, params=None, cwd=None):
+    """Paths SQL clients in ``command`` read from, resolved through the cd's
+    the command runs (relative ones against ``cwd``); the hook reads them and
+    passes their text to ``destructive_decision`` as ``sql_file_texts``."""
+    cfg = _decision_cfg(params, None)
+    _classify_text(command, cfg, 0, os.path.abspath(cwd) if cwd else "")
+    return list(dict.fromkeys(cfg["sql_paths"]))
+
+
+_HOME_VARS = ("HOME",)
+_ASSIGN_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$", re.S)
+_VAR_RE = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)\x01?")
+_BRACED_VAR_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+_MKTEMP_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)=\"?(?:\$\(\s*mktemp\b[^)`]*\)|`\s*mktemp\b[^)`]*`)\"?")
+_BLOCK_OPEN = frozenset({"if", "for", "while", "until", "case", "select"})
+_BLOCK_CLOSE = frozenset({"fi", "done", "esac"})
+
+
+def _new_ctx(dir_, depth, text, variables=None):
+    """``dir``: an absolute working directory; "" when none is known and no cd
+    ran (relative operands are judged by their text); None when unknown."""
+    base = {"HOME": os.path.expanduser("~")}
+    base.update(variables or {})
+    return {"text": text, "depth": depth, "dir": dir_, "cd_seen": False, "vars": base,
+            "parens": [], "brace": 0, "block": 0, "backtick": False}
+
+
+def _substitute(token, variables):
+    out = _VAR_RE.sub(lambda m: variables.get(m.group(1), m.group(0)), token)
+    return out.replace("\x01", "")
+
+
+def _scope(punct, ctx):
+    """Apply the grouping characters between two segments: a subshell ``( )``
+    or backtick restores the directory on exit, a ``{ }`` group or function
+    body does not."""
+    for ch in punct:
+        if ch == "(" or ch == "`" and not ctx["backtick"]:
+            ctx["parens"].append(ctx["dir"])
+            ctx["backtick"] = ctx["backtick"] or ch == "`"
+        elif ch == ")" or ch == "`":
+            ctx["dir"] = ctx["parens"].pop() if ctx["parens"] else None
+            if ch == "`":
+                ctx["backtick"] = False
+        elif ch == "{":
+            ctx["brace"] += 1
+        elif ch == "}":
+            ctx["brace"] = max(0, ctx["brace"] - 1)
+
+
+def _bind(tokens, ctx):
+    """Bind ``NAME=value`` assignments of a segment that runs no command; a
+    value with an unknown expansion unbinds the name. True when handled."""
+    words = tokens[1:] if tokens[0] in ("export", "local", "declare", "readonly") else tokens
+    if not words or not all(_ASSIGN_RE.match(w) for w in words):
+        return False
+    for word in words:
+        name, value = _ASSIGN_RE.match(word).groups()
+        value = _substitute(value, ctx["vars"])
+        if any(ch in value for ch in "$`"):
+            ctx["vars"].pop(name, None)
         else:
-            texts.append(files.get(p))
-    return texts
+            ctx["vars"][name] = value
+    return True
 
 
-def sql_file_paths(command, params=None):
-    """Literal paths SQL clients in ``command`` read from; the hook reads them
-    and passes their text to ``destructive_decision`` as ``sql_file_texts``."""
-    clients = _merged_params(params)["destructive"]["sql_clients"]
-    paths = []
-    for tokens in _shell_segments(_split_heredocs(command)[0]):
+def _walk(script, cfg, ctx):
+    hits, function = [], None
+    for tokens, before, after in _segments_meta(script):
+        _scope(before, ctx)
+        if tokens[0] in _BLOCK_OPEN:
+            ctx["block"] += 1
+            if tokens[0] in ("for", "select") and len(tokens) > 1:
+                ctx["vars"].pop(tokens[1], None)
+        elif tokens[0] in _BLOCK_CLOSE:
+            ctx["block"] = max(0, ctx["block"] - 1)
+            continue
+        if function and "{" in before:
+            name, function = function, None
+            if _command_head(tokens)[0] == "kubectl" and "$@" in tokens:
+                # A kubectl wrapper ``k(){ kubectl --context X "$@"; }``: the
+                # definition runs nothing; each call is classed as kubectl.
+                cfg["functions"][name] = tokens[:tokens.index("$@")]
+                continue
+        if len(tokens) == 1 and after.replace(" ", "").startswith("()"):
+            function = tokens[0]
+            continue
+        if tokens[:1] == ["function"] and len(tokens) == 2:
+            function = tokens[1]
+            continue
+        if tokens[0] in cfg["functions"]:
+            tokens = cfg["functions"][tokens[0]] + tokens[1:]
+        if _bind(tokens, ctx):
+            continue
         program, args, _ = _command_head(tokens)
-        if program in clients:
-            paths.extend(p for p in _sql_file_args(args) if not re.search(r"[$*?`{]", p))
-    return paths
+        if program == "read":
+            for word in args:
+                ctx["vars"].pop(word, None)
+        for word in tokens:
+            match = _ASSIGN_RE.match(word)
+            if not match:
+                break
+            ctx["vars"].pop(match.group(1), None)
+        if any(t.startswith("<<") and not t.startswith("<<<") for t in tokens):
+            # The next heredoc body in order is what a `> file` redirect here writes.
+            body = ctx["heredoc_bodies"].pop(0) if ctx.get("heredoc_bodies") else None
+            target = _redirect_target(tokens)
+            key = target and body is not None and _sql_key(_substitute(target, ctx["vars"]), ctx)
+            if key:
+                cfg["sql_files"][key] = body
+        ctx.update(raw=tokens, before=before, after=after)
+        hits.extend(_classify_tokens([_substitute(t, ctx["vars"]) for t in tokens], cfg, ctx))
+    return hits
 
 
-def _classify_text(command, cfg, depth=0):
+def _classify_text(command, cfg, depth=0, dir_="", variables=None, cd_seen=False):
+    """``dir_`` is the working directory the text starts in (see ``_new_ctx``);
+    ``cd_seen``: a cd already ran, so relative prefixes no longer count."""
     if depth > 3:
         return [("impossible", "command nesting too deep to classify")]
-    ctx = {"text": command, "cd": False, "depth": depth}
+    ctx = _new_ctx(dir_, depth, command, variables)
+    ctx["cd_seen"] = cd_seen
     script, heredocs = _split_heredocs(command)
-    for line, body, _ in heredocs:
-        for tokens in _shell_segments(line):
-            target = _redirect_target(tokens)
-            if target:
-                cfg["sql_files"][target] = body
-    hits = []
-    for tokens in _shell_segments(script):
-        hits.extend(_classify_tokens(tokens, cfg, ctx))
+    ctx["heredoc_bodies"] = [body for _, body, _ in heredocs]
+    script = script.replace("\\\n", " ")
+    script = _MKTEMP_RE.sub(lambda m: m.group(1) + "=" + _temp_prefixes()[0] + "mktemp", script)
+    script = _BRACED_VAR_RE.sub(lambda m: "$" + m.group(1) + "\x01", script)
+    hits = _walk(script, cfg, ctx)
+    # Substitutions and heredoc shells start where the command started unless
+    # a cd ran somewhere in it: which cd applies to them is not tracked.
+    inner_dir = dir_ if not ctx["cd_seen"] else None
     for m in _INNER_SUBST_RE.finditer(script):
-        hits.extend(_classify_text(m.group(1) or m.group(2) or "", cfg, depth + 1))
+        hits.extend(_classify_text(m.group(1) or m.group(2) or "", cfg, depth + 1, inner_dir, ctx["vars"]))
     for line, body, quoted in heredocs:
         if not quoted:
             for m in _INNER_SUBST_RE.finditer(body):
-                hits.extend(_classify_text(m.group(1) or m.group(2) or "", cfg, depth + 1))
-        hits.extend(_heredoc_hits(line, body, cfg, depth))
+                hits.extend(_classify_text(m.group(1) or m.group(2) or "", cfg, depth + 1, inner_dir))
+        hits.extend(_heredoc_hits(line, body, cfg, depth, inner_dir))
     return hits
 
 
@@ -2192,7 +2436,7 @@ def _split_heredocs(command):
     return "\n".join(script), heredocs
 
 
-def _heredoc_hits(line, body, cfg, depth):
+def _heredoc_hits(line, body, cfg, depth, dir_):
     """A heredoc body is data unless it feeds a shell, an interpreter, a remote
     shell or a SQL client; then it is classed as what that head runs. Every
     segment of the opening line counts: ``cat <<EOF | bash`` feeds bash."""
@@ -2200,7 +2444,9 @@ def _heredoc_hits(line, body, cfg, depth):
         program, args, _ = _command_head(tokens)
         if program == "kubectl" and "exec" in args or program == "docker" and "exec" in args:
             program = "ssh"
-        if program in _SHELLS or program == "ssh":
+        if program in _SHELLS:
+            return _classify_text(body, cfg, depth + 1, dir_)
+        if program == "ssh":
             return _classify_text(body, cfg, depth + 1)
         if _INLINE_INTERPRETER_RE.match(program) and _inline_code_hits(program, body):
             return _inline_code_hits(program, body)
@@ -2300,7 +2546,7 @@ def approval_path_decision(file_path, home, params=None):
 
 def destructive_decision(
     command, agent_type, plan_text, plan_hash, params=None, permission_mode="",
-    sql_file_texts=None, approved=False,
+    sql_file_texts=None, approved=False, cwd=None,
 ):
     """Class and permission decision for one Bash command.
 
@@ -2313,10 +2559,11 @@ def destructive_decision(
     path of ``sql_file_paths(command)`` to its text, None when unreadable.
     ``approved`` says whether the owner's prompt approved this plan hash in
     this session (plan-approval.py); an approved valid plan is allowed once.
-    A malformed params value raises.
+    ``cwd`` is the hook input's working directory; relative operands resolve
+    against it and the cd's the command runs. A malformed params value raises.
     Returns {"decision": allow|ask|deny, "class", "reason"}.
     """
-    cfg = dict(_merged_params(params)["destructive"], sql_files=dict(sql_file_texts or {}))
+    cfg = _decision_cfg(params, sql_file_texts)
     if len((command or "").encode("utf-8", "surrogatepass")) > int(cfg["command_max_bytes"]):
         return {"decision": "deny", "class": "impossible",
                 "reason": "command too long for the destructive gate"}
@@ -2334,7 +2581,7 @@ def destructive_decision(
                 "with the line: APPROVE " + marker[1] + "\nthen run the same command again"
             )}
     else:
-        result = _command_decision(command or "", cfg)
+        result = _command_decision(command or "", cfg, os.path.abspath(cwd) if cwd else "")
     if (
         result["decision"] == "ask"
         and permission_mode == "bypassPermissions"
@@ -2347,8 +2594,17 @@ def destructive_decision(
     return result
 
 
-def _command_decision(command, cfg):
-    found = _classify_text(command, cfg)
+def _decision_cfg(params, sql_file_texts):
+    cfg = dict(_merged_params(params)["destructive"])
+    cfg.update(
+        sql_files=dict(sql_file_texts or {}), sql_paths=[], functions={},
+        ours_paths=list(cfg["ours_paths"]) + _temp_prefixes(),
+    )
+    return cfg
+
+
+def _command_decision(command, cfg, cwd):
+    found = _classify_text(command, cfg, 0, cwd)
     if not found:
         return {"decision": "allow", "class": "none", "reason": ""}
     cls, reason = max(found, key=lambda hit: _SEVERITY[hit[0]])

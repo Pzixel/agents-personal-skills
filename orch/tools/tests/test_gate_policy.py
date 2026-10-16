@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -992,8 +993,8 @@ class DestructiveDecisionTest(unittest.TestCase):
     def test_privileged_commands_are_denied(self):
         for cmd in (
             "sudo ls", "apt-get install x", "brew uninstall x", "kill -9 1", "pkill -f x",
-            "killall x", "chmod +x tmp/x", "chown me tmp/x", "bash -lc ls", "zsh -ic ls",
-            "sh -c ls", "eval ls",
+            "killall x", "chmod +x /etc/x", "chmod 600 ~/.ssh/config", "chown me tmp/x",
+            "chown me /tmp/q.sh", "eval ls",
         ):
             with self.subTest(cmd=cmd):
                 self.assertEqual(_destructive(cmd)["class"], "privileged")
@@ -1080,11 +1081,16 @@ class DestructiveDecisionTest(unittest.TestCase):
             ["a.sql"],
         )
 
-    def test_shell_c_reason_names_the_wrapper(self):
-        self.assertEqual(
-            _destructive("/usr/bin/time -p sh -c 'ls'")["reason"].split(":")[0],
-            "sh -c wrapper",
-        )
+    def test_shell_c_string_is_classed_as_a_command(self):
+        cases = {
+            "sh -c 'rm -rf /data'": "deny",
+            "kubectl exec p -- sh -c 'rm -rf /data'": "deny",
+            "/usr/bin/time -p sh -c 'rm -rf tmp/x'": "allow",
+            "find . -name x | xargs -I{} sh -c 'echo {}'": "allow",
+        }
+        for cmd, decision in cases.items():
+            with self.subTest(cmd=cmd):
+                self.assertEqual(_destructive(cmd)["decision"], decision)
 
     def test_sql_without_undo_is_denied(self):
         for cmd in (
@@ -1189,7 +1195,8 @@ class DestructiveDecisionTest(unittest.TestCase):
                 self.assertEqual(_destructive(cmd)["decision"], decision)
 
     def test_absolute_tmp_inside_a_checkout_is_ours(self):
-        with tempfile.TemporaryDirectory() as root:
+        # Outside the system temp dir, which is ours as a whole.
+        with tempfile.TemporaryDirectory(dir=os.path.expanduser("~")) as root:
             repo, plain = os.path.join(root, "repo"), os.path.join(root, "plain")
             os.makedirs(os.path.join(repo, ".git"))
             cases = {
@@ -1215,6 +1222,115 @@ class DestructiveDecisionTest(unittest.TestCase):
 
     def test_old_override_text_does_not_lift_a_denial(self):
         self.assertEqual(_destructive("rm -rf /etc  # DESTRUCTIVE_OK: owner said")["decision"], "deny")
+
+
+def _at(command, cwd, sql_file_texts=None):
+    return gate_policy.destructive_decision(
+        command, "", None, None, sql_file_texts=sql_file_texts, cwd=cwd
+    )["decision"]
+
+
+class DestructiveWorkingDirectoryTest(unittest.TestCase):
+    """A main checkout ``main`` with a linked-worktree path ``wt`` below its
+    .worktrees, outside the system temp dir (which is ours as a whole)."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp(dir=os.path.expanduser("~"))
+        self.main = os.path.join(self.root, "main")
+        self.wt = os.path.join(self.main, ".worktrees", "task")
+        os.makedirs(os.path.join(self.wt, "tmp"))
+        os.makedirs(os.path.join(self.main, ".git"))
+
+    def tearDown(self):
+        shutil.rmtree(self.root)
+
+    def _table(self, cases):
+        for (cmd, cwd), decision in cases.items():
+            with self.subTest(cmd=cmd, cwd=cwd):
+                command = cmd.format(main=self.main, wt=self.wt)
+                self.assertEqual(_at(command, cwd.format(main=self.main, wt=self.wt)), decision)
+
+    def test_relative_operands_resolve_through_cd(self):
+        self._table({
+            ("rm -rf src/probe", "{wt}"): "allow",
+            ("rm -rf src", "{main}"): "deny",
+            ("cd {main} && rm -rf .worktrees/x", "{wt}"): "allow",
+            ("cd {wt}; rm -rf src", "{main}"): "allow",
+            ("cd {main}/.worktrees/gone; rm -rf src", "{main}"): "deny",
+            ("(cd {wt}); rm -rf b", "{main}"): "deny",
+            ("(cd {wt} && rm -rf b)", "{main}"): "allow",
+            ('cd "$X" && rm -rf foo', "{wt}"): "deny",
+            ("cd {wt} | true; rm -rf src", "{main}"): "deny",
+            ("cd {wt} || rm -rf src", "{main}"): "deny",
+            ("for d in a; do cd {wt}; done; rm -rf src", "{main}"): "deny",
+            ("rm -rf ../other/x", "{wt}"): "allow",
+            ("rm -rf ../../src", "{wt}"): "deny",
+            ("chmod +x run.sh", "{wt}"): "allow",
+            ("chmod +x run.sh", "{main}"): "deny",
+        })
+
+    def test_variables_bind_literal_values_only(self):
+        self._table({
+            ("W={wt}; rm -rf $W/tmp ${{W}}/x", "{main}"): "allow",
+            ("W={wt}; W=$(pwd); rm -rf $W/tmp", "{main}"): "deny",
+            ("W={wt} rm -rf $W/x", "{main}"): "deny",
+            ("W={wt}; sh -c 'rm -rf $W/tmp'", "{main}"): "deny",
+            ("T=$(mktemp -d); rm -rf $T", "{main}"): "allow",
+        })
+
+    def test_git_discards_only_in_an_agent_worktree(self):
+        self._table({
+            ("git reset --hard", "{wt}"): "allow",
+            ("git reset --hard", "{main}"): "deny",
+            ("W={wt}; git -C $W reset --hard", "{main}"): "allow",
+            ("git -C {wt} checkout HEAD~1 -- f", "{main}"): "allow",
+            ("git clean -fd", "{main}"): "deny",
+            ("git restore f", "{main}"): "deny",
+            ("git restore f", "{wt}"): "allow",
+            ("git restore --staged f", "{main}"): "allow",
+            ("git checkout -q origin/master -- 2>/dev/null", "{main}"): "allow",
+            ("git push --force", "{wt}"): "deny",
+        })
+
+    def test_sql_file_after_cd_is_read_from_its_resolved_path(self):
+        cmd = "cd {wt} && psql -f q.sql".format(wt=self.wt)
+        path = os.path.join(self.wt, "q.sql")
+        self.assertEqual(gate_policy.sql_file_paths(cmd, cwd=self.main), [path])
+        self.assertEqual(_at(cmd, self.main, {path: "SELECT 1;"}), "allow")
+        self.assertEqual(_at(cmd, self.main, {path: "DR" + "OP TABLE t;"}), "deny")
+
+    def test_heredoc_sql_file_written_after_cd_is_classed(self):
+        cmd = "cd {wt} && cat > q.sql <<'EOF'\nDR" "OP TABLE t;\nEOF\npsql -f q.sql"
+        self.assertEqual(_at(cmd.format(wt=self.wt), self.main), "deny")
+
+
+class DestructiveKubectlParsingTest(unittest.TestCase):
+    def test_kubectl_verbs(self):
+        cases = {
+            'k(){ kubectl --context x "$@"; }; k get po': "allow",
+            'k(){ rtk proxy kubectl --context x "$@"; }; k delete secret s': "deny",
+            "kubectl get po 2>/dev/null": "allow",
+            "kubectl -n x port-forward \\\n svc/a 8080:80": "allow",
+            "kubectl apply --dry-run=server -f x.yaml": "allow",
+            "kubectl $V delete po x": "ask",
+        }
+        for cmd, decision in cases.items():
+            with self.subTest(cmd=cmd):
+                self.assertEqual(_destructive(cmd)["decision"], decision)
+
+
+class DestructiveOursPrefixTest(unittest.TestCase):
+    def test_caches_and_system_temp_are_ours_below_their_root(self):
+        temp = tempfile.gettempdir()
+        cases = {
+            "rm -rf ~/Library/Caches/example-tool": "allow",
+            "rm -rf ~/Library": "deny",
+            "rm -rf " + os.path.join(temp, "x"): "allow",
+            "rm -rf " + temp: "deny",
+        }
+        for cmd, decision in cases.items():
+            with self.subTest(cmd=cmd):
+                self.assertEqual(_destructive(cmd)["decision"], decision)
 
 
 def _plan_run(approved, mode):

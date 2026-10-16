@@ -81,11 +81,11 @@ def main():
     limit = int(params.get("destructive", {}).get("command_max_bytes", 65536))
     sql_file_texts = {
         p: read_sql_file(os.path.join(cwd, os.path.expanduser(p)), limit)
-        for p in gate_policy.sql_file_paths(command, params)
+        for p in gate_policy.sql_file_paths(command, params, cwd)
     }
     result = gate_policy.destructive_decision(
         command, agent_type, plan_text, plan_hash, params,
-        str(payload.get("permission_mode") or ""), sql_file_texts, approved,
+        str(payload.get("permission_mode") or ""), sql_file_texts, approved, cwd,
     )
     if approved and result["decision"] == "allow":
         os.remove(approval)
