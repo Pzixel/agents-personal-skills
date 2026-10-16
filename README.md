@@ -24,7 +24,7 @@ Development material lives next to its skill and is not a skill: `dragonfly-scri
 
 ## Install for one user
 
-Clone the repository and run the installer. It links the skills into the personal skill directories of both clients (`codex-simplify` into the Codex directory only, `orch` into the Claude Code directory only) and links `agents`, `hooks` and `tools` of the Claude Code directory to `orch/`; `CLAUDE_CONFIG_DIR` selects the Claude Code directory, default `~/.claude`. An existing link to this checkout is kept; any other existing destination stops the installer before it changes anything. Links into this checkout whose skill was retired are removed. The hooks and settings of `orch` are described in [orch/README.md](orch/README.md).
+On macOS, clone the repository and run the installer. It links the skills into the personal skill directories of both clients (`codex-simplify` into the Codex directory only, `orch` into the Claude Code directory only) and links `agents`, `hooks` and `tools` of the Claude Code directory to `orch/`; `CLAUDE_CONFIG_DIR` selects the Claude Code directory, default `~/.claude`. An existing link to this checkout is kept; any other existing destination stops the installer before it changes anything. Links into this checkout whose skill was retired are removed. The hooks and settings of `orch` are described in [orch/README.md](orch/README.md).
 
 ```bash
 git clone https://github.com/Pzixel/agents-personal-skills.git && cd agents-personal-skills && ./install.sh

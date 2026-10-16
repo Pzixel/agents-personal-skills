@@ -1,9 +1,9 @@
 #!/bin/sh
 # Link this checkout's skills and orch directories into the Codex and Claude Code
-# config directories. Idempotent: rerun after every pull.
+# config directories on macOS. Idempotent: rerun after every pull.
 set -eu
 
-root=$(cd -P "$(dirname "$0")" && pwd)
+root=$(realpath "$(dirname "$0")")
 codex="$HOME/.agents"
 claude="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 
@@ -19,7 +19,7 @@ plan() {
 # Check every destination before changing anything.
 plan | while read -r dest src; do
   if [ -e "$dest" ] || [ -L "$dest" ]; then
-    [ "$(cd -P "$dest" 2>/dev/null && pwd)" = "$root/$src" ] && continue
+    [ "$(realpath "$dest" 2>/dev/null)" = "$root/$src" ] && continue
     echo "Conflicting destination: $dest" >&2
     exit 1
   fi

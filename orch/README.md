@@ -40,7 +40,7 @@ Technical questions are answered inside the flow.
 
 ## Install (skills-dir plugin)
 
-Run `./install.sh` at the repository root ([README.md](../README.md#install-for-one-user)).
+On macOS, run `./install.sh` at the repository root ([README.md](../README.md#install-for-one-user)).
 It links this directory as `~/.claude/skills/orch` and `~/.claude/{agents,hooks,tools}` to
 `orch/{agents,hooks,tools}`.
 
