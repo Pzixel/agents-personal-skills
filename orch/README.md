@@ -74,7 +74,8 @@ listed twice (bare and `orch:`), and the gates treat both alike.
   - `session-tools-link.py` — `~/.claude/{tools,hooks}` links in a fresh HOME (eval runs).
   - `memory-routing.py` — memory routing reminder; not wired in `hooks.json`.
 - `tools/` — `gate_policy.py` (pure gate decisions), `orchestrate-params.json` (thresholds,
-  spawn rights, build settings), `check-run`, `wait-for`, `secretctl` with `vault_policy.py`
+  spawn rights, build settings), `check-run`, `wait-for`, `rm-own` (removes an agent's own
+  scratch paths after checking the real path; the destructive gate lets it through), `secretctl` with `vault_policy.py`
   and `vault_files.py`, `scout.py`, `scout_policy.py`, `scout-mcp-empty.json`, `clamp.py`,
   `worktree_policy.py`, `tests/`.
 - `evals/` — the eval suite; the synthetic fixture `evals/fixtures/mini/` is tracked, results
