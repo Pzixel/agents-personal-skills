@@ -24,13 +24,13 @@ Development material lives next to its skill and is not a skill: `dragonfly-scri
 
 ## Install for one user
 
-On macOS, clone the repository and run the installer. It links the skills into the personal skill directories of both clients (`codex-simplify` into the Codex directory only, `orch` into the Claude Code directory only) and links `agents`, `hooks` and `tools` of the Claude Code directory to `orch/`; `CLAUDE_CONFIG_DIR` selects the Claude Code directory, default `~/.claude`. An existing link to this checkout is kept; any other existing destination stops the installer before it changes anything. Links into this checkout whose skill was retired are removed. The hooks and settings of `orch` are described in [orch/README.md](orch/README.md).
+On macOS 13 or later (the installer uses `/usr/bin/realpath`), clone the repository and run the installer with one argument naming the client: `codex` links the skills and `codex-simplify` into `~/.agents/skills`; `claude` links the skills and `orch` into the Claude Code `skills/` directory and links its `agents`, `hooks` and `tools` to `orch/`; `both` does both. `CLAUDE_CONFIG_DIR` selects the Claude Code directory, default `~/.claude`. An existing link to this checkout is kept; any other existing destination stops the installer before it changes anything. Links into this checkout whose skill was retired are removed from the chosen client's directory. The hooks and settings of `orch` are described in [orch/README.md](orch/README.md).
 
 ```bash
 git clone https://github.com/Pzixel/agents-personal-skills.git && cd agents-personal-skills && ./install.sh both
 ```
 
-The argument picks the client: `claude`, `codex`, or `both`. Rerun it after every pull. Both clients follow the links, so updating the checkout updates the skills; a running session keeps the body it loaded.
+Rerun it with the same argument after every pull. Both clients follow the links, so updating the checkout updates the skills; a running session keeps the body it loaded.
 
 ## Validate changes
 
@@ -38,7 +38,7 @@ The argument picks the client: `claude`, `codex`, or `both`. Rerun it after ever
 python3 -m venv .venv
 .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/python scripts/validate-skills.py
-for script in dragonfly-scripting/scripts/*.sh; do bash -n "$script"; done
+for script in dragonfly-scripting/scripts/*.sh install.sh; do bash -n "$script"; done
 for test in orch/tools/tests/test_*.py; do python3 "$test"; done
 git diff --check
 ```

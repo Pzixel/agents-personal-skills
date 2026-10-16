@@ -3,18 +3,22 @@
 # config directories on macOS. Idempotent: rerun after every pull.
 set -eu
 
-case "${1:-}" in
+[ $# -eq 1 ] || set -- ""
+case "$1" in
   claude) targets=claude ;;
   codex) targets=codex ;;
   both) targets="codex claude" ;;
   *) echo "usage: $0 claude|codex|both" >&2; exit 2 ;;
 esac
 
-root=$(realpath "$(dirname "$0")")
+root=$(dirname "$(realpath "$0")")
 codex="$HOME/.agents"
 claude="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 
 common=$(cd "$root" && echo superpowers-*-psilon dragonfly-scripting test-audit pareto-design-selection retro)
+for s in $common; do
+  [ -d "$root/$s" ] || { echo "Missing skill directory: $root/$s" >&2; exit 1; }
+done
 
 # One "<destination> <source>" pair per line; names contain no spaces.
 plan() {
