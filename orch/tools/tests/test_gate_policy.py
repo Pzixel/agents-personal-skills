@@ -1283,6 +1283,12 @@ class DestructiveWorkingDirectoryTest(unittest.TestCase):
             ("cd {main}/.worktrees/gone && echo; rm -rf src", "{main}"): "deny",
             ("cd .worktrees/gone && echo\nrm -rf src", "{main}"): "deny",
             ("if true; then cd {wt}; fi; rm -rf src", "{main}"): "deny",
+            ("cd {wt} && rm -rf tmp", "{main}"): "allow",
+            ("true && cd {wt} && rm -rf x", "{main}"): "allow",
+            ("true && cd {wt} && rm -rf x; rm -rf src", "{main}"): "deny",
+            ("cd {main}/.worktrees/gone && rm -rf x; rm -rf y", "{main}"): "deny",
+            ("false || cd {wt} && rm -rf x", "{main}"): "deny",
+            ("true && cd {wt} && true || rm -rf src", "{main}"): "deny",
         })
 
     def test_symlinks_are_resolved_before_the_ours_check(self):

@@ -2212,27 +2212,52 @@ def _lone(char, punct):
     return bool(re.search(r"(?<!\%s)\%s(?!\%s)" % (char, char, char), punct))
 
 
-def _unconditional(ctx, before, after):
-    """A segment the command's own shell surely runs: the first of its
-    ``&&``/``||`` chain, outside ``( )``, ``{ }``, blocks, loops, function
-    bodies, pipelines and background jobs."""
+def _top_level(ctx, before, after):
+    """Outside ``( )``, ``{ }``, blocks, loops, function bodies, pipelines
+    and background jobs."""
     return not (
-        ctx["parens"] or ctx["brace"] or ctx["block"] or "&&" in before or "||" in before
+        ctx["parens"] or ctx["brace"] or ctx["block"]
         or _lone("|", before + after) or _lone("&", after)
     )
 
 
+def _unconditional(ctx, before, after):
+    """A segment the command's own shell surely runs: top level and the
+    first of its ``&&``/``||`` chain."""
+    return _top_level(ctx, before, after) and "&&" not in before and "||" not in before
+
+
+def _chain_step(ctx, before):
+    """Track the ``&&``/``||`` chain a segment belongs to. A cd reached only
+    through ``&&`` holds for the rest of its ``&&`` chain; once the chain
+    ends or meets ``||`` the directory is unknown."""
+    continues = "&&" in before or "||" in before or _lone("|", before)
+    if not continues:
+        ctx["chain_or"] = False
+    if "||" in before:
+        ctx["chain_or"] = True
+    if ctx.get("cd_pending") and ("||" in before or not continues):
+        ctx["cd_pending"] = False
+        ctx["dir"] = None
+        ctx["parens"] = [None] * len(ctx["parens"])
+
+
 def _change_dir(program, args, ctx, before, after):
-    """Track the working directory through a cd. Only an unconditional cd
-    (see ``_unconditional``, and not followed by ``||``) to a literal existing
-    directory moves it; any other cd makes it unknown for the rest of the
+    """Track the working directory through a cd. A top-level cd (see
+    ``_top_level``) to a literal existing directory, reached only through
+    ``&&`` and not followed by ``||``, moves it: for the rest of the command
+    when it is first of its chain, else for the rest of its ``&&`` chain
+    (``_chain_step``). Any other cd makes it unknown for the rest of the
     command, after an enclosing subshell too."""
     ctx["cd_seen"] = True
     target = None
-    if program != "popd" and _unconditional(ctx, before, after) and "||" not in after:
+    if program != "popd" and _top_level(ctx, before, after) and "||" not in after \
+            and not ctx.get("chain_or"):
         target = _cd_target(program, args, ctx)
         if target is not None and not os.path.isdir(target):
             target = None
+    if target is not None and "&&" in before:
+        ctx["cd_pending"] = True
     ctx["dir"] = target
     if target is None:
         ctx["parens"] = [None] * len(ctx["parens"])
@@ -2450,6 +2475,7 @@ def _walk(script, cfg, ctx):
     hits, function = [], None
     for tokens, before, after in _segments_meta(script):
         _scope(before, ctx)
+        _chain_step(ctx, before)
         for i, word in enumerate(tokens):
             if word in _BLOCK_OPEN:
                 ctx["block"] += 1
