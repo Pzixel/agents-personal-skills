@@ -1,6 +1,6 @@
 ---
 name: superpowers-writing-plans-psilon
-description: 'Use for durable plans spanning 3+ stages, component/interface coordination, migrations/rollouts, cross-session handoff, risky order/recovery, or explicit written-plan request. Skip one-session work without coordination risk; brainstorm unresolved consequential design. Use a verified rolling horizon: detail next risky milestone; leave unproved later work as outcomes. Never invent detail or mistake capability for exact-target applicability.'
+description: 'Use whenever the user asks for a plan, a revised plan, or an approach before work starts ("plan", "produce the plan", "how would you do it"), and for work spanning 3+ stages, migrations or rollouts, or cross-session handoff. Sets the plan shape: short approach first, detailed plan only after approval, a reviewed plan before any code, a verified rolling horizon that details only the next risky milestone. Skip one-step answers. Never invent detail or mistake capability for exact-target applicability.'
 ---
 
 # Writing Plans
@@ -8,6 +8,11 @@ description: 'Use for durable plans spanning 3+ stages, component/interface coor
 Write for a capable engineer with the repository but no session history. Save where requested; otherwise `docs/superpowers/plans/YYYY-MM-DD-<feature-name>.md`.
 
 If consequential product semantics, success criteria, state ownership, or architecture is unresolved and user-owned, stop and resolve it with the owner first. If the outcome is fixed but feasibility is unknown, plan a Discovery milestone with its evidence, decision rule, and fallback instead of guessing downstream design.
+
+## Plan Shape
+
+- A requested plan comes as a short approach first: problem, solution, shape. The detailed plan follows only after the approach is approved.
+- Review every work plan right after it is written, before any code: five angles (reuse, simplification, efficiency, altitude, premises), as five parallel reviewers or one applying all five; rework the plan from the findings, then build. Premises: find counts, timings, files, rollout order, or load-bearing prerequisites that no verified source backs; name the source, the probe that decides, or the gate the item waits behind. A pass on finished code is too late.
 
 ## Rolling Horizon
 

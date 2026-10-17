@@ -64,6 +64,8 @@ The 2026-09-29 refresh for capable models: reviewers re-read truncated evidence 
 
 Replay eval 2026-10-14, two cases: on the plan-redirect case NONE scored 2/5 and 2/5 Accept items, OLD 4/5 and 3/5, so the body is kept; on the premature-block case all four runs tied at 4/5 with the same Reject violation. Measured use before the pass: 0 Claude loads, 5 Codex sessions.
 
+2026-10-17: description rewritten to fire on plan requests; the plan-shape rules (short approach first, detailed plan after approval, five-angle plan review before code) moved in from the owner's global rules. Headless replay of the plan-redirect case with the skill as a project skill: loads OLD 0/5, NEW 5/5, NEW on a one-step non-plan question 0/3. Joint grade, current global rules with the OLD skill vs global rules minus the moved lines with the NEW skill, 3 runs each: Accept items 9/15 vs 11/15, Form items 4/6 vs 5/6, no Reject violations in either.
+
 ### `superpowers-requesting-code-review-psilon`
 
 `code-reviewer.md` copies the body of Claude Code's built-in `/code-review` skill verbatim in its high-effort recipe, as loaded on 2026-10-14 (no source file or version pin exists). A brief header precedes it: target scope, binding requirements, the review target, and the implementer's claimed result labelled as a claim. The only body adaptation names `AGENTS.md` beside `CLAUDE.md`, because Codex reads `AGENTS.md`. `SKILL.md` only says how to dispatch the reviewer and handle its findings.
@@ -86,6 +88,8 @@ On 2026-10-17 the Tests rules moved verbatim into `test-audit/tests-rules.md`, w
 ### `pareto-design-selection`
 
 Repository-authored method for choosing a decision strategy by simulation: isolate the pure decision core, read-only production probe with a source for every number, a strategy space that always holds the baseline and the cheap extension, staged screening by necessary conditions and optimistic bounds, bounded search (five rounds, three candidates per round, three active families, early stop after two rounds without Pareto progress at a 5% tie threshold), calibrated validation with one bounded reserve, a strategy-by-metric table with a 20% tie threshold, owner choice. No examples or templates ship.
+
+2026-10-17: `optimization-method.md` holds the long form of the method for numeric goals, moved from the owner's on-demand rules file with one private pointer dropped; the skill and the orch Optimization checklist hook cite it, the hook keeps its live clauses. Headless joint-graded replay, current rules vs moved (passes per runs): targets CASE-9 3/6 vs 2/6, CASE-10 4/6 vs 2/6; controls CASE-12 2/3 vs 3/3, CASE-3 2/3 vs 3/3, CASE-7 3/3 vs 3/3. A trace sample (0 of 4 runs read any file) shows neither arm reads the long form, so the arms differ only by the hook's citation line; the target gap is unexplained and the moved version did not meet MOVED >= FULL on the targets.
 
 ### `retro`
 
