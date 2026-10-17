@@ -17,7 +17,9 @@ Vault file format is the Kubernetes keys-file format used by
 followed by its value line, repeated. A value line is one unbroken token of 30+
 characters from ``[A-Za-z0-9+/=_-]``; every other non-empty line is a pending
 label, and a label that is not followed by a value is dropped. Header lines
-therefore need no special syntax.
+therefore need no special syntax. A label ending in ``:id`` marks an identifier
+(e.g. a cloud access key ID): its value line may be 20+ characters. Such short
+values are redacted only by exact known-value match, never by shape.
 
 No I/O lives here. Functions take texts and facts as values and return
 decisions, texts, and summaries that never contain a value, only its length
@@ -31,6 +33,8 @@ import re
 VAULT_DIR_NAME = ".secrets"
 
 _VALUE_RE = re.compile(r"^[A-Za-z0-9+/=_-]{30,}$")
+IDENTIFIER_SUFFIX = ":id"
+_IDENTIFIER_VALUE_RE = re.compile(r"^[A-Za-z0-9+/=_-]{20,}$")
 # A table row ends in its value; the label is everything before it. Also the
 # threshold for "this vault line is a value" when collecting known tokens.
 _TOKEN_RE = re.compile(r"^[A-Za-z0-9+/=_.:-]{16,}$")
@@ -58,7 +62,10 @@ def mask(value):
     return "<redacted sha256:%s>" % digest(value)
 
 
-def is_value_line(line):
+def is_value_line(line, label):
+    """Whether ``line`` is the value of the pending ``label``."""
+    if label.endswith(IDENTIFIER_SUFFIX):
+        return bool(_IDENTIFIER_VALUE_RE.match(line))
     return bool(_VALUE_RE.match(line))
 
 
@@ -75,7 +82,7 @@ def parse_entries(text):
         line = raw.strip()
         if not line:
             continue
-        if pending is not None and is_value_line(line):
+        if pending is not None and is_value_line(line, pending):
             if pending in index:
                 entries[index[pending]] = (pending, line)
             else:
@@ -123,7 +130,7 @@ def merge(base_text, updates_text, renames=None):
     pending = None  # (label, index into out)
     for raw in base_text.splitlines():
         line = raw.strip()
-        if pending is not None and line and is_value_line(line):
+        if pending is not None and line and is_value_line(line, pending[0]):
             label, label_index = pending
             pending = None
             target = renames.get(label, label)
@@ -157,7 +164,8 @@ def vault_tokens(file_texts):
     for text in file_texts:
         for raw in text.splitlines():
             line = raw.strip()
-            if _TOKEN_RE.match(line) and not line.isdigit():
+            # An identifier label is never a value: value lines cannot hold ':'.
+            if _TOKEN_RE.match(line) and not line.isdigit() and not line.endswith(IDENTIFIER_SUFFIX):
                 tokens.add(line)
     return tokens
 

@@ -23,6 +23,13 @@ class ParseEntriesTest(unittest.TestCase):
         text = "A\n%s\nB\n%s\nA\n%s\n" % (KEY_A, KEY_B, KEY_C)
         self.assertEqual(vault_policy.parse_entries(text), [("A", KEY_C), ("B", KEY_B)])
 
+    def test_identifier_label_accepts_a_20_char_value(self):
+        text = "ACCESS_KEY_ID:id\nAKIAEXAMPLE000000000\n"
+        self.assertEqual(vault_policy.parse_entries(text), [("ACCESS_KEY_ID:id", "AKIAEXAMPLE000000000")])
+
+    def test_unmarked_label_refuses_a_20_char_value(self):
+        self.assertEqual(vault_policy.parse_entries("ACCESS_KEY_ID\nAKIAEXAMPLE000000000\n"), [])
+
 
 class ImportTableTest(unittest.TestCase):
     def test_label_words_before_the_value_and_header_rows_skipped(self):
@@ -71,6 +78,12 @@ class RedactionTest(unittest.TestCase):
         out = gate_policy.redact_secrets(text)
         self.assertNotIn(KEY_B, out)
         self.assertEqual(out.splitlines()[1:], text.splitlines()[1:])
+
+    def test_identifier_masked_by_exact_match_other_20_char_tokens_kept(self):
+        tokens = vault_policy.vault_tokens(["ACCESS_KEY_ID:id\nAKIAEXAMPLE000000000\n"])
+        out = gate_policy.redact_secrets("ACCESS_KEY_ID:id AKIAEXAMPLE000000000 other AKIAOTHERVALUE111111", tokens)
+        self.assertEqual(
+            out, "ACCESS_KEY_ID:id %s other AKIAOTHERVALUE111111" % vault_policy.mask("AKIAEXAMPLE000000000"))
 
     def test_tree_redaction_keeps_shape(self):
         tokens = {KEY_A}
