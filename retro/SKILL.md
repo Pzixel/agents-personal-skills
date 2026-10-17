@@ -75,7 +75,8 @@ Measured on one run of this method: a subject run ~50k tokens and 1-2 min;
 one comparison 30-60 min and ~1-1.5M tokens; user labelling ~10 min per
 case; one new case through comparison and live check 1-2 h. State the cost
 before stage 4; when the user did not ask to measure or apply, stop after
-stage 2 with the pre-registration written and offer the comparison.
+stage 2 and offer the comparison. Every proposed change gets its
+`VARIANT.md` written then, marked pending while its Minimum is unconfirmed.
 
 ## Report
 
