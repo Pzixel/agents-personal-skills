@@ -113,7 +113,12 @@ session holding a known user correction, with comparisons forbidden.
 First run: wrote findings, episodes, a case with input packet, Minimum and
 Fail rubric, grader-only files, and a pre-registered `VARIANT.md`, but the
 report omitted the comparison cost; the Report section now requires it.
-Second run: same files plus the cost line in the report. Not measured: a
+Second run: same files plus the cost line in the report. Third run: no
+`VARIANT.md`, because the case's Minimum was unconfirmed; the Costs section
+now pre-registers every proposed change, marked pending. Fourth run: case,
+rubric, `VARIANT.md` and the cost line all present. The subject could also
+reach other evals stores on the machine through Bash; the run is not
+isolated from them. Not measured: a
 full comparison, grader validation, the apply and live-check stages. R16
 above ("proposal only") predates apply-by-default and no longer holds when
 the user asks to apply.
