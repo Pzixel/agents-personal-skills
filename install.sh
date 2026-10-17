@@ -40,15 +40,18 @@ rules="$root/rules/always-on.md"
 begin="<!-- BEGIN agents-personal-skills rules/always-on.md -->"
 end="<!-- END agents-personal-skills rules/always-on.md -->"
 [ -f "$rules" ] || { echo "Missing rules file: $rules" >&2; exit 1; }
+for f in "$claude/CLAUDE.md" "$codex_rules"; do
+  if [ -e "$f" ] && [ ! -r "$f" ]; then echo "Cannot read $f" >&2; exit 1; fi
+done
 
-# A Codex rules file may hold at most one complete marked block.
+# A Codex rules file may hold at most one complete marked block, BEGIN before END.
 case " $targets " in
   *" codex "*)
     if [ -f "$codex_rules" ]; then
       nb=$(grep -cxF "$begin" "$codex_rules" || true)
       ne=$(grep -cxF "$end" "$codex_rules" || true)
-      bl=$(grep -nxF "$begin" "$codex_rules" | cut -d: -f1 || true)
-      el=$(grep -nxF "$end" "$codex_rules" | cut -d: -f1 || true)
+      bl=$(grep -nxF "$begin" "$codex_rules" | cut -d: -f1)
+      el=$(grep -nxF "$end" "$codex_rules" | cut -d: -f1)
       if [ "$nb" -gt 1 ] || [ "$nb" != "$ne" ] || { [ "$nb" = 1 ] && [ "$bl" -gt "$el" ]; }; then
         echo "Malformed always-on block in $codex_rules (BEGIN=$nb END=$ne)" >&2
         exit 1
@@ -87,38 +90,68 @@ plan | while read -r dest src; do
   echo "linked $dest -> $root/$src"
 done
 
-# Always-on rules. Claude Code: one import line in the user CLAUDE.md, unless an
-# existing @-import already loads a file holding the Codex block.
+# Always-on rules. A rewritten file is written at its symlink target (dangling
+# links included) through a sibling temp file: mode kept, hard links not.
+tmp=""
+trap '[ -z "$tmp" ] || rm -f "$tmp"' EXIT
+
+real_path() {
+  if [ -e "$1" ]; then realpath "$1"
+  elif [ -L "$1" ]; then
+    lt=$(readlink "$1")
+    case $lt in /*) echo "$lt" ;; *) echo "$(dirname "$1")/$lt" ;; esac
+  else mkdir -p "$(dirname "$1")"; echo "$(realpath "$(dirname "$1")")/$(basename "$1")"
+  fi
+}
+
+# Start $tmp next to $1, carrying $1's mode when it exists (new file: 600).
+start_tmp() {
+  mkdir -p "$(dirname "$1")"
+  tmp=$(mktemp "$1.XXXXXX")
+  if [ -f "$1" ]; then cp -p "$1" "$tmp"; fi
+}
+
+# Replace $1 with $tmp unless the content is unchanged; $2 is the message.
+finish_tmp() {
+  if [ -f "$1" ] && cmp -s "$tmp" "$1"; then rm "$tmp"; else mv "$tmp" "$1"; echo "$2"; fi
+  tmp=""
+}
+
+# Claude Code: one import line in the user CLAUDE.md, unless a line-start @-import
+# already loads a file holding the Codex block; then a direct line is removed.
 # Codex has no import: one marked block holding the file, replaced on every run
 # (targets list codex first, so with `both` the block exists before the check).
 for t in $targets; do
   if [ "$t" = claude ]; then
     line="@$rules"
-    mkdir -p "$claude"
-    touch "$claude/CLAUDE.md"
+    cm=$(real_path "$claude/CLAUDE.md")
+    mkdir -p "$(dirname "$cm")"
+    touch "$cm"
     via=""
-    for ref in $(sed -n 's/^@//p' "$claude/CLAUDE.md"); do
+    for ref in $(sed -n 's/^@//p' "$cm"); do
       case $ref in "~/"*) ref="$HOME/${ref#"~/"}" ;; esac
-      [ -f "$ref" ] && grep -qxF "$begin" "$ref" && via=$ref && break
+      if [ -f "$ref" ] && grep -qxF "$begin" "$ref"; then via=$ref; break; fi
     done
-    if grep -qxF "$line" "$claude/CLAUDE.md"; then
-      :
-    elif [ -n "$via" ]; then
-      echo "skipped $line: $claude/CLAUDE.md already imports the rules block via $via"
-    else
-      if [ -s "$claude/CLAUDE.md" ] && [ -n "$(tail -c 1 "$claude/CLAUDE.md")" ]; then echo >> "$claude/CLAUDE.md"; fi
-      echo "$line" >> "$claude/CLAUDE.md"
-      echo "added $line to $claude/CLAUDE.md"
+    if [ -n "$via" ]; then
+      if grep -qxF "$line" "$cm"; then
+        start_tmp "$cm"
+        grep -vxF "$line" "$cm" > "$tmp" || true
+        finish_tmp "$cm" "removed $line from $cm: rules arrive via $via"
+      else
+        echo "skipped $line: $cm already imports the rules block via $via"
+      fi
+    elif ! grep -qxF "$line" "$cm"; then
+      if [ -s "$cm" ] && [ -n "$(tail -c 1 "$cm")" ]; then echo >> "$cm"; fi
+      echo "$line" >> "$cm"
+      echo "added $line to $cm"
     fi
   else
-    # Write the real file behind a symlink; keep its mode (new file: 600 from mktemp).
-    mkdir -p "$(dirname "$codex_rules")"
-    if [ -e "$codex_rules" ]; then real=$(realpath "$codex_rules"); else real="$(realpath "$(dirname "$codex_rules")")/$(basename "$codex_rules")"; fi
-    tmp=$(mktemp "$real.XXXXXX")
-    trap 'rm -f "$tmp"' EXIT
-    [ -f "$real" ] && cp -p "$real" "$tmp"
+    real=$(real_path "$codex_rules")
+    has_block=no
+    if [ -f "$real" ] && grep -qxF "$begin" "$real"; then has_block=yes; fi
+    start_tmp "$real"
     {
-      if [ -f "$real" ] && grep -qxF "$begin" "$real"; then
+      if [ $has_block = yes ]; then
         awk -v b="$begin" '$0 == b { exit } { print }' "$real"
       elif [ -s "$real" ]; then
         cat "$real"
@@ -127,16 +160,10 @@ for t in $targets; do
       echo "$begin"
       cat "$rules"
       echo "$end"
-      if [ -f "$real" ] && grep -qxF "$begin" "$real"; then
+      if [ $has_block = yes ]; then
         awk -v e="$end" 'after { print } $0 == e { after = 1 }' "$real"
       fi
     } > "$tmp"
-    if [ -f "$real" ] && cmp -s "$tmp" "$real"; then
-      rm "$tmp"
-    else
-      mv "$tmp" "$real"
-      echo "updated always-on block in $real"
-    fi
-    trap - EXIT
+    finish_tmp "$real" "updated always-on block in $real"
   fi
 done
