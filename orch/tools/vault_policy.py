@@ -12,8 +12,8 @@ Two mechanical layers use it:
    API-key-shaped token in a tool result. A value the model never sees is a
    value it cannot print.
 
-Vault file format is the Kubernetes keys-file format used by
-`example-keys` (see `example-collector/src/keys.rs`): a label line
+Vault file format is a Kubernetes keys-file format (as read by a service's
+`example-keys` loader): a label line
 followed by its value line, repeated. A value line is one unbroken token of 30+
 characters from ``[A-Za-z0-9+/=_-]``; every other non-empty line is a pending
 label, and a label that is not followed by a value is dropped. Header lines
@@ -35,11 +35,10 @@ VAULT_DIR_NAME = ".secrets"
 _VALUE_RE = re.compile(r"^[A-Za-z0-9+/=_-]{30,}$")
 IDENTIFIER_SUFFIX = ":id"
 _IDENTIFIER_VALUE_RE = re.compile(r"^[A-Za-z0-9+/=_-]{20,}$")
-# A table row ends in its value; the label is everything before it. Also the
-# threshold for "this vault line is a value" when collecting known tokens.
+# A table row ends in its value; the label is everything before it.
 _TOKEN_RE = re.compile(r"^[A-Za-z0-9+/=_.:-]{16,}$")
-# Standalone standard-base64 token long enough to be an API key (an Examplevendor key
-# is 68 chars). May not start at or right after a path separator: paths stay readable.
+# Standalone standard-base64 token long enough to be an API key (a typical
+# vendor API key is 40-70 chars). May not start at or right after a path separator: paths stay readable.
 _SHAPED_RE = re.compile(
     r"(?<![A-Za-z0-9+/=_.-])[A-Za-z0-9+][A-Za-z0-9+/]{39,}={0,2}(?![A-Za-z0-9+/=_-])"
 )
@@ -73,7 +72,7 @@ def is_value_line(line, label):
 
 
 def parse_entries(text):
-    """Ordered ``[(label, value)]`` with the keys.rs semantics: a repeated label
+    """Ordered ``[(label, value)]`` with keys-file semantics: a repeated label
     keeps the last value in the position of its first occurrence."""
     entries = []
     index = {}
@@ -159,15 +158,9 @@ def merge(base_text, updates_text, renames=None):
 
 
 def vault_tokens(file_texts):
-    """Secret values held by vault files: every line that is one unbroken token of 16+ chars."""
-    tokens = set()
-    for text in file_texts:
-        for raw in text.splitlines():
-            line = raw.strip()
-            # An identifier label is never a value: value lines cannot hold ':'.
-            if _TOKEN_RE.match(line) and not line.isdigit() and not line.endswith(IDENTIFIER_SUFFIX):
-                tokens.add(line)
-    return tokens
+    """Secret values held by vault files: the value of every parsed entry. Labels
+    are never tokens, so they stay readable and usable as command arguments."""
+    return {value for text in file_texts for _label, value in parse_entries(text)}
 
 
 def redact_known(text, tokens):
