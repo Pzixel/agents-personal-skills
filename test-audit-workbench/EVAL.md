@@ -25,3 +25,14 @@ four-lens rewrite, and two stub versions. STUB v2 passed 20/20 cases and the shi
 text (v2 plus two Report clarifications) 4/4 on the cases those touch; v1 (144 words) also passed 10/10 on the first ten with T10 3/3. No skill
 text passed 19/20. The one difference is T10, whose deciding Accept item the
 stub restates, so T10 is not independent of the pre-existing rubric. Arms, numbers and confounds: [benchmark.md](benchmark.md).
+
+## PORTABLE recipe (no user-level rules)
+
+Run each subject as a fresh headless session from an empty directory that
+holds only `.claude/skills/test-audit` (a link to `../test-audit/`):
+`claude -p --setting-sources project --output-format stream-json --verbose "<evaluation_request + one case>"`.
+`--setting-sources project` keeps the authenticated config but loads no
+user-level settings or rules. The `result` event is the candidate; a `Skill`
+tool call for `test-audit` in the trace is the load witness. Grade blind, one
+grader per case, the rubric's Accept items as the minimum and Reject items as
+fail lines.

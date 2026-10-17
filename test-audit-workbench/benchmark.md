@@ -74,3 +74,28 @@ red-before-green for a new regression test.
 - Agents were Claude subagents, not Codex.
 - Agents carried the owner's global rules in every arm, so NONE already
   includes those rules.
+
+## 2026-10-17 PORTABLE replay
+
+Question: do the cases that exercise the Tests rules still pass when those
+rules come only from `test-audit/tests-rules.md`, with no user-level rules
+loaded? Arm PORTABLE: fresh headless `claude -p --setting-sources project`
+sessions from an empty directory whose `.claude/skills/test-audit` links to the
+skill; the evaluation request of `cases.json` plus one case. Skill-load witness:
+a `Skill` call for `test-audit` in each run's stream-json trace. Grading: one
+blind headless grader per case, the rubric's Accept items as Minimum and Reject
+items as Fail lines, one verdict file per run (18 files, no duplicates by md5).
+
+| Case | PORTABLE runs passed | Runs with the skill loaded | Runs that read tests-rules.md | Baseline STUB v2, 2026-10-14 (runs passed) |
+| --- | --- | --- | --- | --- |
+| T03 | 3/3 | 3/3 | 3/3 | 1/1 |
+| T06 | 3/3 | 3/3 | 3/3 | 1/1 |
+| T07 | 3/3 | 3/3 | 3/3 | 1/1 |
+| T09 | 3/3 | 3/3 | 3/3 | 1/1 |
+| T13 | 3/3 | 3/3 | 3/3 | 1/1 |
+| T10 (control) | 3/3 | 3/3 | 3/3 | 2/2 |
+
+Not worse on every case. Confounds: the grader ran headless rather than as a
+subagent; synthetic cases as above; the evaluation request names the skill, so
+the load witness says the skill body and rules reached the agent, not that its
+description triggers it.
