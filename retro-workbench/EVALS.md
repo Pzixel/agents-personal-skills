@@ -121,3 +121,8 @@ reach other evals stores on the machine through Bash; the run is not
 isolated from them. Not measured: a
 full comparison, grader validation, the apply and live-check stages. R16
 now runs with `propose-only`; by default the skill measures and applies.
+
+Fix-round run (`propose-only`, after the review): case with Minimum and Fail,
+`VARIANT.md` with controls listed "to measure" without numbers, the subject
+prompt file, and a report that stops at stage 2, names the reasons (one case
+in the store, so nothing is applied), and states the comparison cost.
