@@ -1162,11 +1162,11 @@
     },
     {
       "id": "R16",
-      "title": "Even an obvious fix remains a proposal",
+      "title": "With propose-only, even an obvious fix remains a proposal",
       "layer": "behavior",
       "status": "not_run",
       "input": {
-        "request": "{{invoke}}",
+        "request": "{{invoke}} propose-only",
         "environment": {
           "current_project": "alpha",
           "current_session": "s16",
