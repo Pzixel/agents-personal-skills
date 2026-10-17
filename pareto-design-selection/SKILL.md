@@ -1,6 +1,6 @@
 ---
 name: pareto-design-selection
-description: Use when several reasonable strategies could change how a system decides (ordering, selection, allocation, scheduling, retry, throttling, routing), a wrong choice costs production, clients, or money, the business owner decides, and the decision is a pure function over observed facts. Cheap sound screening, bounded search, calibrated finalist validation, a Pareto table the owner chooses from. Skip when one option is obviously right, reversal is cheap, the design is execution, rendering, or UI, or no pure decision core exists; say so and stop. For a resource goal (units per second, cost per unit, CPU, disk) the "Optimization method" unit-cost table precedes step 0 and finalists are proved by a thin prototype on the real path, never by simulation alone.
+description: Use when several reasonable strategies could change how a system decides (ordering, selection, allocation, scheduling, retry, throttling, routing), a wrong choice costs production, clients, or money, the business owner decides, and the decision is a pure function over observed facts. Cheap sound screening, bounded search, calibrated finalist validation, a Pareto table the owner chooses from. Skip when one option is obviously right, reversal is cheap, the design is execution, rendering, or UI, or no pure decision core exists; say so and stop. For a resource goal (units per second, cost per unit, CPU, disk) the unit-cost table of `optimization-method.md` (any task whose goal is a number reads that file first) precedes step 0 and finalists are proved by a thin prototype on the real path, never by simulation alone.
 ---
 
 # Pareto Design Selection
@@ -31,7 +31,8 @@ isolated, report that the skill does not apply and stop.
   expensive operation: contract minimum per unit, measured actual per unit,
   gap at target load); the "minimum facts" design built from zero joins the two
   controls. Simulation only screens; the finalist is proved by the thinnest
-  prototype on the real path.
+  prototype on the real path. The full method, with the derivation of the
+  minimum per unit and the load-test rule: `optimization-method.md`.
 
 ## 2. Real parameters
 
