@@ -35,7 +35,7 @@ For behavioral cases, give 0, 1, or 2 on each dimension:
 - Actions: 2 — minimal, appropriate, verifiable changes or a justified zero;
   1 — the direction is useful but effect verification or prioritization is weak;
   0 — useless, process-bloating, or unrelated to the observations.
-- Concision: 2 — conclusions instead of a chronicle, at most three changes,
+- Concision: 2 — conclusions instead of a chronicle, only changes that passed their comparison (or, under `propose-only`, at most three proposals),
   necessary limitations kept; 1 — redundant repetition without loss of meaning;
   0 — a recap instead of conclusions, or a cut that makes the conclusions misleading.
 
