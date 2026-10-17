@@ -103,3 +103,17 @@ Methodology sources: OpenAI "Testing Agent Skills Systematically with Evals"
 success criteria and build evaluations"
 (<https://platform.claude.com/docs/en/test-and-evaluate/develop-tests>). The cases and thresholds were
 designed for this task and are not presented as a published benchmark.
+
+## Real-path run, 2026-10-17 (case and measure phases)
+
+One fresh headless session (`claude -p --setting-sources project` from an
+empty temp project with this skill symlinked into `.claude/skills/`,
+`RETRO_EVALS_DIR` in a temp directory) ran `/retro <session id>` on one past
+session holding a known user correction, with comparisons forbidden.
+First run: wrote findings, episodes, a case with input packet, Minimum and
+Fail rubric, grader-only files, and a pre-registered `VARIANT.md`, but the
+report omitted the comparison cost; the Report section now requires it.
+Second run: same files plus the cost line in the report. Not measured: a
+full comparison, grader validation, the apply and live-check stages. R16
+above ("proposal only") predates apply-by-default and no longer holds when
+the user asks to apply.
