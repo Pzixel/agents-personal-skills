@@ -12,7 +12,7 @@ If consequential product semantics, success criteria, state ownership, or archit
 ## Plan Shape
 
 - A requested plan comes as a short approach first: problem, solution, shape. The detailed plan follows only after the approach is approved.
-- Review every work plan right after it is written, before any code: five angles (reuse, simplification, efficiency, altitude, premises), as five parallel reviewers or one applying all five; rework the plan from the findings, then build. Premises: find counts, timings, files, rollout order, or load-bearing prerequisites that no verified source backs; name the source, the probe that decides, or the gate the item waits behind. A pass on finished code is too late.
+- Run `/simplify` on every work plan right after it is written, before any code: five parallel agents (reuse, simplification, efficiency, altitude, premises) or one agent applying all five angles; rework the plan from the findings, then build. Premises: find counts, timings, files, rollout order, or load-bearing prerequisites that no verified source backs; name the source, the probe that decides, or the gate the item waits behind. A pass on finished code is too late.
 
 ## Rolling Horizon
 

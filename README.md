@@ -7,7 +7,7 @@ Personal skills for Codex and Claude Code, plus `orch`, a Claude Code plugin tha
 | Skill | Trigger |
 |---|---|
 | `orch` | Claude Code plugin: `/orch:orchestrate` for every code change beyond one line (builder, two reviewers, cross-check, fix rounds), hooks that enforce the gates, agent definitions. See [orch/README.md](orch/README.md) |
-| `superpowers-writing-plans-psilon` | Durable multi-stage, coordinated, risky, or cross-session plans |
+| `superpowers-writing-plans-psilon` | Any request for a plan or an approach before work, and multi-stage, rollout, or cross-session plans |
 | `superpowers-dispatching-parallel-agents-psilon` | Two or more proved-independent substantial workstreams |
 | `superpowers-requesting-code-review-psilon` | Independent review at a material integration-risk boundary |
 | `superpowers-receiving-code-review-psilon` | Concrete review feedback to assess or implement |
