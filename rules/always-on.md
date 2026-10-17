@@ -1,6 +1,6 @@
 # Always-on rules
 
-Generic agent rules measured useful as always-on text (evidence: `ORIGINS.md`, "Always-on rules"). "Owner" means the person who directs the agent. Import from a user-level `CLAUDE.md` with one line `@<checkout>/rules/always-on.md`; for Codex, paste into `~/.codex/AGENTS.md`.
+Generic agent rules measured useful as always-on text (evidence: `ORIGINS.md`, "Always-on rules"). "Owner" means the person who directs the agent. `install.sh` imports it into the user-level Claude Code `CLAUDE.md` and Codex `AGENTS.md`.
 
 ## Working contract
 

@@ -1,6 +1,7 @@
 #!/bin/sh
 # Link this checkout's skills and orch directories into the Codex and Claude Code
-# config directories on macOS. Idempotent: rerun after every pull.
+# config directories on macOS and import rules/always-on.md into each client's
+# user-level rules file. Idempotent: rerun after every pull.
 set -eu
 
 [ $# -eq 1 ] || set -- ""
@@ -13,6 +14,7 @@ esac
 
 root=$(dirname "$(realpath "$0")")
 codex="$HOME/.agents"
+codex_rules="${CODEX_HOME:-$HOME/.codex}/AGENTS.md"
 claude="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 
 common=$(cd "$root" && echo superpowers-*-psilon dragonfly-scripting test-audit pareto-design-selection retro)
@@ -33,6 +35,26 @@ plan() {
     fi
   done
 }
+
+rules="$root/rules/always-on.md"
+begin="<!-- BEGIN agents-personal-skills rules/always-on.md -->"
+end="<!-- END agents-personal-skills rules/always-on.md -->"
+[ -f "$rules" ] || { echo "Missing rules file: $rules" >&2; exit 1; }
+
+# A Codex rules file may hold at most one complete marked block.
+case " $targets " in
+  *" codex "*)
+    if [ -f "$codex_rules" ]; then
+      nb=$(grep -cxF "$begin" "$codex_rules" || true)
+      ne=$(grep -cxF "$end" "$codex_rules" || true)
+      bl=$(grep -nxF "$begin" "$codex_rules" | cut -d: -f1 || true)
+      el=$(grep -nxF "$end" "$codex_rules" | cut -d: -f1 || true)
+      if [ "$nb" -gt 1 ] || [ "$nb" != "$ne" ] || { [ "$nb" = 1 ] && [ "$bl" -gt "$el" ]; }; then
+        echo "Malformed always-on block in $codex_rules (BEGIN=$nb END=$ne)" >&2
+        exit 1
+      fi
+    fi ;;
+esac
 
 # Check every destination before changing anything.
 plan | while read -r dest src; do
@@ -65,9 +87,40 @@ plan | while read -r dest src; do
   echo "linked $dest -> $root/$src"
 done
 
-case " $targets " in
-  *" claude "*) echo "always-on rules: add the line @$root/rules/always-on.md to your user-level CLAUDE.md" ;;
-esac
-case " $targets " in
-  *" codex "*) echo "always-on rules: paste $root/rules/always-on.md into ~/.codex/AGENTS.md" ;;
-esac
+# Always-on rules. Claude Code: one import line in the user CLAUDE.md.
+# Codex has no import: one marked block holding the file, replaced on every run.
+for t in $targets; do
+  if [ "$t" = claude ]; then
+    line="@$rules"
+    mkdir -p "$claude"
+    if ! { [ -f "$claude/CLAUDE.md" ] && grep -qxF "$line" "$claude/CLAUDE.md"; }; then
+      if [ -s "$claude/CLAUDE.md" ] && [ -n "$(tail -c 1 "$claude/CLAUDE.md")" ]; then echo >> "$claude/CLAUDE.md"; fi
+      echo "$line" >> "$claude/CLAUDE.md"
+      echo "added $line to $claude/CLAUDE.md"
+    fi
+  else
+    mkdir -p "$(dirname "$codex_rules")"
+    tmp=$(mktemp "$codex_rules.XXXXXX")
+    chmod 644 "$tmp"
+    {
+      if [ -f "$codex_rules" ] && grep -qxF "$begin" "$codex_rules"; then
+        awk -v b="$begin" -v e="$end" '$0 == b { exit } { print }' "$codex_rules"
+      elif [ -s "$codex_rules" ]; then
+        cat "$codex_rules"
+        [ -z "$(tail -c 1 "$codex_rules")" ] || echo
+      fi
+      echo "$begin"
+      cat "$rules"
+      echo "$end"
+      if [ -f "$codex_rules" ] && grep -qxF "$begin" "$codex_rules"; then
+        awk -v e="$end" 'after { print } $0 == e { after = 1 }' "$codex_rules"
+      fi
+    } > "$tmp"
+    if [ -f "$codex_rules" ] && cmp -s "$tmp" "$codex_rules"; then
+      rm "$tmp"
+    else
+      mv "$tmp" "$codex_rules"
+      echo "updated always-on block in $codex_rules"
+    fi
+  fi
+done

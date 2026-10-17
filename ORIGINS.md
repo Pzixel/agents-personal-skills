@@ -39,6 +39,21 @@ Across the 2026-10-14 evals the model reached the same decision with and without
 - Cause-of-a-number sentences (split out of a claims bullet): CASE-14 0/3 -> 2/3.
 - Window-basis bullet and tunable-default bullet (one change): CASE-16 0/3 -> 5/6.
 
+Move check 2026-10-17: fresh `claude -p --setting-sources project` sessions from an empty directory, rules appended as a system prompt; arm MOVED = this file plus the remaining user-level rules, arm FULL = the unchanged user-level rules, same flags, both arms graded blind in one call per case. Accepted because MOVED >= FULL on every case run:
+
+| case | recorded live passes | MOVED passes | FULL passes |
+|---|---|---|---|
+| CASE-13 | 2/3 | 2/3 | 1/3 |
+| CASE-14 | 2/3 | 0/3 | 0/3 |
+| CASE-15 | 3/3 | 2/3 | 2/3 |
+| CASE-16 | 5/6 | 5/6 | 5/6 |
+| CASE-1 (control) | 4/6 | 0/6 | 0/6 |
+| CASE-5 | 3/3 | 3/3 | not run |
+| CASE-4 (control) | 3/3 | 3/3 | not run |
+| CASE-7 (control) | 3/3 | 3/3 | not run |
+
+Grader instability: regrading the same MOVED texts gave CASE-13 0/3 then 2/3 and CASE-14 1/3 then 0/3. Why both arms fall below the recorded live numbers on CASE-14, CASE-15 and CASE-1 is unchecked.
+
 ## Per-skill notes
 
 ### Superpowers forks (common)
