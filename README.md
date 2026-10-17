@@ -15,7 +15,7 @@ Personal skills for Codex and Claude Code, plus `orch`, a Claude Code plugin tha
 | `dragonfly-scripting` | Any Dragonfly server-side scripting work (Lua/EVALSHA design, review, optimization, measurement) |
 | `test-audit` | Authoring or changing tests, focused test review, or a requested test-pruning campaign |
 | `pareto-design-selection` | Several candidate decision strategies with a visible cost of error, an owner who decides, and a pure decision core |
-| `retro` | Manual only (`/retro`, `$retro`): retrospective of the current session, named sessions, or a period |
+| `retro` | Manual only (`/retro`, `$retro`): retrospective of sessions that turns bad decisions into private eval cases and applies only changes that pass a blind, pre-registered comparison |
 | `codex-simplify` | Codex only: any request containing `/simplify`, or a request to review changed code for reuse, simplification, efficiency, and altitude cleanups |
 
 Development material lives next to its skill and is not a skill: `dragonfly-scripting-workbench/` (lab, benchmarks, sources; start at [REPORT.md](dragonfly-scripting-workbench/REPORT.md)), `test-audit-workbench/` (20-case behavioural eval, [EVAL.md](test-audit-workbench/EVAL.md)), `retro-workbench/` (eval protocol, [EVALS.md](retro-workbench/EVALS.md)).

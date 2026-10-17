@@ -1,7 +1,7 @@
 interface:
   display_name: "Retro"
   short_description: "Manual retrospective of agent sessions"
-  default_prompt: "Use $retro to review the current session and propose up to three evidence-backed improvements."
+  default_prompt: "Use $retro to turn bad decisions in the current session into eval cases and measure proposed changes before applying them."
 
 policy:
   allow_implicit_invocation: false
