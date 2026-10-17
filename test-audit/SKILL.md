@@ -5,9 +5,9 @@ description: "Invoke whenever writing, changing, reviewing, or sweeping tests. A
 
 # Test Audit
 
-The owner's global Tests rules decide every test: both value gates, the
-exclusions, and independent sources for cases and expectations. This skill adds
-only what those rules leave open.
+Read [tests-rules.md](tests-rules.md) first: its Tests rules decide every test
+(both value gates, the exclusions, and independent sources for cases and
+expectations). This skill adds only what those rules leave open.
 
 **Unit of accounting.** A parameterized declaration is one entry. Mark rows
 separately only when their decisions differ.
@@ -26,5 +26,5 @@ ledger marks across many files), follow [CAMPAIGN.md](CAMPAIGN.md).
 ledger marks R, F, C, D); the contract clause or defect it guards; for a
 consolidate or delete, the proof that survives without it. Before closing, name
 the owning test for every contract clause in scope; a clause with none is a
-finding, unless the owner's global Tests rules exclude testing it. Count fixed and
+finding, unless the Tests rules exclude testing it. Count fixed and
 skipped; a skipped item names what blocks it.

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """PostToolUse hook: when a user/feedback memory is written into project memory,
-remind the agent that user-level rules belong in ~/.codex/AGENTS.md."""
+remind the agent that user-level rules belong in the user-level rules file (outside any repository)."""
 import json
 import re
 import sys
@@ -22,7 +22,7 @@ print(json.dumps({
         "additionalContext": (
             "You saved a user/feedback memory into project memory. If the rule is true "
             "outside this repository, move it: add or update one line in "
-            "~/.codex/AGENTS.md, delete this file and its MEMORY.md line, and tell "
+            "your user-level rules file (for example ~/.claude/CLAUDE.md), delete this file and its MEMORY.md line, and tell "
             "the user where it went. If it is repository-specific, keep it here."
         ),
     }

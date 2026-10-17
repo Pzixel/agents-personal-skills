@@ -29,7 +29,7 @@ Without a `risk:` line, go straight to code in the same turn sequence.
 
 - Load the expert skills yourself: look at the available skills and load the ones whose descriptions cover the technology or the craft the task touches (a datastore, a framework, the test-authoring rules). Name them in the reply.
 - Use `Explore` only for code search you cannot do in one or two greps; it is the only agent you spawn.
-- Write the tests the change owes together with the code. Tests follow the repository's test rules; a case exists only for a plausible defect in behaviour the spec requires.
+- Write the tests the change owes together with the code. Tests follow the repository's test rules, and the `test-audit` skill's rules where the repository has none; a case exists only for a plausible defect in behaviour the spec requires.
 - Code that talks to a real binding (a database, a queue, an HTTP service) counts only after it has really run, failure paths included. A retry, a rollback or a no-commit that the design relies on and no run executed is reported as unverified, never as done.
 - Commit working increments on the task branch as you go, with normal messages, so that a stop never finds finished work uncommitted. Never push, never merge, never open a PR, never add a remote.
 - Run the declared check as `~/.claude/tools/check-run -- <command>` after the last edit and read its verdict and tail, not the whole output. A hook returns you once if you finish without it.

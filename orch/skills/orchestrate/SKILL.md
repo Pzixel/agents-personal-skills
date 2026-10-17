@@ -78,7 +78,7 @@ questions[]: <for the user only>
 
 ## Investigations
 
-A question without a code change: one `orch:prod-probe` (report path in the prompt and an `access:` line with the route to every system it reads, from the `infra-access` skill; a hook refuses the spawn without it) or one `orch:Explore`. If a fix is needed, continue with step 1.
+A question without a code change: one `orch:prod-probe` (report path in the prompt and an `access:` line with the route to every system it reads; a hook refuses the spawn without it) or one `orch:Explore`. If a fix is needed, continue with step 1.
 
 ## Waiting
 

@@ -81,6 +81,38 @@ listed twice (bare and `orch:`), and the gates treat both alike.
 - `evals/` — the eval suite; the synthetic fixture `evals/fixtures/mini/` is tracked, results
   and `NOTES-private.md` are ignored.
 
+## Hook gates
+
+Hooks enforce the gates; an agent obeys a refusal's message and never works around it.
+
+- Merge: a push or merge to a shared branch carries `CHECK_RAN: <what ran, result>`,
+  `PROD_POSITION: <blast-radius dimension, production's number, source>` and
+  `WAY_BACK: <undo, minutes>`, or `merge-gate` refuses it.
+- Final reply: the Stop hook `reply-lint` returns once a reply that ends on a question
+  the agent could decide itself, a completion claim without its observation, or a promise
+  of later work that names no issue, PR or handoff file. It asks for an addendum with
+  only the missing part.
+- Destructive commands are classified by `deny-destructive.py`
+  (`gate_policy.destructive_decision`, table in `orchestrate-params.json`), never by the
+  agent. `ours` (paths under `/tmp`, `tmp/`, `.worktrees/`; k8s objects labelled
+  `orch.session`) runs without a prompt. `approval` (a live write with an undo) goes into
+  one plan script with `# scope / # undo / # count / # contradiction / # prod_position /
+  # way_back` headers, run from the main session as
+  `bash <abs path>  # DESTRUCTIVE_PLAN sha256=<hash>`; one approval per batch, by the
+  native prompt or a reply `APPROVE <hash>`. `impossible` (no undo: DROP/TRUNCATE, Secret
+  replace, namespace/PVC delete, force push, rm outside `ours`) is refused and the agent
+  lists the skipped step.
+- Waits: run the condition once (`wait-for` exits 2 on a broken command), then wait on it
+  with a tool made for waiting; never a poll loop, never an agent that ends its turn to wait.
+  One monitor per subject, stopped when its work ends.
+- Delegation: a builder brief carries `files:` and `check:`, a prod-probe brief `access:`
+  (the route to every system it reads); the spawn hook refuses the spawn without them.
+- Secrets: `secretctl` (`list` / `run` / `each` / `import`; `run` and `each` pass
+  `$SECRET_VALUE` by reference). `secret-vault-gate` refuses direct reads of the vault,
+  Secret payloads and known values in tool inputs; `redact-secrets` masks known values and
+  key-shaped tokens in Bash/Read/Grep results.
+- A hook `ask` does not prompt in bypass-permissions mode.
+
 ## Tests and evals
 
 ```

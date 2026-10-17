@@ -350,7 +350,7 @@ class SkillLoadDecisionTest(unittest.TestCase):
 
     def test_allowed_load_with_large_docs_reports_both_sizes(self):
         decision = gate_policy.skill_load_decision(
-            True, 8872, "infra-access", None, None, 43999
+            True, 8872, "example-skill", None, None, 43999
         )
         self.assertEqual(decision["decision"], "allow")
         self.assertIn("9k on load", decision["context"])

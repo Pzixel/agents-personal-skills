@@ -1642,7 +1642,7 @@ _BRIEF_REASON = (
     "Refused by brief-gate: a `{requested}` prompt needs the line(s) {missing} "
     "(each at the start of a line). `files:` = file:line pointers from one "
     "`Explore` run; `check:` = the run on the real path that proves the work; "
-    "`access:` = the route to every system the probe reads (infra-access). A "
+    "`access:` = the route to every system the probe reads. A "
     "delegate that must discover these burns its context before the deliverable "
     "(retro 2026-10-12: 30+ builders and 4 probes died that way). Add the lines, "
     "or, from the main session, a line `AGENT_TYPE_OVERRIDE: <reason>`."
