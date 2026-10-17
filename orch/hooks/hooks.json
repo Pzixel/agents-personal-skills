@@ -1,5 +1,5 @@
 {
-  "description": "Orchestration gates: typed agents, spawn rights, brief lines, budgets, no-poll, checks-before-done, merge gate, reply lint, secret redaction + vault gate, deny-destructive, task-type checklists",
+  "description": "Orchestration gates: typed agents, spawn rights, brief lines, budgets, no-poll, checks-before-done, merge gate, reply lint, secret redaction + vault gate, deny-destructive, task-type checklists, plan /simplify gate",
   "hooks": {
     "SessionStart": [
       {
@@ -123,6 +123,16 @@
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/merge-gate.py\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "ExitPlanMode",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/plan-simplify-gate.py\"",
             "timeout": 5
           }
         ]
