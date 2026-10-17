@@ -2,10 +2,10 @@
 """PreToolUse hook for ExitPlanMode: a plan goes to the owner only after /simplify.
 
 The newest plan file in <config dir>/plans must have a sibling
-`<plan>.simplify.md` written after the plan's last edit (findings of the
-five-angle /simplify pass: reuse, simplification, efficiency, altitude,
-premises). Editing the plan afterwards makes the review stale. Any error
-exits 0.
+`<plan>.simplify.md` (findings of the five-angle /simplify pass: reuse,
+simplification, efficiency, altitude, premises) written after the plan was
+created. Reworking the plan from the findings afterwards is the expected
+order. Any error exits 0.
 """
 import glob
 import os
@@ -18,9 +18,9 @@ REASON = (
 )
 
 
-def decision(plan, plan_mtime, review_mtime):
-    """Return a refusal message, or None when the review is newer than the plan."""
-    if review_mtime is not None and review_mtime >= plan_mtime:
+def decision(plan, plan_created, review_mtime):
+    """Return a refusal message, or None when the review postdates the plan."""
+    if review_mtime is not None and review_mtime >= plan_created:
         return None
     return REASON % (plan, review_path(plan))
 
@@ -43,7 +43,8 @@ def main():
         return 0
     review = review_path(plan)
     review_mtime = os.path.getmtime(review) if os.path.exists(review) else None
-    reason = decision(plan, os.path.getmtime(plan), review_mtime)
+    st = os.stat(plan)
+    reason = decision(plan, getattr(st, "st_birthtime", st.st_mtime), review_mtime)
     if reason:
         print(reason, file=sys.stderr)
         return 2
