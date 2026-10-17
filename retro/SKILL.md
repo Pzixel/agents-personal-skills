@@ -81,7 +81,8 @@ stage 2 with the pre-registration written and offer the comparison.
 
 A chat reply: scope and gaps; one status line per case (baseline, change,
 result, live result); changes applied with their numbers; cases waiting on
-the user, each with its one question. Zero changes is a valid result. Never
+the user, each with its one question; when stage 4 did not run, the offer to
+run it with its cost from Costs. Zero changes is a valid result. Never
 invent pointers.
 
 ## Feedback
