@@ -59,7 +59,7 @@ v2 2). The a0d0266 body was measured only on T10 (0/3). That its other
 sentences add nothing measurable on the other 19 cases is an extrapolation:
 OLD(pre) 9/10 equals NONE 9/10 on the first ten, and NONE passed 10/10 on the
 second ten. The retained paragraphs (unit of accounting, red tests, sweeps pointer,
-report shape) stay because the owner's global rules leave them open, not
+report shape) stay because the owner's user-level rules leave them open, not
 because they were measured. Old heuristics dropped without measurement: names
 or fixtures that promise more than the input exercises, "static or slow is not
 a deletion reason", non-test callers of a covered seam, not editing while a test
@@ -72,7 +72,7 @@ red-before-green for a new regression test.
 - T10 is tied to a rubric item the stub restates.
 - One run per arm per case, except T10.
 - Agents were Claude subagents, not Codex.
-- Agents carried the owner's global rules in every arm, so NONE already
+- Agents carried the owner's user-level rules in every arm, so NONE already
   includes those rules.
 
 ## 2026-10-17 PORTABLE replay

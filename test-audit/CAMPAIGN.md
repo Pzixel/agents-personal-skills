@@ -1,7 +1,7 @@
 # Test-pruning campaign
 
 Campaign mode prunes one subsystem's whole test surface in one PR: an integration,
-package, or one core area. The owner's global Tests rules and the four clauses
+package, or one core area. The Tests rules in [tests-rules.md](tests-rules.md) and the four clauses
 of [SKILL.md](SKILL.md) (unit of accounting, red tests, sweeps, report) apply to
 every lane. This file adds the order of work and the lessons of a full campaign.
 Each step ends on its completion criterion; do not start the next step early.

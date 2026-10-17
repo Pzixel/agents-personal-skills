@@ -29,7 +29,7 @@ stub restates, so T10 is not independent of the pre-existing rubric. Arms, numbe
 ## PORTABLE recipe (no user-level rules)
 
 Run each subject as a fresh headless session from an empty directory that
-holds only `.claude/skills/test-audit` (a link to `../test-audit/`):
+holds only `.claude/skills/test-audit` (a symlink to `<absolute checkout path>/test-audit`):
 `claude -p --setting-sources project --output-format stream-json --verbose "<evaluation_request + one case>"`.
 `--setting-sources project` keeps the authenticated config but loads no
 user-level settings or rules. The `result` event is the candidate; a `Skill`

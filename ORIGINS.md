@@ -27,7 +27,7 @@ Current state of every skill, where it came from, and the evidence behind each c
 
 Replay eval: a fresh agent answers a scrubbed task reconstructed from a real session; arms NONE (no skill text) and OLD (the shipped body), two or three runs per arm; blind grading by a separate agent against Accept/Reject items taken from the owner's later correction. A body is retired or cut only when NONE is not worse than OLD on every case, or the cut is labelled as extrapolated from such a result.
 
-Across the 2026-10-14 evals the model reached the same decision with and without the body on 17 of 18 cases (verification 8 cases, NONE 7/8 vs OLD 8/8; test-audit 10 cases, 10/10 both). What moved a result was a single sentence stating a decision rule the model gets wrong on its own (3/3 vs 0/3 on one case). Hence the maintenance rule: a body keeps decision rules the model misses, output shapes, named thresholds, and tokens a hook or tool checks; everything else is deleted or moved to a companion file. Clauses that restated the owner's global rules were removed from every skill on 2026-10-14 ("global-rule dedupe"); descriptions were left unchanged.
+Across the 2026-10-14 evals the model reached the same decision with and without the body on 17 of 18 cases (verification 8 cases, NONE 7/8 vs OLD 8/8; test-audit 10 cases, 10/10 both). What moved a result was a single sentence stating a decision rule the model gets wrong on its own (3/3 vs 0/3 on one case). Hence the maintenance rule: a body keeps decision rules the model misses, output shapes, named thresholds, and tokens a hook or tool checks; everything else is deleted or moved to a companion file. Clauses that restated the owner's user-level rules were removed from every skill on 2026-10-14 ("global-rule dedupe"); descriptions were left unchanged.
 
 ## Per-skill notes
 
@@ -77,6 +77,6 @@ Verbatim export of Claude Code's built-in `simplify` body for Codex, which reads
 ## Retired
 
 - `superpowers-clickhouse-table-design-psilon`, 2026-09-16: replaced by `ClickHouse/agent-skills`.
-- `superpowers-brainstorming-psilon`, 2026-10-14: replay eval on one case tied 5/5, OLD had one Reject violation; 6 Codex sessions ever; its two main rules live in the owner's global rules, its third (verify each load-bearing prerequisite for the exact target) moved into the owner's `/simplify` plan pass as the "premises" angle.
+- `superpowers-brainstorming-psilon`, 2026-10-14: replay eval on one case tied 5/5, OLD had one Reject violation; 6 Codex sessions ever; its two main rules live in the owner's user-level rules, its third (verify each load-bearing prerequisite for the exact target) moved into the owner's `/simplify` plan pass as the "premises" angle.
 - `superpowers-subagent-driven-development-psilon`, 2026-10-14: no loads in either client across six months of transcripts. `scripts/test_review_package.py`, which only tested its script, went with it.
-- `superpowers-systematic-debugging-psilon`, 2026-10-14: replay eval on 8 debugging moments, 6-item rubric: without the skill 47.5 of 48, with it 46 of 48, same diagnosis in all 8 cases. The body restated the owner's global incident rule. Its reference files went with it.
+- `superpowers-systematic-debugging-psilon`, 2026-10-14: replay eval on 8 debugging moments, 6-item rubric: without the skill 47.5 of 48, with it 46 of 48, same diagnosis in all 8 cases. The body restated the owner's user-level incident rule. Its reference files went with it.

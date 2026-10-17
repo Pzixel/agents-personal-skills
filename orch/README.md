@@ -107,10 +107,10 @@ Hooks enforce the gates; an agent obeys a refusal's message and never works arou
   One monitor per subject, stopped when its work ends.
 - Delegation: a builder brief carries `files:` and `check:`, a prod-probe brief `access:`
   (the route to every system it reads); the spawn hook refuses the spawn without them.
-- Secrets: `secretctl` (`list` / `run` / `each` / `import`; `run` and `each` pass
+- `secretctl` (secrets) manages the vault (`list` / `run` / `each` / `import`; `run` and `each` pass
   `$SECRET_VALUE` by reference). `secret-vault-gate` refuses direct reads of the vault,
   Secret payloads and known values in tool inputs; `redact-secrets` masks known values and
-  key-shaped tokens in Bash/Read/Grep results.
+  key-shaped tokens in Bash, Read, Grep, Glob and Agent results.
 - A hook `ask` does not prompt in bypass-permissions mode.
 
 ## Tests and evals
