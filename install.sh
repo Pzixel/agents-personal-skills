@@ -64,3 +64,10 @@ plan | while read -r dest src; do
   ln -s "$root/$src" "$dest"
   echo "linked $dest -> $root/$src"
 done
+
+case " $targets " in
+  *" claude "*) echo "always-on rules: add the line @$root/rules/always-on.md to your user-level CLAUDE.md" ;;
+esac
+case " $targets " in
+  *" codex "*) echo "always-on rules: paste $root/rules/always-on.md into ~/.codex/AGENTS.md" ;;
+esac

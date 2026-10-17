@@ -52,6 +52,10 @@ GitHub Actions runs the same checks on every push and scans the full history for
 - Record lineage and every behaviour change with its evidence in [ORIGINS.md](ORIGINS.md).
 - How changes land, and what must never be committed, is in [AGENTS.md](AGENTS.md).
 
+## Always-on rules
+
+[`rules/always-on.md`](rules/always-on.md) holds generic rule lines that replay evals measured useful as always-on text (evidence in [ORIGINS.md](ORIGINS.md), "Always-on rules"). It is not a skill: it must be in every session's instructions. Claude Code: add the line `@<checkout>/rules/always-on.md` to your user-level `CLAUDE.md` (`<checkout>` is the absolute path of this repository). Codex has no import: paste the file into `~/.codex/AGENTS.md` and repaste after a pull changes it.
+
 ## Provenance and license
 
 [ORIGINS.md](ORIGINS.md) pins the upstream release and records each adaptation. Upstream-derived material remains under the MIT license in [LICENSE.superpowers](LICENSE.superpowers).

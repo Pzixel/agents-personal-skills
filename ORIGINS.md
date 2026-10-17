@@ -29,6 +29,16 @@ Replay eval: a fresh agent answers a scrubbed task reconstructed from a real ses
 
 Across the 2026-10-14 evals the model reached the same decision with and without the body on 17 of 18 cases (verification 8 cases, NONE 7/8 vs OLD 8/8; test-audit 10 cases, 10/10 both). What moved a result was a single sentence stating a decision rule the model gets wrong on its own (3/3 vs 0/3 on one case). Hence the maintenance rule: a body keeps decision rules the model misses, output shapes, named thresholds, and tokens a hook or tool checks; everything else is deleted or moved to a companion file. Clauses that restated the owner's user-level rules were removed from every skill on 2026-10-14 ("global-rule dedupe"); descriptions were left unchanged.
 
+## Always-on rules
+
+`rules/always-on.md` moved from the owner's user-level rules on 2026-10-17, verbatim except where noted. Numbers are fresh-session live runs, passes over runs, from a private case set; case content stays there.
+
+- Progressive-disclosure paragraph, thin-slice bullet, existence-witness bullet (one change): CASE-13 0/3 -> 2/3. The paragraph drops a pointer to a private details file.
+- Every-part bullet: CASE-15 1/3 -> 3/3. A dated suffix dropped.
+- Readings-with-cost bullet: CASE-5 0/6 -> 3/3.
+- Cause-of-a-number sentences (split out of a claims bullet): CASE-14 0/3 -> 2/3.
+- Window-basis bullet and tunable-default bullet (one change): CASE-16 0/3 -> 5/6.
+
 ## Per-skill notes
 
 ### Superpowers forks (common)
