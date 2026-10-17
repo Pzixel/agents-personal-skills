@@ -87,40 +87,56 @@ plan | while read -r dest src; do
   echo "linked $dest -> $root/$src"
 done
 
-# Always-on rules. Claude Code: one import line in the user CLAUDE.md.
-# Codex has no import: one marked block holding the file, replaced on every run.
+# Always-on rules. Claude Code: one import line in the user CLAUDE.md, unless an
+# existing @-import already loads a file holding the Codex block.
+# Codex has no import: one marked block holding the file, replaced on every run
+# (targets list codex first, so with `both` the block exists before the check).
 for t in $targets; do
   if [ "$t" = claude ]; then
     line="@$rules"
     mkdir -p "$claude"
-    if ! { [ -f "$claude/CLAUDE.md" ] && grep -qxF "$line" "$claude/CLAUDE.md"; }; then
+    touch "$claude/CLAUDE.md"
+    via=""
+    for ref in $(sed -n 's/^@//p' "$claude/CLAUDE.md"); do
+      case $ref in "~/"*) ref="$HOME/${ref#"~/"}" ;; esac
+      [ -f "$ref" ] && grep -qxF "$begin" "$ref" && via=$ref && break
+    done
+    if grep -qxF "$line" "$claude/CLAUDE.md"; then
+      :
+    elif [ -n "$via" ]; then
+      echo "skipped $line: $claude/CLAUDE.md already imports the rules block via $via"
+    else
       if [ -s "$claude/CLAUDE.md" ] && [ -n "$(tail -c 1 "$claude/CLAUDE.md")" ]; then echo >> "$claude/CLAUDE.md"; fi
       echo "$line" >> "$claude/CLAUDE.md"
       echo "added $line to $claude/CLAUDE.md"
     fi
   else
+    # Write the real file behind a symlink; keep its mode (new file: 600 from mktemp).
     mkdir -p "$(dirname "$codex_rules")"
-    tmp=$(mktemp "$codex_rules.XXXXXX")
-    chmod 644 "$tmp"
+    if [ -e "$codex_rules" ]; then real=$(realpath "$codex_rules"); else real="$(realpath "$(dirname "$codex_rules")")/$(basename "$codex_rules")"; fi
+    tmp=$(mktemp "$real.XXXXXX")
+    trap 'rm -f "$tmp"' EXIT
+    [ -f "$real" ] && cp -p "$real" "$tmp"
     {
-      if [ -f "$codex_rules" ] && grep -qxF "$begin" "$codex_rules"; then
-        awk -v b="$begin" -v e="$end" '$0 == b { exit } { print }' "$codex_rules"
-      elif [ -s "$codex_rules" ]; then
-        cat "$codex_rules"
-        [ -z "$(tail -c 1 "$codex_rules")" ] || echo
+      if [ -f "$real" ] && grep -qxF "$begin" "$real"; then
+        awk -v b="$begin" '$0 == b { exit } { print }' "$real"
+      elif [ -s "$real" ]; then
+        cat "$real"
+        [ -z "$(tail -c 1 "$real")" ] || echo
       fi
       echo "$begin"
       cat "$rules"
       echo "$end"
-      if [ -f "$codex_rules" ] && grep -qxF "$begin" "$codex_rules"; then
-        awk -v e="$end" 'after { print } $0 == e { after = 1 }' "$codex_rules"
+      if [ -f "$real" ] && grep -qxF "$begin" "$real"; then
+        awk -v e="$end" 'after { print } $0 == e { after = 1 }' "$real"
       fi
     } > "$tmp"
-    if [ -f "$codex_rules" ] && cmp -s "$tmp" "$codex_rules"; then
+    if [ -f "$real" ] && cmp -s "$tmp" "$real"; then
       rm "$tmp"
     else
-      mv "$tmp" "$codex_rules"
-      echo "updated always-on block in $codex_rules"
+      mv "$tmp" "$real"
+      echo "updated always-on block in $real"
     fi
+    trap - EXIT
   fi
 done
