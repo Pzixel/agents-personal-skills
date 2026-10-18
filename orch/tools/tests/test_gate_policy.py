@@ -1528,6 +1528,29 @@ class DestructiveWorkingDirectoryTest(unittest.TestCase):
             ("./rm-own -r tmp/x", "{wt}"): "allow",
         })
 
+    def test_only_the_real_kill_forward_is_exempt(self):
+        tool = os.path.join(os.path.dirname(os.path.realpath(gate_policy.__file__)), "kill-forward")
+        self._table({
+            (tool + " 1234", "{wt}"): "allow",
+            ("./kill-forward 1234", "{wt}"): "deny",
+            ("kill 1234", "{wt}"): "deny",
+        })
+
+    def test_kill_forward_accepts_only_own_kubectl_port_forwards(self):
+        uid = 501
+        cases = {
+            ("10", (uid, "1", "01:00", "kubectl -n x port-forward svc/a 0:80")): True,
+            ("11", (uid, "1", "01:00", "/usr/local/bin/kubectl port-forward pod/p 5432")): True,
+            ("12", (0, "1", "01:00", "kubectl port-forward svc/a 0:80")): False,
+            ("13", (uid, "1", "01:00", "kubectl -n x get pods")): False,
+            ("14", (uid, "1", "01:00", "sleep port-forward")): False,
+            ("15", None): False,
+            ("-1", (uid, "1", "01:00", "kubectl port-forward svc/a 0:80")): False,
+        }
+        for (pid, row), allowed in cases.items():
+            with self.subTest(pid=pid):
+                self.assertEqual(gate_policy.forward_refusal(pid, row, uid) is None, allowed)
+
     def test_git_discards_only_in_an_agent_worktree(self):
         self._table({
             ("git reset --hard", "{wt}"): "allow",
@@ -1599,6 +1622,28 @@ class DestructiveWorkingDirectoryTest(unittest.TestCase):
         self.assertEqual(removed.returncode, 0)
         self.assertEqual((os.path.lexists(os.path.join(self.wt, "tmp", "up")),
                           os.path.isdir(os.path.join(self.main, "src"))), (False, True))
+
+    def test_kill_forward_stops_only_when_every_pid_is_a_forward(self):
+        import shutil
+        import subprocess
+        tool = os.path.join(os.path.dirname(os.path.realpath(gate_policy.__file__)), "kill-forward")
+        # sleep ignores argv[0], so ps shows it as a kubectl port-forward
+        forward = subprocess.Popen(["kubectl -n x port-forward svc/a 0:80", "30"],
+                                   executable=shutil.which("sleep"))
+        other = subprocess.Popen(["sleep", "30"])
+        try:
+            listed = subprocess.run([sys.executable, tool, "--list"], capture_output=True, text=True)
+            self.assertIn(str(forward.pid), [l.split("\t")[0] for l in listed.stdout.splitlines()])
+            refused = subprocess.run([sys.executable, tool, str(forward.pid), str(other.pid)],
+                                     stderr=subprocess.DEVNULL)
+            self.assertEqual((refused.returncode, forward.poll(), other.poll()), (2, None, None))
+            stopped = subprocess.run([sys.executable, tool, str(forward.pid)])
+            self.assertEqual((stopped.returncode, forward.wait(5), other.poll()), (0, -15, None))
+        finally:
+            for p in (forward, other):
+                if p.poll() is None:
+                    p.terminate()
+                p.wait()
 
     def test_heredoc_sql_file_written_after_cd_is_classed(self):
         cmd = "cd {wt} && cat > q.sql <<'EOF'\nDR" "OP TABLE t;\nEOF\npsql -f q.sql"

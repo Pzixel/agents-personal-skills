@@ -2490,12 +2490,25 @@ def _change_dir(program, args, ctx, before, after, negated):
     ctx["dir"] = target
 
 
-def _is_rm_own(head, ctx):
-    """True when ``head`` is the installed rm-own tool or this repository's."""
+def _is_own_tool(head, ctx, name):
+    """True when ``head`` is the installed tool ``name`` or this repository's."""
     real = _resolve(os.path.expanduser(head), ctx) if "/" in head else None
-    tools = (os.path.expanduser("~/.claude/tools/rm-own"),
-             os.path.join(os.path.dirname(os.path.realpath(__file__)), "rm-own"))
+    tools = (os.path.expanduser("~/.claude/tools/" + name),
+             os.path.join(os.path.dirname(os.path.realpath(__file__)), name))
     return real is not None and real in {os.path.realpath(t) for t in tools}
+
+
+def forward_refusal(pid, row, uid):
+    """None when ``pid`` may be stopped by kill-forward, else the reason.
+    ``row`` is the ``(uid, ppid, elapsed, args)`` ps shows for it, or None."""
+    if not pid.isdigit() or row is None:
+        return pid + ": no such process"
+    if row[0] != uid:
+        return pid + ": belongs to another user"
+    argv = row[3].split()
+    if os.path.basename(argv[0]) != "kubectl" or "port-forward" not in argv[1:]:
+        return pid + ": not a kubectl port-forward: " + row[3]
+    return None
 
 
 def _runs_computed_command(text):
@@ -2519,9 +2532,13 @@ def _classify_tokens(tokens, cfg, ctx):
     if not program:
         return []
     if program == "rm-own":
-        if _is_rm_own(tokens[len(tokens) - len(args) - 1], ctx):
+        if _is_own_tool(tokens[len(tokens) - len(args) - 1], ctx, "rm-own"):
             return []  # the tool checks each real path itself
         program = "rm"  # another script by that name is judged as rm
+    if program == "kill-forward":
+        if _is_own_tool(tokens[len(tokens) - len(args) - 1], ctx, "kill-forward"):
+            return []  # the tool checks each pid itself
+        program = "kill"  # another script by that name is judged as kill
     if program in ("cd", "pushd", "popd"):
         negated = "!" in tokens[:len(tokens) - len(args) - 1]
         _change_dir(program, args, ctx, ctx.get("before", ""), ctx.get("after", ""), negated)
@@ -2531,7 +2548,7 @@ def _classify_tokens(tokens, cfg, ctx):
     if program in ("sudo", "doas", "alias", "apt", "apt-get") or program == "brew" and args[:1] == ["uninstall"]:
         return [("privileged", "privileged package or system command")]
     if program in ("kill", "pkill", "killall"):
-        return [("privileged", "kill: stop a job with its own tool or let it finish")]
+        return [("privileged", "kill: stop a job with its own tool or let it finish; stop your own leftover kubectl port-forwards with ~/.claude/tools/kill-forward <pid>...")]
     if program == "chmod":
         operands = _path_args(args)[1:]
         if operands and all(_ours(p, cfg, ctx) for p in operands):
