@@ -803,6 +803,12 @@ class HandoffJudgeTest(unittest.TestCase):
             "Your call.",
             "Waiting on the owner.",
             "Берём A или B?",
+            "Баунсы больше 100% не трогаю, пока не скажете.",
+            "Начинаю по команде «го».",
+            "Скажите, если делать.",
+            "Жду подтверждения перезапуска базы.",
+            "Напиши — запущу проверку.",
+            "Ship it once approved; let me know.",
         ):
             self.assertTrue(gate_policy.addresses_owner(text), text)
 

@@ -95,11 +95,15 @@ Hooks enforce the gates; an agent obeys a refusal's message and never works arou
   if it is inside the agent's authority, otherwise ask through `AskUserQuestion` with
   self-contained options. That judgement is a nested `claude -p --model haiku` call that
   sees only the final reply (prompt in `gate_policy.HANDOFF_JUDGE_PROMPT`) and runs with
-  no hooks, plugins, MCP or settings, and only when the reply addresses the owner (a
-  second-person word, "owner", or a "?"); about 70% of stops skip it, so it adds about
-  1.1 s per stop on average (3-4 s when called). The second stop passes
-  without a model call; a judge error, timeout (12 s) or unparsable verdict passes the
-  reply (fail open) and is logged in `~/.claude/reply-lint-log.jsonl`.
+  no hooks, plugins, MCP or settings, and only when the reply addresses the owner or
+  conditions work on the owner's act (a second-person pronoun or verb, "owner", an idiom
+  like "пока не скажете" / "let me know", or a "?"); about 63% of stops skip it. Wall
+  time per call is 3.2-4.4 s single, up to about 6.7 s under load, capped by the 12 s
+  judge timeout; about 1.3 s per stop on average. The second stop passes without a model
+  call. A judge error, timeout or unparsable verdict passes the reply (fail open) and is
+  logged in `~/.claude/reply-lint-log.jsonl` as `judge_error`; a standing failure (no
+  login, rate limit, broken install) fails open on every stop, so a silent hand-off check
+  is diagnosed from that field.
 - Destructive commands are classified by `deny-destructive.py`
   (`gate_policy.destructive_decision`, table in `orchestrate-params.json`), never by the
   agent. `ours` (paths under `/tmp`, `tmp/`, `.worktrees/`; k8s objects labelled

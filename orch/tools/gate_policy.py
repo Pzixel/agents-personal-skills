@@ -1636,11 +1636,24 @@ _HANDOFF_REASON = (
 _JSON_FENCE_RE = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.S)
 
 
-# A reply that hands work to the owner names the owner: a second-person pronoun or
-# possessive (RU/EN), the word owner, or a question mark. Anything else skips the judge.
+# A reply that hands work to the owner addresses the owner or conditions work on the
+# owner's act: a second-person pronoun, possessive, finite or imperative verb (RU/EN),
+# "owner", an idiom like "по команде" / "жду подтверждения" / "пока не скажете" /
+# "let me know", or a question mark. A wide net: the model judge filters. Anything
+# else skips the judge.
 _ADDRESSES_OWNER_RE = re.compile(
-    r"\?|\b(?:ты|тебя|тебе|тобой|тобою|тво[йяёеию]\w*|вы|вас|вам|вами|ваш\w*|владел\w*"
-    r"|you|your|yours|yourself|yourselves|owner\w*)\b",
+    r"\?"
+    r"|\b(?:ты|тебя|тебе|тобой|тобою|тво[йяёеию]\w*|вы|вас|вам|вами|ваш\w*|владел\w*"
+    r"|you|your|yours|yourself|yourselves|owner\w*)\b"
+    r"|\b(?:скажи|скажите|подтверди|подтвердите|дай|дайте|напиши|напишите|одобри|одобрите"
+    r"|разреши|разрешите|реши|решите|выбери|выберите|ответь|ответьте|пришли|пришлите|глянь"
+    r"|гляньте|посмотри|посмотрите|сними|снимите|запусти|запустите|останови|остановите"
+    r"|верни|верните|согласуй|согласуйте)\b"
+    r"|\b\w{2,}(?:ешь|ёшь|ишь|ете|ёте|ите|йте|ьте)\b"
+    r"|\bпо\s+(?:\w+\s+)?(?:команде|слову|сигналу|отмашке)"
+    r"|\bжду\s+(?:\w+\s+)?(?:подтвержд|одобр|соглас|команд|решени|ответ|отмашк|разрешени|слов|\"|«)"
+    r"|\bпока\s+не\s+(?:скаж|дад|подтверд|разреш|одобр|ответ|соглас|реш)"
+    r"|\b(?:let me know|approve|confirm|tell me|go ahead|green light|sign[- ]off)\b",
     re.I,
 )
 
