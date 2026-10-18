@@ -668,6 +668,35 @@ class MergeGateDecisionTest(unittest.TestCase):
             self.assertEqual(gate_policy.merge_gate_decision(cmd)["decision"], "allow", cmd)
 
 
+class AlwaysOnFieldTest(unittest.TestCase):
+    _PUSH = "git push origin always-on-gate:master  # " + "; ".join(_MERGE_FIELDS)
+    _RULES = ["orch/README.md", "rules/always-on-claude.md"]
+
+    def _d(self, extra, paths=_RULES):
+        return gate_policy.merge_gate_decision(self._PUSH + "; " + extra, paths)
+
+    def test_rules_change_without_field_is_denied_naming_it(self):
+        result = self._d("")
+        self.assertEqual(result["decision"], "deny")
+        self.assertIn("ALWAYS_ON: <before> -> <after> chars", result["reason"])
+
+    def test_growth_needs_removed_text_or_reason(self):
+        for extra in ("ALWAYS_ON: 2438 -> 2500 chars", "ALWAYS_ON: 2438 -> 2500 chars; removed: none"):
+            self.assertEqual(self._d(extra)["decision"], "deny", extra)
+        for extra in (
+            "ALWAYS_ON: 2438 -> 2500 chars; removed: the reply-lint clause",
+            "ALWAYS_ON: 2438 -> 2500 chars; reason: gate field must be known up front",
+        ):
+            self.assertEqual(self._d(extra)["decision"], "allow", extra)
+
+    def test_no_growth_needs_no_justification(self):
+        self.assertEqual(self._d("ALWAYS_ON: 2438 -> 2400 chars")["decision"], "allow")
+
+    def test_unknown_or_other_paths_need_no_field(self):
+        for paths in (None, ["orch/README.md", "rules/always-on-claude.details.md"]):
+            self.assertEqual(self._d("", paths)["decision"], "allow", paths)
+
+
 class ReplyLintDecisionTest(unittest.TestCase):
     def _d(self, text):
         return gate_policy.reply_lint_decision(text, False)["decision"]

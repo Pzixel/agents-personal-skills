@@ -1430,17 +1430,52 @@ _MERGE_FIELD_DOCS = (
 )
 
 
-def merge_gate_decision(command):
-    """Deny ``gh pr merge`` and pushes to master/main unless the command carries
-    ``CHECK_RAN:``, ``PROD_POSITION:`` and ``WAY_BACK:``."""
-    cmd = command or ""
-    missing = [doc for token, doc in _MERGE_FIELD_DOCS if token not in cmd]
-    if not missing or not _MERGE_RE.search(cmd):
+# Rules files loaded into every session; growing them costs every session.
+ALWAYS_ON_PATHS = frozenset(("rules/always-on.md", "rules/always-on-claude.md"))
+_ALWAYS_ON_RE = re.compile(r"ALWAYS_ON:\s*(\d+)\s*->\s*(\d+)\s*chars")
+_REMOVED_RE = re.compile(r"\bremoved:\s*([^;\n'\"]*)")
+_GROW_REASON_RE = re.compile(r"\breason:\s*[^\s;'\"]")
+_ALWAYS_ON_REASON = (
+    "Refused by merge-gate: this push changes an always-on rules file. Repeat "
+    "the command with `ALWAYS_ON: <before> -> <after> chars` (wc -c of the "
+    "file) and, when it grows, `removed: <text cut elsewhere>` or "
+    "`reason: <why the always-on layer must grow>` (an on-demand placement "
+    "of the measured budget rule was read by no fresh agent: 0/3 live, "
+    "against 0/3 -> 3/3 when loaded)."
+)
+
+
+def always_on_decision(command, changed_paths):
+    """Deny a push whose changed paths touch an always-on rules file unless the
+    command states the size change, and what was removed or why it grows.
+    ``changed_paths`` None means unknown: no requirement."""
+    if not changed_paths or not ALWAYS_ON_PATHS.intersection(changed_paths):
         return {"decision": "allow"}
-    return {
-        "decision": "deny",
-        "reason": _MERGE_REASON + " Missing: " + "; ".join(missing) + ".",
-    }
+    cmd = command or ""
+    size = _ALWAYS_ON_RE.search(cmd)
+    if size and int(size.group(2)) <= int(size.group(1)):
+        return {"decision": "allow"}
+    if size:
+        removed = _REMOVED_RE.search(cmd)
+        if (removed and removed.group(1).strip().lower() not in ("", "none")) or _GROW_REASON_RE.search(cmd):
+            return {"decision": "allow"}
+    return {"decision": "deny", "reason": _ALWAYS_ON_REASON}
+
+
+def merge_gate_decision(command, changed_paths=None):
+    """Deny ``gh pr merge`` and pushes to master/main unless the command carries
+    ``CHECK_RAN:``, ``PROD_POSITION:`` and ``WAY_BACK:``, and ``ALWAYS_ON:``
+    when ``changed_paths`` touch an always-on rules file."""
+    cmd = command or ""
+    if not _MERGE_RE.search(cmd):
+        return {"decision": "allow"}
+    missing = [doc for token, doc in _MERGE_FIELD_DOCS if token not in cmd]
+    if missing:
+        return {
+            "decision": "deny",
+            "reason": _MERGE_REASON + " Missing: " + "; ".join(missing) + ".",
+        }
+    return always_on_decision(cmd, changed_paths)
 
 
 # -- reply lint: a final reply carries its observation and stays in authority --
