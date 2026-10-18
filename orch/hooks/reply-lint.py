@@ -17,7 +17,9 @@ verdict passes the reply (fail open) and is logged.
 Not promises: a promise conditioned, in its sentence or the one before it in
 the same paragraph, on a background event of the agent's delegates or tools
 (an agent, review, CI or run finishing or arriving) or on the owner's consent
-("if that works for you"); the hand-off judge owns owner-consent waits.
+("if that works for you"); the hand-off judge owns owner-consent waits. A
+condition on the agent's own act or result ("когда закончу", "if it works")
+still counts.
 Not claims (2026-10-15): Russian not-verified disclosures, done words as
 section labels or with a manner complement.
 Only payloads whose transcript_path is a file are logged, so probes stay out.

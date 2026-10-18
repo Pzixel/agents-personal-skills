@@ -777,6 +777,19 @@ class ReplyLintDecisionTest(unittest.TestCase):
             "Когда выкачу, сам проверю.",
             "Ревьюер нашёл баг. Поправлю потом.",
             "Жду ревью.\n\nПотом поправлю тесты.",
+            "Когда закончу миграцию, поправлю линтер.",
+            "Когда прогоню тесты, добавлю индекс.",
+            "After I run the suite, I'll open the PR.",
+            "After reviewing the code, I'll fix it.",
+            "Я пока жду. Агент упал, потом поправлю.",
+        ):
+            self.assertEqual(self._decide(text), "block", text)
+
+    def test_promise_conditioned_on_own_finding_is_returned(self):
+        for text in (
+            "Если нормально отработает, открою PR.",
+            "Если ок, поправлю.",
+            "If it works, I'll open the PR.",
         ):
             self.assertEqual(self._decide(text), "block", text)
 
@@ -788,11 +801,15 @@ class ReplyLintDecisionTest(unittest.TestCase):
             "Когда CI пройдёт, открою PR.",
             "Работа продолжится по уведомлению, тогда допишу.",
             "Once the reviewer finishes, I'll fix it.",
+            "Поправлю, когда агент закончит.",
+            "I'll fix it once the reviewer finishes.",
+            "Буду ждать ревьюера, затем исправлю.",
+            "Ожидаю ревью, потом исправлю.",
         ):
             self.assertEqual(self._decide(text), "allow", text)
 
     def test_offer_waiting_on_owner_consent_passes(self):
-        for text in ("Если подходит, сделаю так.", "Если согласен, сделаю.", "If that works, I'll add it."):
+        for text in ("Если подходит, сделаю так.", "Если согласен, сделаю.", "If that works for you, I'll add it."):
             self.assertEqual(self._decide(text), "allow", text)
 
     def test_judged_hand_off_is_returned_with_its_sentence(self):
@@ -831,6 +848,8 @@ class HandoffJudgeTest(unittest.TestCase):
             "Жду подтверждения перезапуска базы.",
             "Напиши — запущу проверку.",
             "Ship it once approved; let me know.",
+            "Если подходит, сделаю так.",
+            "If that works for you, I'll add it.",
         ):
             self.assertTrue(gate_policy.addresses_owner(text), text)
 
@@ -838,6 +857,7 @@ class HandoffJudgeTest(unittest.TestCase):
         for text in (
             "Вывод: сборка идёт, тесты зелёные.",
             "The layout is fixed; CI runs.",
+            "Если нормально отработает, открою PR.",
         ):
             self.assertFalse(gate_policy.addresses_owner(text), text)
 

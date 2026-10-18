@@ -1476,12 +1476,23 @@ _PROMISE_RE = re.compile(
     re.IGNORECASE,
 )
 # The promise is backed when the reply names a durable record of the remaining
-# work (an issue or PR number, a handoff/todo file), or when it is an offer that
-# waits on the owner's command rather than a commitment the turn left undone.
+# work (an issue or PR number, a handoff/todo file).
 _PROMISE_BACKED_RE = re.compile(
-    r"#\d+|handoff|хендофф|\S*(?:todo|TODO|HANDOFF)\S*\.md"
-    r"|по\s+(?:твоей|вашей)\s+команде|скажи(?:те)?\s*[\u2014\u2013-]+\s*сделаю|on\s+your\s+go",
+    r"#\d+|handoff|хендофф|\S*(?:todo|TODO|HANDOFF)\S*\.md",
     re.IGNORECASE,
+)
+# Work offered on the owner's consent or command ("если подходит", "по твоей
+# команде", "if that works for you"). A condition on the agent's own result
+# ("если нормально отработает", "if it works") names no owner and is not one.
+# Shared by the promise check (such an offer is no promise) and the hand-off
+# prefilter (such an offer goes to the judge).
+_OWNER_CONSENT = (
+    r"\bесли\s+(?:\w+\s+)?(?:подход\w*|соглас\w*|хоти\w*|хочешь|устраива\w*|одобр\w*)\b"
+    r"|\bесли\s+(?:тебе|вам)\s+(?:ок|окей|норм\w*)\b"
+    r"|\bпо\s+(?:твоей|вашей)\s+команде|скажи(?:те)?\s*[\u2014\u2013-]+\s*сделаю|\bon\s+your\s+go\b"
+    r"|\bif\s+(?:that|this|it)\s+(?:works|is\s+(?:ok|fine))\s+(?:for|with|to)\s+you\b"
+    r"|\bif\s+(?:that|this)\s+sounds\s+(?:good|right|fine|ok)\b"
+    r"|\bif\s+you\s+(?:agree|want|approve|prefer)\b"
 )
 REPLY_LINT_MARKER = "reply-lint:"
 _CLAIM_REASON = (
@@ -1531,21 +1542,24 @@ _OFFER_RE = re.compile(
 )
 
 
-# A condition on an event the agent does not drive this turn: a background
-# delegate or tool finishing ("когда агент закончит", "после ревью", "once the
-# reviewer finishes", "по уведомлению"), or the owner's consent ("если подходит",
-# "if that works for you"). The owner-consent wait belongs to the hand-off judge.
+# A condition on an event the agent does not drive this turn: a delegate or tool
+# of the agent finishing or arriving, named as a noun or by a third-person verb
+# ("когда агент закончит", "после ревью", "once the reviewer finishes", "по
+# уведомлению"), or the owner's consent. The words between the trigger and the
+# event stay inside one sentence and hold no first person, so the agent's own
+# act ("когда закончу", "after I run the tests") is not such an event.
+_EVENT_GAP = r"(?:[^\w.!?\n]+(?!(?:я|мы|I|we)\b)\w+){0,3}?[^\w.!?\n]+"
 _EVENT_CONDITION_RE = re.compile(
-    r"(?:\b(?:когда|после|как(?:\s+только)?|жд[уёе]\w*|дожд\w*|once|when|after|until|wait\w*)\b"
-    r"(?:\W+\w+){0,3}?\W+(?:"
-    r"(?:суб)?агент\w*|ревью\w*|сборщик\w*|билдер\w*|проб[аыеу]\b|монитор\w*|CI\b|джоб\w*|job\w*|прогон\w*"
-    r"|уведомлени\w*|notification\w*|(?:sub)?agents?\b|review\w*|builders?\b|probes?\b|monitors?\b|runs?\b"
-    # a third party's finishing or arriving verb (3rd person, not the agent's own act)
-    r"|законч\w*|заверш\w*|придёт|придет|придут|вернёт\w*|вернет\w*|пройд[её]т|отработа\w*"
-    r"|finish\w*|returns|arriv\w*|completes|lands))"
-    r"|\bпо\s+уведомлени\w*|\bon\s+(?:the\s+)?notification\b"
-    r"|\bесли\s+(?:\w+\s+)?(?:подход\w*|соглас\w*|хоти\w*|хочешь|устраива\w*|одобр\w*|ок|окей|норм\w*)\b"
-    r"|\bif\s+(?:that|this|it)\s+(?:works|sounds|is\s+ok|is\s+fine)",
+    r"(?:\b(?:когда|после|как(?:\s+только)?|о?жд\w*|ожида\w*|дожд\w*|once|when|after|until|wait\w*)\b"
+    + _EVENT_GAP
+    + r"(?:"
+    r"(?:суб)?агент\w*|ревью\w*|сборщик\w*|билдер\w*|проб[аыеу]\b|монитор\w*|CI\b|джоб\w*|jobs?\b"
+    r"|прогон(?:а|у|ом|е|ы|ов|ам)?\b|уведомлени\w*|notifications?\b|(?:sub)?agents?\b|reviews?\b"
+    r"|reviewers?\b|builders?\b|probes?\b|monitors?\b|runs?\b"
+    r"|законч(?:ит|ат|ится|атся)\b|заверш(?:ит|ат|ится|атся)\b|придёт|придет|придут"
+    r"|вернёт\w*|вернет\w*|вернут\b|пройд(?:[её]т|ут)\b|отработа(?:ет|ют)\b"
+    r"|finish(?:es|ed)\b|returns\b|arriv(?:es|ed)\b|completes\b|lands\b))"
+    r"|\bпо\s+уведомлени\w*|\bon\s+(?:the\s+)?notification\b|" + _OWNER_CONSENT,
     re.IGNORECASE,
 )
 
@@ -1602,17 +1616,17 @@ def _has_done_claim(original):
 def _has_unbacked_promise(text):
     """A promise counts when the reply names no durable record of the remaining
     work, no action of another party precedes the promise in its sentence, and
-    no background-event or owner-consent condition precedes it in its sentence
-    or the sentence before it in the same paragraph."""
+    neither its sentence nor the sentence before it in the same paragraph
+    conditions it on a background event or the owner's consent."""
     if _PROMISE_BACKED_RE.search(text):
         return False
     blanked = _blank_quoted(text)
     for match in _PROMISE_RE.finditer(blanked):
-        start = _sentence_bounds(blanked, match.start())[0]
+        start, end = _sentence_bounds(blanked, match.start())
         if _OFFER_RE.search(blanked, start, match.start()):
             continue
         window = _paragraph_previous_sentence_start(blanked, start)
-        if not _EVENT_CONDITION_RE.search(blanked, window, match.start()):
+        if not _EVENT_CONDITION_RE.search(blanked, window, end):
             return True
     return False
 
@@ -1671,8 +1685,8 @@ _JSON_FENCE_RE = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.S)
 # A reply that hands work to the owner addresses the owner or conditions work on the
 # owner's act: a second-person pronoun, possessive, finite or imperative verb (RU/EN),
 # "owner", an idiom like "по команде" / "жду подтверждения" / "пока не скажете" /
-# "let me know", or a question mark. A wide net: the model judge filters. Anything
-# else skips the judge.
+# "let me know", a consent offer ("если подходит, сделаю"), or a question mark. A wide
+# net: the model judge filters. Anything else skips the judge.
 _ADDRESSES_OWNER_RE = re.compile(
     r"\?"
     r"|\b(?:ты|тебя|тебе|тобой|тобою|тво[йяёеию]\w*|вы|вас|вам|вами|ваш\w*|владел\w*"
@@ -1685,7 +1699,8 @@ _ADDRESSES_OWNER_RE = re.compile(
     r"|\bпо\s+(?:\w+\s+)?(?:команде|слову|сигналу|отмашке)"
     r"|\bжду\s+(?:\w+\s+)?(?:подтвержд|одобр|соглас|команд|решени|ответ|отмашк|разрешени|слов|\"|«)"
     r"|\bпока\s+не\s+(?:скаж|дад|подтверд|разреш|одобр|ответ|соглас|реш)"
-    r"|\b(?:let me know|approve|confirm|tell me|go ahead|green light|sign[- ]off)\b",
+    r"|\b(?:let me know|approve|confirm|tell me|go ahead|green light|sign[- ]off)\b"
+    r"|" + _OWNER_CONSENT,
     re.I,
 )
 
