@@ -11,7 +11,6 @@ them unavoidable at the moment of merging. Decision: gate_policy.merge_gate_deci
 """
 import json
 import os
-import re
 import subprocess
 import sys
 
@@ -24,18 +23,15 @@ sys.path.insert(0, TOOLS_DIR)
 import gate_policy  # noqa: E402
 
 
-_PUSH_RE = re.compile(r"\bgit\s+push\s+\S+\s+(?:(\S+):)?(master|main)\b")
-
-
 def _pushed_paths(command, cwd):
     """Paths the pushed range changes, or None when unknown (fail open)."""
-    m = _PUSH_RE.search(command)
-    if not m or not cwd:
+    rng = gate_policy.push_range(command, cwd)
+    if rng is None:
         return None
-    src, target = m.group(1) or "HEAD", m.group(2)
     try:
         out = subprocess.run(
-            ["git", "-C", cwd, "diff", "--name-only", "origin/%s...%s" % (target, src)],
+            ["git", "-C", rng["dir"], "diff", "--name-only",
+             "%s/%s...%s" % (rng["remote"], rng["target"], rng["src"])],
             capture_output=True, text=True, timeout=10,
         )
     except (OSError, subprocess.SubprocessError):

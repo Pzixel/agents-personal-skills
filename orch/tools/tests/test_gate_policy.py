@@ -681,10 +681,12 @@ class AlwaysOnFieldTest(unittest.TestCase):
         self.assertIn("ALWAYS_ON: <before> -> <after> chars", result["reason"])
 
     def test_growth_needs_removed_text_or_reason(self):
-        for extra in ("ALWAYS_ON: 2438 -> 2500 chars", "ALWAYS_ON: 2438 -> 2500 chars; removed: none"):
+        for extra in ("ALWAYS_ON: 2438 -> 2500 chars", "ALWAYS_ON: 2438 -> 2500 chars; removed: none",
+                      "ALWAYS_ON: 2438 -> 2500 chars; removed: ''"):
             self.assertEqual(self._d(extra)["decision"], "deny", extra)
         for extra in (
             "ALWAYS_ON: 2438 -> 2500 chars; removed: the reply-lint clause",
+            "ALWAYS_ON: 2438 -> 2500 chars; removed: 'the reply-lint clause; and its example'",
             "ALWAYS_ON: 2438 -> 2500 chars; reason: gate field must be known up front",
         ):
             self.assertEqual(self._d(extra)["decision"], "allow", extra)
@@ -692,9 +694,45 @@ class AlwaysOnFieldTest(unittest.TestCase):
     def test_no_growth_needs_no_justification(self):
         self.assertEqual(self._d("ALWAYS_ON: 2438 -> 2400 chars")["decision"], "allow")
 
+    def test_all_missing_fields_are_named_in_one_refusal(self):
+        result = gate_policy.merge_gate_decision("git push origin x:" + "master", self._RULES)
+        reason = result["reason"].split("Missing:")[1]
+        for field in ("`CHECK_RAN", "`PROD_POSITION", "`WAY_BACK", "`ALWAYS_ON"):
+            self.assertIn(field, reason)
+
     def test_unknown_or_other_paths_need_no_field(self):
         for paths in (None, ["orch/README.md", "rules/always-on-claude.details.md"]):
             self.assertEqual(self._d("", paths)["decision"], "allow", paths)
+
+
+class PushRangeTest(unittest.TestCase):
+    def test_push_forms_that_merge_gate_gates(self):
+        repo = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, repo)
+        wt = os.path.realpath(repo)
+        m = "ma" + "ster"
+        cases = (
+            ("git push origin HEAD:" + m, "/elsewhere", ("/elsewhere", "origin", "HEAD", m)),
+            ("git push origin " + m, "/elsewhere", ("/elsewhere", "origin", "HEAD", m)),
+            ("git push -u origin feat:" + m, "/w", ("/w", "origin", "feat", m)),
+            ("git push --force-with-lease origin feat:main", "/w", ("/w", "origin", "feat", "main")),
+            ("git push --force-with-lease=main:abc up +feat:refs/heads/main", "/w", ("/w", "up", "feat", "main")),
+            ("git -C %s push origin feat:%s" % (repo, m), "/elsewhere", (wt, "origin", "feat", m)),
+            ("cd %s && git push origin HEAD:%s" % (repo, m), "/elsewhere", (wt, "origin", "HEAD", m)),
+            ("rtk git push origin feat:" + m + "  # CHECK_RAN: x", "/w", ("/w", "origin", "feat", m)),
+        )
+        for cmd, cwd, want in cases:
+            got = gate_policy.push_range(cmd, cwd)
+            self.assertEqual((got["dir"], got["remote"], got["src"], got["target"]), want, cmd)
+
+    def test_unknown_directory_or_other_target_is_none(self):
+        for cmd, cwd in (
+            ("git push origin HEAD:" + "master", None),
+            ("cd $X && git push origin HEAD:" + "master", "/w"),
+            ("git push origin feat:release", "/w"),
+            ("git push -u origin feat", "/w"),
+        ):
+            self.assertIsNone(gate_policy.push_range(cmd, cwd), cmd)
 
 
 class ReplyLintDecisionTest(unittest.TestCase):

@@ -1433,33 +1433,35 @@ _MERGE_FIELD_DOCS = (
 # Rules files loaded into every session; growing them costs every session.
 ALWAYS_ON_PATHS = frozenset(("rules/always-on.md", "rules/always-on-claude.md"))
 _ALWAYS_ON_RE = re.compile(r"ALWAYS_ON:\s*(\d+)\s*->\s*(\d+)\s*chars")
-_REMOVED_RE = re.compile(r"\bremoved:\s*([^;\n'\"]*)")
+_REMOVED_RE = re.compile(r"\bremoved:\s*(?:'([^']*)'|\"([^\"]*)\"|([^;\n'\"]*))")
 _GROW_REASON_RE = re.compile(r"\breason:\s*[^\s;'\"]")
-_ALWAYS_ON_REASON = (
-    "Refused by merge-gate: this push changes an always-on rules file. Repeat "
-    "the command with `ALWAYS_ON: <before> -> <after> chars` (wc -c of the "
-    "file) and, when it grows, `removed: <text cut elsewhere>` or "
-    "`reason: <why the always-on layer must grow>` (an on-demand placement "
-    "(retro CASE-19) of the measured budget rule was read by no fresh "
-    "agent: live 0/3, against 0/3 -> 3/3 when loaded)."
+_ALWAYS_ON_LEAD = (
+    "Refused by merge-gate: this push changes an always-on rules file, whose "
+    "size every session pays for."
+)
+_ALWAYS_ON_DOC = (
+    "`ALWAYS_ON: <before> -> <after> chars` (wc -c of the file) and, when it "
+    "grows, `removed: <text cut elsewhere>` or `reason: <why the always-on "
+    "layer must grow>` (retro CASE-19: an on-demand placement of the measured "
+    "budget rule was read by no fresh agent, live 0/3, against 0/3 -> 3/3 when "
+    "loaded)"
 )
 
 
-def always_on_decision(command, changed_paths):
-    """Deny a push whose changed paths touch an always-on rules file unless the
-    command states the size change, and what was removed or why it grows.
+def _always_on_satisfied(cmd, changed_paths):
+    """True unless ``changed_paths`` touch an always-on rules file and the
+    command lacks the size change, or what was removed / why it grows.
     ``changed_paths`` None means unknown: no requirement."""
     if not changed_paths or not ALWAYS_ON_PATHS.intersection(changed_paths):
-        return {"decision": "allow"}
-    cmd = command or ""
+        return True
     size = _ALWAYS_ON_RE.search(cmd)
-    if size and int(size.group(2)) <= int(size.group(1)):
-        return {"decision": "allow"}
-    if size:
-        removed = _REMOVED_RE.search(cmd)
-        if (removed and removed.group(1).strip().lower() not in ("", "none")) or _GROW_REASON_RE.search(cmd):
-            return {"decision": "allow"}
-    return {"decision": "deny", "reason": _ALWAYS_ON_REASON}
+    if not size:
+        return False
+    if int(size.group(2)) <= int(size.group(1)) or _GROW_REASON_RE.search(cmd):
+        return True
+    removed = _REMOVED_RE.search(cmd)
+    text = removed and "".join(g or "" for g in removed.groups()).strip()
+    return bool(text) and text.lower() != "none"
 
 
 def merge_gate_decision(command, changed_paths=None):
@@ -1470,12 +1472,55 @@ def merge_gate_decision(command, changed_paths=None):
     if not _MERGE_RE.search(cmd):
         return {"decision": "allow"}
     missing = [doc for token, doc in _MERGE_FIELD_DOCS if token not in cmd]
-    if missing:
-        return {
-            "decision": "deny",
-            "reason": _MERGE_REASON + " Missing: " + "; ".join(missing) + ".",
-        }
-    return always_on_decision(cmd, changed_paths)
+    lead = _MERGE_REASON if missing else _ALWAYS_ON_LEAD
+    if not _always_on_satisfied(cmd, changed_paths):
+        missing.append(_ALWAYS_ON_DOC)
+    if not missing:
+        return {"decision": "allow"}
+    return {"decision": "deny", "reason": lead + " Missing: " + "; ".join(missing) + "."}
+
+
+# git push options that take a separate value.
+_PUSH_VALUE_OPTIONS = frozenset({"--repo", "-o", "--push-option", "--receive-pack", "--exec"})
+
+
+def push_range(command, cwd):
+    """``{"dir", "remote", "src", "target"}`` of the first ``git push`` in
+    ``command`` that updates master or main, or None when the repository
+    directory, remote or refspec is not literal. ``cwd`` is the directory the
+    command starts in; a literal ``cd`` and ``git -C`` move it."""
+    directory = cwd or None
+    for tokens in _shell_segments(command or ""):
+        tokens = _tokens_after_keywords(" ".join(tokens))
+        prog = _program(tokens)
+        if prog == "cd":
+            directory = _cd_target(prog, tokens[1:], {"dir": directory}) if directory else None
+            continue
+        if prog != "git":
+            continue
+        args, repo, i = tokens[1:], directory, 0
+        while i < len(args) and args[i].startswith("-"):
+            if args[i] == "-C" and i + 1 < len(args):
+                repo = _resolve(args[i + 1], {"dir": repo}) if repo or args[i + 1].startswith("/") else None
+            i += 2 if args[i] in _GIT_VALUE_OPTIONS else 1
+        if i >= len(args) or args[i] != "push":
+            continue
+        operands, rest = [], args[i + 1:]
+        j = 0
+        while j < len(rest):
+            if rest[j].startswith("-"):
+                j += 2 if rest[j] in _PUSH_VALUE_OPTIONS else 1
+                continue
+            operands.append(rest[j])
+            j += 1
+        if len(operands) < 2 or not repo:
+            continue
+        for spec in operands[1:]:
+            src, _, dst = spec.lstrip("+").rpartition(":")
+            dst = dst[len("refs/heads/"):] if dst.startswith("refs/heads/") else dst
+            if dst in ("master", "main"):
+                return {"dir": repo, "remote": operands[0], "src": src or "HEAD", "target": dst}
+    return None
 
 
 # -- reply lint: a final reply carries its observation and stays in authority --

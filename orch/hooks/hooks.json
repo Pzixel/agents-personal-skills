@@ -123,7 +123,7 @@
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/merge-gate.py\"",
-            "timeout": 5
+            "timeout": 15
           }
         ]
       },
