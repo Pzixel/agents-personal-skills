@@ -90,11 +90,14 @@ Hooks enforce the gates; an agent obeys a refusal's message and never works arou
   `WAY_BACK: <undo, minutes>`, or `merge-gate` refuses it.
 - Final reply: the Stop hook `reply-lint` returns once a completion claim without its
   observation, or a promise of later work that names no issue, PR or handoff file, and
-  asks for an addendum with only the missing part. A second, model-judged `prompt` Stop
-  hook (background model, prompt inline in `hooks/hooks.json`) returns once a reply that
+  asks for an addendum with only the missing part. It also returns once a reply that
   leaves work waiting on the owner's choice, answer or approval in plain text: decide it
   if it is inside the agent's authority, otherwise ask through `AskUserQuestion` with
-  self-contained options.
+  self-contained options. That judgement is a nested `claude -p --model haiku` call that
+  sees only the final reply (prompt in `gate_policy.HANDOFF_JUDGE_PROMPT`) and runs with
+  no hooks, plugins, MCP or settings; it adds about 3-4 s per stop. The second stop passes
+  without a model call; a judge error, timeout (12 s) or unparsable verdict passes the
+  reply (fail open) and is logged in `~/.claude/reply-lint-log.jsonl`.
 - Destructive commands are classified by `deny-destructive.py`
   (`gate_policy.destructive_decision`, table in `orchestrate-params.json`), never by the
   agent. `ours` (paths under `/tmp`, `tmp/`, `.worktrees/`; k8s objects labelled
