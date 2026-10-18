@@ -31,6 +31,8 @@ Across the 2026-10-14 evals the model reached the same decision with and without
 
 ## Always-on rules
 
+`rules/always-on-claude.md` and its `.details.md` companion are Claude Code mechanism text moved on 2026-10-18 from the owner's private Claude Code rules (one private config path made generic), plus one owner rule of 2026-10-18 (a turn that hands control to the owner describes the blocker in full; the owner's answer is asked through AskUserQuestion); they are not measured always-on rules and carry no replay numbers.
+
 `rules/always-on.md` moved from the owner's user-level rules on 2026-10-17, verbatim except where noted. Numbers are fresh-session live runs, passes over runs, from a private case set; case content stays there.
 
 - Progressive-disclosure paragraph, thin-slice bullet, existence-witness bullet (one change): CASE-13 0/3 -> 2/3. The paragraph drops a pointer to a private details file.

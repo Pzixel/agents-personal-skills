@@ -1,7 +1,8 @@
 #!/bin/sh
 # Link this checkout's skills and orch directories into the Codex and Claude Code
-# config directories on macOS and import rules/always-on.md into each client's
-# user-level rules file. Idempotent: rerun after every pull.
+# config directories on macOS, import rules/always-on.md into each client's
+# user-level rules file and rules/always-on-claude.md into the Claude Code one.
+# Idempotent: rerun after every pull.
 set -eu
 
 [ $# -eq 1 ] || set -- ""
@@ -39,7 +40,10 @@ plan() {
 rules="$root/rules/always-on.md"
 begin="<!-- BEGIN agents-personal-skills rules/always-on.md -->"
 end="<!-- END agents-personal-skills rules/always-on.md -->"
-[ -f "$rules" ] || { echo "Missing rules file: $rules" >&2; exit 1; }
+claude_rules="$root/rules/always-on-claude.md"
+for f in "$rules" "$claude_rules"; do
+  [ -f "$f" ] || { echo "Missing rules file: $f" >&2; exit 1; }
+done
 for f in "$claude/CLAUDE.md" "$codex_rules"; do
   if [ -e "$f" ] && [ ! -r "$f" ]; then echo "Cannot read $f" >&2; exit 1; fi
 done
@@ -117,7 +121,8 @@ finish_tmp() {
   tmp=""
 }
 
-# Claude Code: one import line in the user CLAUDE.md, unless a line-start @-import
+# Claude Code: one import line per rules file in the user CLAUDE.md. For
+# always-on.md the line is skipped when a line-start @-import
 # already loads a file holding the Codex block; then a direct line is removed.
 # Codex has no import: one marked block holding the file, replaced on every run
 # (targets list codex first, so with `both` the block exists before the check).
@@ -141,6 +146,12 @@ for t in $targets; do
         echo "skipped $line: $cm already imports the rules block via $via"
       fi
     elif ! grep -qxF "$line" "$cm"; then
+      if [ -s "$cm" ] && [ -n "$(tail -c 1 "$cm")" ]; then echo >> "$cm"; fi
+      echo "$line" >> "$cm"
+      echo "added $line to $cm"
+    fi
+    line="@$claude_rules"
+    if ! grep -qxF "$line" "$cm"; then
       if [ -s "$cm" ] && [ -n "$(tail -c 1 "$cm")" ]; then echo >> "$cm"; fi
       echo "$line" >> "$cm"
       echo "added $line to $cm"
