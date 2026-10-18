@@ -40,8 +40,7 @@ Across the 2026-10-14 evals the model reached the same decision with and without
 - Readings-with-cost bullet: CASE-5 0/6 -> 3/3.
 - Cause-of-a-number sentences (split out of a claims bullet): CASE-14 0/3 -> 2/3.
 - Window-basis bullet and tunable-default bullet (one change): CASE-16 0/3 -> 5/6.
-- Measured-claim bullet (an owner statement against the agent's own measured conclusion is a claim; a question is not the word for an irreversible step): CASE-18 on a long-session packet 1/3 -> 3/3 with the line in the prompt; controls CASE-4, CASE-7, CASE-12 held, CASE-5 0/3 -> 2/3; the gate-field alternative reached 2/3 and was not taken. Live fresh-session check with the line installed and no variant text in the prompt: 3/3 on the same long-session packet.
-  Blind re-grade 2026-10-19 under grade-pack: CASE-18 A 1/3 B 3/3 (recorded A 1/3 B 3/3); CASE-4 control A 3/3 B 3/3. Reading stands.
+- Measured-claim bullet. Cue: the owner states a fact that contradicts a conclusion the agent backed with a measurement. Lesson: put the measurement first; change the conclusion, or take an irreversible step, only on a new fact or the owner's word given after the number; a question is not that word. Evidence: `helped`; target case on a long-session packet 1/3 -> 3/3 in the prompt, blind re-grade 2026-10-19 under grade-pack the same (0 flips); four controls held or rose; live fresh-session 3/3 with the line installed; the gate-field alternative reached 2/3 and was not taken. Confidence: one target case at k=3, live check on the same packet; no second case of the class.
 
 Move check 2026-10-17: fresh `claude -p --setting-sources project` sessions from an empty directory, rules appended as a system prompt; arm MOVED = this file plus the remaining user-level rules, arm FULL = the unchanged user-level rules, same flags. Acceptance: MOVED >= FULL per case. Every MOVED and FULL number below is the joint grade (both arms blind in one grader call per case), the only grade both arms share; CASE-5, CASE-4 and CASE-7 ran MOVED only (standalone grade). On the joint grade MOVED >= FULL on every case run:
 
@@ -103,7 +102,7 @@ Adapted from the Russian draft the owner supplied on 2026-10-09; no upstream SHA
 
 2026-10-18: the blind grader pack in reference.md section 3, prescribed but never built, is now `retro/scripts/grade-pack.py`. Before it, graders read candidates through their arm paths in a fixed A/B order, and about one in twelve stored candidates opened with a title naming its arm. A dry run on one case unpacked the stored verdicts unchanged. A headless grader run with `--restricted` from inside the pack could not read a canary file outside it, either directly or through a subagent.
 
-2026-10-19: verdict vocabulary (`helped` / `hurt` / `no observed effect` / `confounded`), the `NO_ENTRY` rule and the cue / lesson / evidence / confidence fields in reference.md section 4, worded after harness2 `core/prompts.py` `experience()` (no code copied). A report format with no decision point, not a measured rule.
+2026-10-19: verdict vocabulary (`helped` / `hurt` / `no observed effect` / `confounded`), the `NO_ENTRY` rule and the cue / lesson / evidence / confidence fields in reference.md section 4, worded after `google-research/harness2` 1cfe254 `harness2/core/prompts.py` `experience()` (no code copied). A report format with no decision point, not a measured rule.
 
 ### `orch`
 

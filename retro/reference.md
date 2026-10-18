@@ -139,9 +139,11 @@ fail reasons quoted, observed mechanism, costs.
 Each table row and each accepted-change entry carries one verdict per
 change: `helped`, `hurt`, `no observed effect` or `confounded`; `confounded`
 whenever several things changed at once or one run stands behind the
-difference. A lesson has the fields cue (the situation shape), lesson,
-evidence (the rows it rests on), confidence; a lesson resting only on
-confounded rows is recorded as `NO_ENTRY`, never as a rule.
+difference; `hurt` when a control or the length clause fails, even if the
+target rose. A thing is one applied rule unit as it landed. Stage 6 writes
+each applied change's ORIGINS.md bullet with the fields cue (the situation
+shape), lesson, evidence (the rows it rests on), confidence, or `NO_ENTRY`
+when only confounded rows support it.
 
 Pitfalls measured on earlier runs:
 
