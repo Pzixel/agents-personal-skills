@@ -40,6 +40,7 @@ Across the 2026-10-14 evals the model reached the same decision with and without
 - Readings-with-cost bullet: CASE-5 0/6 -> 3/3.
 - Cause-of-a-number sentences (split out of a claims bullet): CASE-14 0/3 -> 2/3.
 - Window-basis bullet and tunable-default bullet (one change): CASE-16 0/3 -> 5/6.
+- Measured-claim bullet (an owner statement against the agent's own measured conclusion is a claim; a question is not the word for an irreversible step): CASE-18 on a long-session packet 1/3 -> 3/3 with the line in the prompt; controls CASE-4, CASE-7, CASE-12 held, CASE-5 0/3 -> 2/3; the gate-field alternative reached 2/3 and was not taken. Live fresh-session check: see the line below once run.
 
 Move check 2026-10-17: fresh `claude -p --setting-sources project` sessions from an empty directory, rules appended as a system prompt; arm MOVED = this file plus the remaining user-level rules, arm FULL = the unchanged user-level rules, same flags. Acceptance: MOVED >= FULL per case. Every MOVED and FULL number below is the joint grade (both arms blind in one grader call per case), the only grade both arms share; CASE-5, CASE-4 and CASE-7 ran MOVED only (standalone grade). On the joint grade MOVED >= FULL on every case run:
 
