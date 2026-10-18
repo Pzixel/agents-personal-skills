@@ -101,16 +101,19 @@ grade-pack.py pack --case CASE-n --variant <variant> --rubric grading/CASE-n/<ru
 
 `pack` copies `rubric.md`, `input.md` and run-1..k of each arm into a fresh
 temp dir under ids shuffled by a fixed function of case, variant, k and arm
-names, drops a `# CASE-n run-k` title line, and refuses when an arm name,
-`runs/<arm>/` or `VERDICT ` reaches the grader input. It writes the id key
+names, drops a first-line heading naming the case and a run, and refuses
+when `VERDICT ` or `runs/<arm>/` reaches the rubric, the packet or a
+candidate, or `(<arm>`, `CASE-n <arm> run` or a hyphenated arm name
+reaches a candidate; a bare arm word is counted, not refused. It writes the id key
 `ARMS.tsv` to the key dir, outside the pack, and prints the diversity line
 per arm (distinct bodies, max pairwise line-Jaccard), the counted bare-word
 hits and the grader command: `claude -p --restricted --strict-mcp-config
 --output-format text < prompt.md` run inside the pack, reply saved as
 `grader-reply.txt` in the key dir. `--restricted` confines file tools to the
-pack and removes code-running tools. The grader writes no file; each
-candidate's block opens with `## <id>` and closes with
-`VERDICT <id>: PASS|FAIL — <one sentence>`. A rubric that needs its own
+pack and removes code-running tools; `--strict-mcp-config` keeps MCP servers
+from every settings file away from the grader. The grader writes no file;
+each candidate's block opens with `## <id>` (the id is the file stem,
+`cand-1`) and closes with `VERDICT <id>: PASS|FAIL — <one sentence>`. A rubric that needs its own
 grader procedure carries it in the rubric file. The prompt is in the script.
 
 ```
@@ -120,8 +123,9 @@ grade-pack.py unpack --reply grading/CASE-n/<variant>/grader-reply.txt \
 
 `unpack` writes `A-verdict-k.md` (role A, the baseline) and `B-verdict-k.md`,
 each ending on `VERDICT run-k: PASS|FAIL — ...`, prints the tally per arm,
-and refuses a missing or duplicated id and identical verdict bodies (a
-templated grader: discard and rerun once). Fewer, larger graders (two cases
+and refuses a missing or duplicated id, a second VERDICT line, and
+identical verdict bodies (a templated grader: discard and rerun once). It
+writes nothing until every block parsed and no target file exists. Fewer, larger graders (two cases
 per call) cut the wake-up cost of fan-out.
 
 ## 4. Comparison protocol
