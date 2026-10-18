@@ -773,10 +773,58 @@ class ReplyLintDecisionTest(unittest.TestCase):
     def test_promise_waiting_on_own_work_is_returned(self):
         self.assertEqual(self._decide("Когда CI пройдёт, открою PR."), "block")
 
-    def test_owner_hand_off_is_left_to_the_model_hook(self):
-        # Two checks must not block the same reply: hand-offs belong to the prompt hook.
-        for text in ("Есть два варианта, решение за вами.", "Two options are open; your call."):
-            self.assertEqual(self._decide(text), "allow", text)
+    def test_judged_hand_off_is_returned_with_its_sentence(self):
+        decision = gate_policy.reply_lint_decision(
+            "Есть два варианта.", False, {"handoff": True, "sentence": "Решение за вами."}
+        )
+        self.assertEqual(decision["decision"], "block")
+        self.assertIn("Решение за вами.", decision["reason"])
+        self.assertIn("AskUserQuestion", decision["reason"])
+
+    def test_no_hand_off_or_no_verdict_passes(self):
+        for verdict in (None, {"handoff": False, "sentence": "none"}):
+            self.assertEqual(
+                gate_policy.reply_lint_decision("Есть два варианта, решение за вами.", False, verdict)["decision"],
+                "allow",
+                verdict,
+            )
+
+    def test_second_stop_passes_a_judged_hand_off(self):
+        decision = gate_policy.reply_lint_decision("Your call.", True, {"handoff": True, "sentence": "Your call."})
+        self.assertEqual(decision["decision"], "allow")
+
+
+class HandoffJudgeTest(unittest.TestCase):
+    @staticmethod
+    def _cli(result, is_error=False):
+        return json.dumps({"type": "result", "is_error": is_error, "result": result})
+
+    def test_reply_reaches_the_prompt_verbatim(self):
+        reply = 'Pick {a} or "b"?\nЖду ответа.'
+        prompt = gate_policy.handoff_judge_prompt(reply)
+        self.assertIn(json.dumps(reply, ensure_ascii=False), prompt)
+
+    def test_verdict_object_is_parsed(self):
+        for result in (
+            '{"sentence": "Your call.", "handoff": true}',
+            '```json\n{"sentence": "Your call.", "handoff": true}\n```',
+        ):
+            self.assertEqual(
+                gate_policy.parse_handoff_verdict(self._cli(result)),
+                {"handoff": True, "sentence": "Your call."},
+                result,
+            )
+
+    def test_anything_but_one_verdict_object_is_no_verdict(self):
+        for stdout in (
+            "",
+            "not json",
+            self._cli('{"sentence": "x", "handoff": true}', is_error=True),
+            self._cli('Verdict: {"sentence": "x", "handoff": true}'),
+            self._cli('{"sentence": "x", "handoff": "false"}'),
+            self._cli('{"sentence": "x"} {"handoff": true}'),
+        ):
+            self.assertIsNone(gate_policy.parse_handoff_verdict(stdout), stdout)
 
 
 class BlankQuotedTest(unittest.TestCase):

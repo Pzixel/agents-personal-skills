@@ -1585,11 +1585,91 @@ def _has_unbacked_promise(text):
     return False
 
 
-def reply_lint_decision(last_assistant_text, stop_hook_active):
+HANDOFF_JUDGE_PROMPT = (
+    "You check the final reply of a coding agent before its turn ends. The reply, as a JSON string:\n"
+    "{reply}\n\n"
+    "Decide whether it is an OWNER HAND-OFF (any language). The agent's tool to ask the owner, "
+    "AskUserQuestion, pauses the turn and is not visible in this text, so a reply that ends the turn "
+    "while still needing the owner has not asked through it.\n\n"
+    "It is an owner hand-off when either holds:\n"
+    "1. Work stays waiting on the owner's choice, answer, approval, confirmation, permission or input. "
+    "Any shape counts: a direct question offering options (\"A or B?\", \"which do we do?\"), \"your call\", "
+    "\"waiting for your decision\", work conditioned on the owner's act (\"after your approval I will\", "
+    "\"I do it on your word\", \"not starting without your go\", \"if you allow it, I will\"), the owner's "
+    "choice named as pending (\"your choice\", \"three decisions still wait for you\"), an indirect question "
+    "(\"waiting to hear whether you approve B\"), or a reminder that an earlier question is still open. "
+    "This holds even while background jobs or agents run.\n"
+    "2. The reply points to content of an earlier message instead of stating it (\"see the options above\", "
+    "\"as in my previous message\") while asking the owner something about it.\n\n"
+    "NOT a hand-off:\n"
+    "- an answer to the owner's own question, even if it ends with a short optional follow-up offer;\n"
+    "- a tunable value already set and reported, e.g. \"set to 7 days, keep or change?\";\n"
+    "- a wait that is negated or resolved (\"nothing waits on you\", \"your answers were applied\", "
+    "\"no decision needed\");\n"
+    "- plain status, results, or a report of work that continues without the owner (background job, CI, "
+    "while the owner is away);\n"
+    "- a wait on the agent's own subagents, builders, reviewers, probes or background tasks (\"waiting for E and F\");\n"
+    "- waiting on a third party or an external event, not the owner;\n"
+    "- a statement of a limitation or of what blocks something, when nothing is asked of the owner;\n"
+    "- an idle tick of an unattended goal or loop that names the owner's own stated action as its resume "
+    "condition (\"waiting until you lift the goal\");\n"
+    "- a request for an action only the owner can perform, when the reply states the exact action and why: a "
+    "permission the hooks forbid to agents, a command the owner must type (\"! kill 1234\", an "
+    "`APPROVE <hash>` line for a named plan whose path, hash and scope the reply states);\n"
+    "- quoting or describing such phrases as examples (in code, quotes, or rule text).\n\n"
+    "Decide in two steps. First find the one sentence in the reply, written by the agent and addressed to the "
+    "owner, that asks the owner for a choice, answer, approval, action or input, or says work waits on the "
+    "owner. If no such sentence exists, the reply is not a hand-off: a long status, a plan the agent carries "
+    "out itself, next steps it will take, a future review gate, or work waiting on CI, a deploy, a probe, a "
+    "reviewer, a builder or another agent all pass. If that sentence exists and none of the NOT cases covers "
+    "it, it is a hand-off. When unsure, pass.\n\n"
+    "Respond with one JSON object only, no other text, with \"sentence\" written before \"handoff\":\n"
+    "{{\"sentence\": \"<that sentence quoted, at most 15 words, or none>\", \"handoff\": <true or false>}}"
+)
+_HANDOFF_REASON = (
+    REPLY_LINT_MARKER + " the reply leaves work waiting on the owner in plain text "
+    "(\"{sentence}\"). If the decision is inside your authority (reversible, bounded and ours, "
+    "or a tunable), decide it, do it now and report it. Otherwise ask now with the "
+    "AskUserQuestion tool: each option self-contained (what the owner sees change, the "
+    "deciding numbers, your recommendation first), never a pointer to an earlier message."
+)
+_JSON_FENCE_RE = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.S)
+
+
+def handoff_judge_prompt(reply):
+    """The judge prompt for one final reply; the reply goes in as a JSON string."""
+    return HANDOFF_JUDGE_PROMPT.format(reply=json.dumps(reply, ensure_ascii=False))
+
+
+def parse_handoff_verdict(cli_stdout):
+    """Verdict from `claude -p --output-format json` output: {"handoff", "sentence"},
+    or None when the run failed or the result is not exactly one verdict object
+    (the hook then fails open)."""
+    try:
+        envelope = json.loads(cli_stdout)
+    except ValueError:
+        return None
+    if not isinstance(envelope, dict) or envelope.get("is_error") or not isinstance(envelope.get("result"), str):
+        return None
+    result = envelope["result"].strip()
+    fenced = _JSON_FENCE_RE.match(result)
+    if fenced:
+        result = fenced.group(1)
+    try:
+        verdict = json.loads(result)
+    except ValueError:
+        return None
+    if not isinstance(verdict, dict) or not isinstance(verdict.get("handoff"), bool):
+        return None
+    return {"handoff": verdict["handoff"], "sentence": str(verdict.get("sentence") or "")}
+
+
+def reply_lint_decision(last_assistant_text, stop_hook_active, handoff=None):
     """Return the main session once when its final reply claims completion
-    without an observation, or promises future work with no durable record
-    of it (issue, PR, handoff file). Hand-offs to the owner are judged by the
-    model-based Stop hook in hooks.json, not here.
+    without an observation, promises future work with no durable record
+    of it (issue, PR, handoff file), or hands work to the owner in plain
+    text. ``handoff`` is the judge verdict (``parse_handoff_verdict``), None
+    when no verdict exists.
     Not claims (2026-10-15): a Russian not-verified disclosure, a done word
     as a section label or with a manner complement.
     The second stop (``stop_hook_active``) always passes."""
@@ -1603,6 +1683,8 @@ def reply_lint_decision(last_assistant_text, stop_hook_active):
         reasons.append(_CLAIM_REASON)
     if _has_unbacked_promise(text):
         reasons.append(_PROMISE_REASON)
+    if handoff and handoff["handoff"]:
+        reasons.append(_HANDOFF_REASON.format(sentence=handoff["sentence"].replace('"', "'")))
     if not reasons:
         return {"decision": "allow"}
     return {"decision": "block", "reason": " ".join(reasons)}
