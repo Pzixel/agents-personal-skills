@@ -140,7 +140,8 @@ Each table row and each accepted-change entry carries one verdict per
 change: `helped`, `hurt`, `no observed effect` or `confounded`; `confounded`
 whenever several things changed at once or one run stands behind the
 difference; `hurt` when a control or the length clause fails, even if the
-target rose. A thing is one applied rule unit as it landed. Stage 6 writes
+target rose; when several apply, `hurt` > `confounded` > `helped` >
+`no observed effect`. A thing is one applied rule unit as it landed. Stage 6 writes
 each applied change's ORIGINS.md bullet with the fields cue (the situation
 shape), lesson, evidence (the rows it rests on), confidence, or `NO_ENTRY`
 when only confounded rows support it.
