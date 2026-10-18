@@ -136,6 +136,12 @@ control, k, grader plan, and the rule (target rises, no control falls,
 length control not worse and not longer in characters). A control that
 drops one run at k=3 gets three more runs in both arms. `RESULT.md`: table,
 fail reasons quoted, observed mechanism, costs.
+Each table row and each accepted-change entry carries one verdict per
+change: `helped`, `hurt`, `no observed effect` or `confounded`; `confounded`
+whenever several things changed at once or one run stands behind the
+difference. A lesson has the fields cue (the situation shape), lesson,
+evidence (the rows it rests on), confidence; a lesson resting only on
+confounded rows is recorded as `NO_ENTRY`, never as a rule.
 
 Pitfalls measured on earlier runs:
 

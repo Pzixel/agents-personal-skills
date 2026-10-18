@@ -103,6 +103,8 @@ Adapted from the Russian draft the owner supplied on 2026-10-09; no upstream SHA
 
 2026-10-18: the blind grader pack in reference.md section 3, prescribed but never built, is now `retro/scripts/grade-pack.py`. Before it, graders read candidates through their arm paths in a fixed A/B order, and about one in twelve stored candidates opened with a title naming its arm. A dry run on one case unpacked the stored verdicts unchanged. A headless grader run with `--restricted` from inside the pack could not read a canary file outside it, either directly or through a subagent.
 
+2026-10-19: verdict vocabulary (`helped` / `hurt` / `no observed effect` / `confounded`), the `NO_ENTRY` rule and the cue / lesson / evidence / confidence fields in reference.md section 4, worded after harness2 `core/prompts.py` `experience()` (no code copied). A report format with no decision point, not a measured rule.
+
 ### `orch`
 
 Explore agent model choice, measured 2026-09-18 on 58 held-out questions: Opus with Grep/Read output clamped by the `scout-bounds` hook scored 0.897 accuracy, 6 accepted-wrong, $0.033 per question; Sonnet (0.862) and Haiku (0.828) under the same clamp were cheaper and not significantly worse at n=58. The numbers lived in `orch/agents/Explore.md` until 2026-10-17; they are provenance, not behaviour, so they moved here.
