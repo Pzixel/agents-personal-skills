@@ -68,6 +68,9 @@ plan | while read -r dest src; do
   if [ -e "$dest" ] || [ -L "$dest" ]; then
     [ "$(realpath "$dest" 2>/dev/null)" = "$root/$src" ] && continue
     echo "Conflicting destination: $dest" >&2
+    if [ -L "$dest" ]; then
+      echo "It links to $(readlink "$dest"); if that is an old checkout of this repository, remove the links into it first." >&2
+    fi
     exit 1
   fi
 done
@@ -121,6 +124,27 @@ finish_tmp() {
   tmp=""
 }
 
+# Claude Code import lines escape spaces as `\ `: an unescaped spaced path is not loaded.
+esc() { printf '%s' "$1" | sed 's/ /\\ /g'; }
+
+# Drop line $2 from CLAUDE.md $1; $3 is the message.
+drop_line() {
+  start_tmp "$1"
+  grep -vxF "$2" "$1" > "$tmp" || true
+  finish_tmp "$1" "$3"
+}
+
+# Append import line @$2 (escaped) to $1 unless present; an older unescaped line is replaced.
+add_import() {
+  new="@$(esc "$2")"
+  if [ "$new" != "@$2" ] && grep -qxF "@$2" "$1"; then drop_line "$1" "@$2" "removed unescaped @$2 from $1"; fi
+  if ! grep -qxF "$new" "$1"; then
+    if [ -s "$1" ] && [ -n "$(tail -c 1 "$1")" ]; then echo >> "$1"; fi
+    echo "$new" >> "$1"
+    echo "added $new to $1"
+  fi
+}
+
 # Claude Code: one import line per rules file in the user CLAUDE.md. For
 # always-on.md the line is skipped when a line-start @-import
 # already loads a file holding the Codex block; then a direct line is removed.
@@ -128,34 +152,29 @@ finish_tmp() {
 # (targets list codex first, so with `both` the block exists before the check).
 for t in $targets; do
   if [ "$t" = claude ]; then
-    line="@$rules"
+    line="@$(esc "$rules")"
     cm=$(real_path "$claude/CLAUDE.md")
     mkdir -p "$(dirname "$cm")"
     touch "$cm"
     via=""
-    for ref in $(sed -n 's/^@//p' "$cm"); do
+    while IFS= read -r ref; do
+      [ -n "$ref" ] || continue
+      ref=$(printf '%s' "$ref" | sed 's/\\ / /g')
       case $ref in "~/"*) ref="$HOME/${ref#"~/"}" ;; esac
       if [ -f "$ref" ] && grep -qxF "$begin" "$ref"; then via=$ref; break; fi
-    done
+    done <<EOF
+$(sed -n 's/^@//p' "$cm")
+EOF
     if [ -n "$via" ]; then
-      if grep -qxF "$line" "$cm"; then
-        start_tmp "$cm"
-        grep -vxF "$line" "$cm" > "$tmp" || true
-        finish_tmp "$cm" "removed $line from $cm: rules arrive via $via"
-      else
-        echo "skipped $line: $cm already imports the rules block via $via"
-      fi
-    elif ! grep -qxF "$line" "$cm"; then
-      if [ -s "$cm" ] && [ -n "$(tail -c 1 "$cm")" ]; then echo >> "$cm"; fi
-      echo "$line" >> "$cm"
-      echo "added $line to $cm"
+      found=no
+      for l in "$line" "@$rules"; do
+        if grep -qxF "$l" "$cm"; then found=yes; drop_line "$cm" "$l" "removed $l from $cm: rules arrive via $via"; fi
+      done
+      [ $found = yes ] || echo "skipped $line: $cm already imports the rules block via $via"
+    else
+      add_import "$cm" "$rules"
     fi
-    line="@$claude_rules"
-    if ! grep -qxF "$line" "$cm"; then
-      if [ -s "$cm" ] && [ -n "$(tail -c 1 "$cm")" ]; then echo >> "$cm"; fi
-      echo "$line" >> "$cm"
-      echo "added $line to $cm"
-    fi
+    add_import "$cm" "$claude_rules"
   else
     real=$(real_path "$codex_rules")
     has_block=no
