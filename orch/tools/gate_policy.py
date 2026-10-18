@@ -1548,7 +1548,7 @@ _OFFER_RE = re.compile(
 # уведомлению"), or the owner's consent. The words between the trigger and the
 # event stay inside one sentence and hold no first person, so the agent's own
 # act ("когда закончу", "after I run the tests") is not such an event.
-_EVENT_GAP = r"(?:[^\w.!?\n]+(?!(?:я|мы|I|we)\b)\w+){0,3}?[^\w.!?\n]+"
+_EVENT_GAP = r"(?:[^\w.!?\n]+(?!(?:я|мы|мо[йеиёя]\w*|наш\w*|I|we|my|our)\b)\w+){0,3}?[^\w.!?\n]+"
 _EVENT_CONDITION_RE = re.compile(
     r"(?:\b(?:когда|после|как(?:\s+только)?|о?жд\w*|ожида\w*|дожд\w*|once|when|after|until|wait\w*)\b"
     + _EVENT_GAP

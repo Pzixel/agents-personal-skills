@@ -781,6 +781,8 @@ class ReplyLintDecisionTest(unittest.TestCase):
             "Когда прогоню тесты, добавлю индекс.",
             "After I run the suite, I'll open the PR.",
             "After reviewing the code, I'll fix it.",
+            "After my review of the diff, I'll fix it.",
+            "После моего ревью поправлю тесты.",
             "Я пока жду. Агент упал, потом поправлю.",
         ):
             self.assertEqual(self._decide(text), "block", text)
