@@ -1636,6 +1636,20 @@ _HANDOFF_REASON = (
 _JSON_FENCE_RE = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.S)
 
 
+# A reply that hands work to the owner names the owner: a second-person pronoun or
+# possessive (RU/EN), the word owner, or a question mark. Anything else skips the judge.
+_ADDRESSES_OWNER_RE = re.compile(
+    r"\?|\b(?:ты|тебя|тебе|тобой|тобою|тво[йяёеию]\w*|вы|вас|вам|вами|ваш\w*|владел\w*"
+    r"|you|your|yours|yourself|yourselves|owner\w*)\b",
+    re.I,
+)
+
+
+def addresses_owner(reply):
+    """The reply can be a hand-off at all, so the model judge is worth a call."""
+    return bool(_ADDRESSES_OWNER_RE.search(reply))
+
+
 def handoff_judge_prompt(reply):
     """The judge prompt for one final reply; the reply goes in as a JSON string."""
     return HANDOFF_JUDGE_PROMPT.format(reply=json.dumps(reply, ensure_ascii=False))

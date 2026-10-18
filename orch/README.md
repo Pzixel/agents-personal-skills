@@ -95,7 +95,9 @@ Hooks enforce the gates; an agent obeys a refusal's message and never works arou
   if it is inside the agent's authority, otherwise ask through `AskUserQuestion` with
   self-contained options. That judgement is a nested `claude -p --model haiku` call that
   sees only the final reply (prompt in `gate_policy.HANDOFF_JUDGE_PROMPT`) and runs with
-  no hooks, plugins, MCP or settings; it adds about 3-4 s per stop. The second stop passes
+  no hooks, plugins, MCP or settings, and only when the reply addresses the owner (a
+  second-person word, "owner", or a "?"); about 70% of stops skip it, so it adds about
+  1.1 s per stop on average (3-4 s when called). The second stop passes
   without a model call; a judge error, timeout (12 s) or unparsable verdict passes the
   reply (fail open) and is logged in `~/.claude/reply-lint-log.jsonl`.
 - Destructive commands are classified by `deny-destructive.py`

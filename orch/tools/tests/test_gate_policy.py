@@ -795,6 +795,24 @@ class ReplyLintDecisionTest(unittest.TestCase):
 
 
 class HandoffJudgeTest(unittest.TestCase):
+    def test_reply_that_addresses_the_owner_goes_to_the_judge(self):
+        for text in (
+            "Решение за вами.",
+            "Жду твоего ответа.",
+            "Нужно согласие владельца.",
+            "Your call.",
+            "Waiting on the owner.",
+            "Берём A или B?",
+        ):
+            self.assertTrue(gate_policy.addresses_owner(text), text)
+
+    def test_reply_that_names_no_owner_skips_the_judge(self):
+        for text in (
+            "Вывод: сборка идёт, тесты зелёные.",
+            "The layout is fixed; CI runs.",
+        ):
+            self.assertFalse(gate_policy.addresses_owner(text), text)
+
     @staticmethod
     def _cli(result, is_error=False):
         return json.dumps({"type": "result", "is_error": is_error, "result": result})

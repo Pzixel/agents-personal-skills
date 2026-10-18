@@ -7,7 +7,8 @@ without an observation (command, value, time) or promises future work in the
 first person ("I'll fix it in a follow-up PR") without doing it or naming a
 durable handoff (issue, PR, handoff file), or leaves work waiting on the
 owner's choice, answer or approval in plain text. The hand-off judgement is a
-small model: `claude -p --model haiku` sees only the final reply
+small model, called only when the reply addresses the owner
+(gate_policy.addresses_owner): `claude -p --model haiku` sees only the final reply
 (gate_policy.handoff_judge_prompt), runs with no hooks, plugins, MCP or
 settings, and is guarded by REPLY_LINT_JUDGE against recursion. The second
 stop (`stop_hook_active`) passes without a model call, so a flagged reply
@@ -116,7 +117,8 @@ def main():
             return 0
         text = last_assistant_text(transcript)
     stop_hook_active = bool(payload.get("stop_hook_active"))
-    verdict, judge_error = (None, None) if stop_hook_active or not text.strip() else judge_handoff(text)
+    skip_judge = stop_hook_active or not gate_policy.addresses_owner(text)
+    verdict, judge_error = (None, None) if skip_judge else judge_handoff(text)
     decision = gate_policy.reply_lint_decision(text, stop_hook_active, verdict)
     if os.path.isfile(payload.get("transcript_path") or ""):
         log(
