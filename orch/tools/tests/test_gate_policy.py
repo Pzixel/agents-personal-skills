@@ -653,6 +653,12 @@ class MergeGateDecisionTest(unittest.TestCase):
             gate_policy.merge_gate_decision("git push origin HEAD:master")["decision"], "deny"
         )
 
+    def test_push_with_git_global_options_is_gated(self):
+        for cmd in ("git -C /w push origin x:" + "master", "git -c a=b --git-dir=/w/.git push origin " + "main"):
+            result = gate_policy.merge_gate_decision(cmd)
+            self.assertEqual(result["decision"], "deny", cmd)
+            self.assertIn("`CHECK_RAN", result["reason"].split("Missing:")[1], cmd)
+
     def test_merge_with_all_fields_is_allowed(self):
         self.assertEqual(gate_policy.merge_gate_decision(_MERGE_FULL)["decision"], "allow")
 

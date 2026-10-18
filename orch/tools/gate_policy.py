@@ -1413,7 +1413,9 @@ PROD_POSITION_TOKEN = "PROD_POSITION:"
 WAY_BACK_TOKEN = "WAY_BACK:"
 _MERGE_RE = re.compile(
     r"\bgh\s+pr\s+merge\b"
-    r"|\bgit\s+push\b[^|;&\n]*\b(?:master|main)\b"
+    # git global options may stand between `git` and `push` (`git -C <dir> push`).
+    r"|\bgit(?:\s+(?:-C|-c|--git-dir|--work-tree|--namespace)(?:=|\s+)\S+|\s+-\S+)*"
+    r"\s+push\b[^|;&\n]*\b(?:master|main)\b"
 )
 _MERGE_REASON = (
     "Refused by merge-gate: this command lands a change on a shared branch. Run "
