@@ -88,10 +88,13 @@ Hooks enforce the gates; an agent obeys a refusal's message and never works arou
 - Merge: a push or merge to a shared branch carries `CHECK_RAN: <what ran, result>`,
   `PROD_POSITION: <blast-radius dimension, production's number, source>` and
   `WAY_BACK: <undo, minutes>`, or `merge-gate` refuses it.
-- Final reply: the Stop hook `reply-lint` returns once a reply that ends on a question
-  the agent could decide itself, a completion claim without its observation, or a promise
-  of later work that names no issue, PR or handoff file. It asks for an addendum with
-  only the missing part.
+- Final reply: the Stop hook `reply-lint` returns once a completion claim without its
+  observation, or a promise of later work that names no issue, PR or handoff file, and
+  asks for an addendum with only the missing part. A second, model-judged `prompt` Stop
+  hook (background model, prompt inline in `hooks/hooks.json`) returns once a reply that
+  leaves work waiting on the owner's choice, answer or approval in plain text: decide it
+  if it is inside the agent's authority, otherwise ask through `AskUserQuestion` with
+  self-contained options.
 - Destructive commands are classified by `deny-destructive.py`
   (`gate_policy.destructive_decision`, table in `orchestrate-params.json`), never by the
   agent. `ours` (paths under `/tmp`, `tmp/`, `.worktrees/`; k8s objects labelled

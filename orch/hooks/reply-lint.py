@@ -1,23 +1,22 @@
 #!/usr/bin/env python3
-"""Stop hook (main session): the final reply carries its observation and stays
-inside the agent's authority.
+"""Stop hook (main session): the final reply carries its observation and does
+not promise work it did not do.
 
 Returned once, with the rule that failed, when the reply claims completion
-without an observation (command, value, time) or hands a decision to the owner
-in words ("your call", "жду вашего решения"), or promises future work in the
+without an observation (command, value, time) or promises future work in the
 first person ("I'll fix it in a follow-up PR") without doing it or naming a
-durable handoff (issue, PR, handoff file); a trailing question mark alone
-is not a hand-off, answers to the owner's questions end on one. The second stop (`stop_hook_active`) always passes, so a
-reply that genuinely needs the owner costs one extra turn, never a loop.
-Not claims or hand-offs (2026-10-15): Russian not-verified disclosures, done
-words as section labels or with a manner complement, permission requests.
+durable handoff (issue, PR, handoff file). Hand-offs to the owner are judged
+by the model-based `prompt` Stop hook in hooks.json, not here. The second
+stop (`stop_hook_active`) always passes, so a flagged reply costs one extra
+turn, never a loop.
+Not claims (2026-10-15): Russian not-verified disclosures, done words as
+section labels or with a manner complement.
 Only payloads whose transcript_path is a file are logged, so probes stay out.
 The reason asks for an addendum with only the missing part, never a repeat
 of the whole reply.
 Decision: gate_policy.reply_lint_decision. Any error exits 0 with no output.
 
-Why a hook: the rules "every done carries proof" and "do not end with owner
-decisions" were loaded in the reviewed sessions and not applied at the moment
+Why a hook: the rule "every done carries proof" was loaded in the reviewed sessions and not applied at the moment
 of replying (retro 2026-10-12: 158 claims without observation, ~30 owned
 decisions handed to the owner, about 170 h).
 """

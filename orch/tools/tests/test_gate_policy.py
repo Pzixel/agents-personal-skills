@@ -697,11 +697,6 @@ class ReplyLintDecisionTest(unittest.TestCase):
         for text in ("Шаги 1-4 готовы в ветке X.", "Сделано полностью.", "Сделано мной.", "Done as requested."):
             self.assertEqual(self._d(text), "block", text)
 
-    def test_permission_request_is_a_legitimate_hand_off(self):
-        self.assertEqual(self._d("Запись в каталог запрещена агентам хуком. Нужно ваше разрешение, решение за вами."), "allow")
-        for text in ("Есть два варианта, решение за вами.", "Set file permissions to 644. Retention window: your call."):
-            self.assertEqual(self._d(text), "block", text)
-
     def test_done_claim_without_observation_is_returned(self):
         self.assertEqual(gate_policy.reply_lint_decision("Готово, PR влит.", False)["decision"], "block")
 
@@ -715,22 +710,6 @@ class ReplyLintDecisionTest(unittest.TestCase):
 
     def test_negated_done_is_not_a_claim(self):
         self.assertEqual(gate_policy.reply_lint_decision("Ещё не готово, CI идёт.", False)["decision"], "allow")
-
-    def test_answer_ending_on_a_question_passes(self):
-        text = "Пауза 2 с стоит в PAGE_PAUSE_SECONDS. Это единственное место. Убрать её вместе со следующим шагом?"
-        self.assertEqual(gate_policy.reply_lint_decision(text, False)["decision"], "allow")
-
-    def test_owner_decision_list_is_returned(self):
-        text = "Статус: план готов, замер 12:00Z 1.5 cores. Решения за вами: 1) retention 2) порог."
-        self.assertEqual(gate_policy.reply_lint_decision(text, False)["decision"], "block")
-
-    def test_owner_domain_question_passes(self):
-        text = "Удаление 664 аккаунтов у стороннего провайдера необратимо. Удалять? Рекомендую нет."
-        self.assertEqual(gate_policy.reply_lint_decision(text, False)["decision"], "allow")
-
-    def test_quoted_marker_is_not_a_question(self):
-        text = "Добавил в хук паттерн \"решения за вами\"; проверено 12:00Z."
-        self.assertEqual(gate_policy.reply_lint_decision(text, False)["decision"], "allow")
 
     def test_unbacked_promise_is_returned(self):
         for text in (
@@ -794,8 +773,10 @@ class ReplyLintDecisionTest(unittest.TestCase):
     def test_promise_waiting_on_own_work_is_returned(self):
         self.assertEqual(self._decide("Когда CI пройдёт, открою PR."), "block")
 
-    def test_guillemet_quoted_marker_is_not_a_question(self):
-        self.assertEqual(self._decide("Хук передаёт «жду вашего решения» как образец."), "allow")
+    def test_owner_hand_off_is_left_to_the_model_hook(self):
+        # Two checks must not block the same reply: hand-offs belong to the prompt hook.
+        for text in ("Есть два варианта, решение за вами.", "Two options are open; your call."):
+            self.assertEqual(self._decide(text), "allow", text)
 
 
 class BlankQuotedTest(unittest.TestCase):

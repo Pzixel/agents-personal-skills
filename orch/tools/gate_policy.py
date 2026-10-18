@@ -1465,16 +1465,6 @@ _OBSERVATION_RE = re.compile(
     r"|\b\d+/\d+\s*(?:→|->)\s*\d+/\d+",
     re.IGNORECASE,
 )
-_OWNER_QUESTION_RE = re.compile(
-    r"решени[яе]\s+за\s+(?:вами|тобой)|если\s+скаж|жду\s+(?:вашего|твоего)"
-    r"|по\s+вашему\s+слову(?!\s+из)|if you say|your call|open the PR yourself|PR\s+открывать\s+тебе",
-    re.IGNORECASE,
-)
-_OWNER_DOMAIN_RE = re.compile(
-    r"необратим|деньг|приорит|irreversible|money|priorit|client data|данн\w+ клиент"
-    r"|ваше\w*\s+разрешени|нужн\w*\s+разрешени|разреши(?:те)?\b|your\s+permission|permission\s+to|запрещен\w*\s+агент|forbidden\s+to\s+agents",
-    re.IGNORECASE,
-)
 # A first-person commitment to do work later: a perfective 1st-person future
 # verb of work, a deferral phrase, or "I'll <work verb>".
 _PROMISE_RE = re.compile(
@@ -1502,14 +1492,6 @@ _CLAIM_REASON = (
     "a delegate is a claim until reproduced from the primary source. Append only the missing part; do not "
     "repeat the reply."
 )
-_AUTHORITY_REASON = (
-    REPLY_LINT_MARKER + " the reply hands a decision to the owner. "
-    "Authority test: reversible, bounded and ours -> do it now; a tunable value -> set "
-    "a default and report 'set to X - keep or change?'; only money, business priorities "
-    "and irreversible effects on client data go to the owner, as one plain question with "
-    "a recommendation. Do the work, then append only the missing part; do not repeat the reply."
-)
-
 _PROMISE_REASON = (
     REPLY_LINT_MARKER + " the reply promises future work that this turn did not do. "
     "Do it now if it is inside your authority, or state plainly that it is not done "
@@ -1605,14 +1587,11 @@ def _has_unbacked_promise(text):
 
 def reply_lint_decision(last_assistant_text, stop_hook_active):
     """Return the main session once when its final reply claims completion
-    without an observation, hands a decision to the owner, or promises future
-    work with no durable record of it (issue, PR, handoff file). A trailing
-    question mark alone is not a hand-off: a reply that answers the owner's
-    question and ends on a follow-up question stays (2026-10-12: 4 of 11
-    blocks were answers to direct questions, one never re-delivered).
-    Not claims or hand-offs (2026-10-15): a Russian not-verified disclosure,
-    a done word as a section label or with a manner complement, and a request
-    for a permission the hooks forbid to agents.
+    without an observation, or promises future work with no durable record
+    of it (issue, PR, handoff file). Hand-offs to the owner are judged by the
+    model-based Stop hook in hooks.json, not here.
+    Not claims (2026-10-15): a Russian not-verified disclosure, a done word
+    as a section label or with a manner complement.
     The second stop (``stop_hook_active``) always passes."""
     if stop_hook_active:
         return {"decision": "allow"}
@@ -1622,9 +1601,6 @@ def reply_lint_decision(last_assistant_text, stop_hook_active):
     reasons = []
     if _has_done_claim(text) and not _OBSERVATION_RE.search(text):
         reasons.append(_CLAIM_REASON)
-    asks_owner = _OWNER_QUESTION_RE.search(_blank_quoted(text))
-    if asks_owner and not _OWNER_DOMAIN_RE.search(text):
-        reasons.append(_AUTHORITY_REASON)
     if _has_unbacked_promise(text):
         reasons.append(_PROMISE_REASON)
     if not reasons:
