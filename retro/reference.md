@@ -88,22 +88,41 @@ parallel and `wait`.
 Subject prompt:
 
 ```
-You are the agent in the situation described in ./input.md. Read it; it is your whole context. Continue the task: write your next message to the user and list the tool calls you would make next, one line each (tool, target, purpose). Execute nothing; this is a frozen past state. Reply with the message, then the tool-call list, then one line `COST: tool_calls=<n> questions_to_user=<n>`.
+You are the agent in the situation described in ./input.md. Read it; it is your whole context. Continue the task: write your next message to the user and list the tool calls you would make next, one line each (tool, target, purpose). Execute nothing; this is a frozen past state. Reply with the message (no title line), then the tool-call list, then one line `COST: tool_calls=<n> questions_to_user=<n>`.
 ```
 
-Grader (one per case, both arms in one call): a fresh session in its own
-temp dir holding only `case.md` (rubric fields), `input.md`, and the
-candidates renamed A-1..A-k and B-1..B-k (arm assignment shuffled per case
-and recorded in `grading/CASE-n/<variant>/ARMS.md` after grading). Its
-verdicts go to `grading/CASE-n/<variant>/`. Prompt:
+Grader (one per case, both arms in one call), built by `scripts/grade-pack.py`:
 
 ```
-You are a blind grader. You do not know which arm produced a candidate and must not try to find out. Read the rubric <case.md: Question, Answer form, Minimum, Fail>, the packet <input.md>, candidates A-1..A-k and B-1..B-k (arm order shuffled per case). Open nothing else. For each candidate go through Answer form, Minimum and Fail line by line with a verbatim quote from that candidate, then end with: VERDICT <id>: PASS|FAIL — <one sentence>. PASS means Minimum met and no Fail line applies. Add no criteria; do not compare candidates.
+grade-pack.py pack --case CASE-n --variant <variant> --rubric grading/CASE-n/<rubric> \
+    --packet cases/CASE-n/input.md --arm-a runs/<baseline>/CASE-n \
+    --arm-b runs/<variant>/CASE-n --k <k> --key-dir grading/CASE-n/<variant>
 ```
 
-Tally by grep on `^VERDICT`; reject a grader whose verdict files are
-identical (check distinct hashes). Fewer, larger graders (two cases per
-call) cut the wake-up cost of fan-out.
+`pack` copies `rubric.md`, `input.md` and run-1..k of each arm into a fresh
+temp dir under ids shuffled by a fixed function of case, variant, k and arm
+names, drops a `# CASE-n run-k` title line, and refuses when an arm name,
+`runs/<arm>/` or `VERDICT ` reaches the grader input. It writes the id key
+`ARMS.tsv` to the key dir, outside the pack, and prints the diversity line
+per arm (distinct bodies, max pairwise line-Jaccard), the counted bare-word
+hits and the grader command: `claude -p --restricted --strict-mcp-config
+--output-format text < prompt.md` run inside the pack, reply saved as
+`grader-reply.txt` in the key dir. `--restricted` confines file tools to the
+pack and removes code-running tools. The grader writes no file; each
+candidate's block opens with `## <id>` and closes with
+`VERDICT <id>: PASS|FAIL — <one sentence>`. A rubric that needs its own
+grader procedure carries it in the rubric file. The prompt is in the script.
+
+```
+grade-pack.py unpack --reply grading/CASE-n/<variant>/grader-reply.txt \
+    --arms grading/CASE-n/<variant>/ARMS.tsv
+```
+
+`unpack` writes `A-verdict-k.md` (role A, the baseline) and `B-verdict-k.md`,
+each ending on `VERDICT run-k: PASS|FAIL — ...`, prints the tally per arm,
+and refuses a missing or duplicated id and identical verdict bodies (a
+templated grader: discard and rerun once). Fewer, larger graders (two cases
+per call) cut the wake-up cost of fan-out.
 
 ## 4. Comparison protocol
 

@@ -100,6 +100,8 @@ Adapted from the Russian draft the owner supplied on 2026-10-09; no upstream SHA
 
 2026-10-17: reshaped after a manual retrospective run by hand over four days (episodes, owner criteria, text decision cases, blind-graded pre-registered comparisons, fresh-session live checks). The skill now runs that pipeline: episodes, private cases in `$RETRO_EVALS_DIR`, baseline, comparison, grader validation on user-labelled free runs, apply and re-measure. Lessons carried from that run: always-on decision questions lowered neighbouring cases in three of eight comparisons; placement at the decision point decided more than wording; curated continuations did not predict free-run grading (graders disagreed on 3 of 7 cases). Method in `retro/reference.md`.
 
+2026-10-18: the blind grader pack in reference.md section 3, prescribed but never built, is now `retro/scripts/grade-pack.py`. Before it, graders read candidates through their arm paths in a fixed A/B order, and about one in twelve stored candidates opened with a title naming its arm. A dry run on one case unpacked the stored verdicts unchanged. A headless grader run with `--restricted` from inside the pack could not read a canary file outside it, either directly or through a subagent.
+
 ### `orch`
 
 Explore agent model choice, measured 2026-09-18 on 58 held-out questions: Opus with Grep/Read output clamped by the `scout-bounds` hook scored 0.897 accuracy, 6 accepted-wrong, $0.033 per question; Sonnet (0.862) and Haiku (0.828) under the same clamp were cheaper and not significantly worse at n=58. The numbers lived in `orch/agents/Explore.md` until 2026-10-17; they are provenance, not behaviour, so they moved here.

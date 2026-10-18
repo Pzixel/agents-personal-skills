@@ -48,8 +48,9 @@ pre-registered and the comparison cost stated.
    in its own empty directory holding only the packet, with the composed
    rules file (the instruction text the real agent loads) and no access to
    the store; text only, nothing executed. One blind grader per case, in its
-   own directory with only the rubric, packet and candidates, writes
-   `grading/CASE-n/`. 3/3 makes a control; below it a target.
+   own directory with only the rubric, packet and candidates (built and
+   scanned by `scripts/grade-pack.py`), writes `grading/CASE-n/`. 3/3 makes
+   a control; below it a target.
 4. **Comparison.** After the baseline, pre-register in
    `runs/<variant>/VARIANT.md` before any variant run: the one change
    verbatim, targets, controls at 3/3 (same class first, other classes in
