@@ -73,6 +73,10 @@ pre-registered and the comparison cost stated.
 6. **Apply and re-measure.** A change that passed goes live at the place
    that fires at its decision point, unless the arguments say
    `propose-only`. Code changes go through the owning repository's usual change flow.
+   Every applied result lands in the agents-personal-skills repository (a rules file,
+   skill, hook or gate) through its change flow, never only in local user files
+   such as `~/.codex/AGENTS.md` or `~/.claude/user-rules.md`, unless the owner
+   says otherwise.
    A running session keeps its instruction snapshot, so its subagents
    measure the old rules: re-measure in fresh headless sessions. The live arms
    measure the placement. A live miss is a placement or wording fault; fix
