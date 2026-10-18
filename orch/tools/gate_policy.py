@@ -1440,8 +1440,8 @@ _ALWAYS_ON_REASON = (
     "the command with `ALWAYS_ON: <before> -> <after> chars` (wc -c of the "
     "file) and, when it grows, `removed: <text cut elsewhere>` or "
     "`reason: <why the always-on layer must grow>` (an on-demand placement "
-    "of the measured budget rule was read by no fresh agent: 0/3 live, "
-    "against 0/3 -> 3/3 when loaded)."
+    "(retro CASE-19) of the measured budget rule was read by no fresh "
+    "agent: live 0/3, against 0/3 -> 3/3 when loaded)."
 )
 
 
