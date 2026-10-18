@@ -771,7 +771,29 @@ class ReplyLintDecisionTest(unittest.TestCase):
             self.assertEqual(self._decide(text), "allow", text)
 
     def test_promise_waiting_on_own_work_is_returned(self):
-        self.assertEqual(self._decide("Когда CI пройдёт, открою PR."), "block")
+        for text in (
+            "Потом поправлю тесты.",
+            "Займусь этим позже.",
+            "Когда выкачу, сам проверю.",
+            "Ревьюер нашёл баг. Поправлю потом.",
+            "Жду ревью.\n\nПотом поправлю тесты.",
+        ):
+            self.assertEqual(self._decide(text), "block", text)
+
+    def test_promise_waiting_on_a_background_event_passes(self):
+        for text in (
+            "Когда агент закончит, проверю.",
+            "Жду ревьюера A, затем исправлю.",
+            "Жду ревью A. Затем исправлю.",
+            "Когда CI пройдёт, открою PR.",
+            "Работа продолжится по уведомлению, тогда допишу.",
+            "Once the reviewer finishes, I'll fix it.",
+        ):
+            self.assertEqual(self._decide(text), "allow", text)
+
+    def test_offer_waiting_on_owner_consent_passes(self):
+        for text in ("Если подходит, сделаю так.", "Если согласен, сделаю.", "If that works, I'll add it."):
+            self.assertEqual(self._decide(text), "allow", text)
 
     def test_judged_hand_off_is_returned_with_its_sentence(self):
         decision = gate_policy.reply_lint_decision(

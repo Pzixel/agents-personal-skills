@@ -14,6 +14,10 @@ settings, and is guarded by REPLY_LINT_JUDGE against recursion. The second
 stop (`stop_hook_active`) passes without a model call, so a flagged reply
 costs one extra turn, never a loop. A judge error, timeout or unparsable
 verdict passes the reply (fail open) and is logged.
+Not promises: a promise conditioned, in its sentence or the one before it in
+the same paragraph, on a background event of the agent's delegates or tools
+(an agent, review, CI or run finishing or arriving) or on the owner's consent
+("if that works for you"); the hand-off judge owns owner-consent waits.
 Not claims (2026-10-15): Russian not-verified disclosures, done words as
 section labels or with a manner complement.
 Only payloads whose transcript_path is a file are logged, so probes stay out.

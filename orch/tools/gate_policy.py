@@ -1531,6 +1531,33 @@ _OFFER_RE = re.compile(
 )
 
 
+# A condition on an event the agent does not drive this turn: a background
+# delegate or tool finishing ("когда агент закончит", "после ревью", "once the
+# reviewer finishes", "по уведомлению"), or the owner's consent ("если подходит",
+# "if that works for you"). The owner-consent wait belongs to the hand-off judge.
+_EVENT_CONDITION_RE = re.compile(
+    r"(?:\b(?:когда|после|как(?:\s+только)?|жд[уёе]\w*|дожд\w*|once|when|after|until|wait\w*)\b"
+    r"(?:\W+\w+){0,3}?\W+(?:"
+    r"(?:суб)?агент\w*|ревью\w*|сборщик\w*|билдер\w*|проб[аыеу]\b|монитор\w*|CI\b|джоб\w*|job\w*|прогон\w*"
+    r"|уведомлени\w*|notification\w*|(?:sub)?agents?\b|review\w*|builders?\b|probes?\b|monitors?\b|runs?\b"
+    # a third party's finishing or arriving verb (3rd person, not the agent's own act)
+    r"|законч\w*|заверш\w*|придёт|придет|придут|вернёт\w*|вернет\w*|пройд[её]т|отработа\w*"
+    r"|finish\w*|returns|arriv\w*|completes|lands))"
+    r"|\bпо\s+уведомлени\w*|\bon\s+(?:the\s+)?notification\b"
+    r"|\bесли\s+(?:\w+\s+)?(?:подход\w*|соглас\w*|хоти\w*|хочешь|устраива\w*|одобр\w*|ок|окей|норм\w*)\b"
+    r"|\bif\s+(?:that|this|it)\s+(?:works|sounds|is\s+ok|is\s+fine)",
+    re.IGNORECASE,
+)
+
+
+def _paragraph_previous_sentence_start(text, start):
+    """Start of the sentence before the one at ``start``, when both sit in
+    one paragraph (no blank line between); else ``start``."""
+    if start == 0 or re.search(r"\n\s*\n\s*$", text[:start]):
+        return start
+    return _sentence_bounds(text, max(start - 2, 0))[0]
+
+
 def _number(word):
     word = word.lower()
     return _NUMBER_WORDS[word] if word in _NUMBER_WORDS else int(word)
@@ -1574,13 +1601,18 @@ def _has_done_claim(original):
 
 def _has_unbacked_promise(text):
     """A promise counts when the reply names no durable record of the remaining
-    work and no action of another party precedes the promise in its sentence."""
+    work, no action of another party precedes the promise in its sentence, and
+    no background-event or owner-consent condition precedes it in its sentence
+    or the sentence before it in the same paragraph."""
     if _PROMISE_BACKED_RE.search(text):
         return False
     blanked = _blank_quoted(text)
     for match in _PROMISE_RE.finditer(blanked):
         start = _sentence_bounds(blanked, match.start())[0]
-        if not _OFFER_RE.search(blanked, start, match.start()):
+        if _OFFER_RE.search(blanked, start, match.start()):
+            continue
+        window = _paragraph_previous_sentence_start(blanked, start)
+        if not _EVENT_CONDITION_RE.search(blanked, window, match.start()):
             return True
     return False
 
