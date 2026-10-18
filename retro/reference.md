@@ -172,6 +172,7 @@ Placement candidates, in order: a gate at the step (merge, production
 write), a hook on the task class, an on-demand file named by a trigger
 sentence, an always-on line last. A change placed in a file the agent reads
 only on demand may never reach the decision point; measure the live arm.
+A change goes only into the form its winning comparison measured: a change that won as a gate, hook or trigger is never moved into always-on text (script and subagent placements are unmeasured); an always-on addition names its size in characters and the text it removes, or the reason the layer must grow; a change left in an on-demand file is reported with its read trigger unverified, together with the fresh-session check that verifies it.
 Live check (stage 6, where placement is measured): rerun the target and
 controls with the subject recipe above with a rules file freshly composed from the real instruction files after the
 change was applied, or a plain fresh session where they load natively. Record wording iterations with each live result.
