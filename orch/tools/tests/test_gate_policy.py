@@ -1092,14 +1092,27 @@ class DestructiveDecisionTest(unittest.TestCase):
     def test_kubectl_delete_secret_is_denied(self):
         self.assertEqual(_destructive("kubectl delete secret/db-creds -n prod")["decision"], "deny")
 
-    def test_kubectl_scale_asks(self):
-        self.assertEqual(
-            _destructive("kubectl scale deploy/api --replicas=0")["decision"], "ask"
-        )
+    def test_kubectl_writes_with_a_mechanical_undo_run_at_once(self):
+        for cmd in (
+            "kubectl scale deploy/api --replicas=0",
+            "kubectl -n app rollout restart deploy/x",
+            "kubectl rollout undo deploy/x",
+            "kubectl rollout pause deploy/x",
+            "kubectl rollout resume deploy/x",
+        ):
+            with self.subTest(cmd=cmd):
+                result = _destructive(cmd)
+                self.assertEqual(result["decision"], "allow")
+                self.assertIn("undo", result["reason"])
+
+    def test_impossible_refusal_names_the_approved_plan_route(self):
+        result = _destructive('psql -c "DROP TABLE orders"')
+        self.assertEqual(result["decision"], "deny")
+        self.assertIn("APPROVE <sha256>", result["reason"])
 
     def test_kubectl_verbs_moved_from_the_hook_table(self):
         for cmd, decision in [
-            ("kubectl rollout restart deploy/x", "ask"),
+            ("kubectl rollout history deploy/x", "allow"),
             ("kubectl -n app patch deploy/x -p '{}'", "ask"),
             ("kubectl drain node-3", "ask"),
             ("kubectl -v 6 apply -f m.yaml", "ask"),
@@ -1113,7 +1126,7 @@ class DestructiveDecisionTest(unittest.TestCase):
 
     def test_ask_in_bypass_mode_becomes_deny(self):
         result = gate_policy.destructive_decision(
-            "kubectl scale deploy/api --replicas=0", "", None, None,
+            "kubectl patch deploy/api -p '{}'", "", None, None,
             permission_mode="bypassPermissions",
         )
         self.assertEqual(result["decision"], "deny")
@@ -1155,7 +1168,7 @@ class DestructiveDecisionTest(unittest.TestCase):
 
     def test_ask_in_bypass_true_keeps_ask(self):
         result = gate_policy.destructive_decision(
-            "kubectl scale deploy/api --replicas=0", "", None, None,
+            "kubectl patch deploy/api -p '{}'", "", None, None,
             {"destructive": {"ask_in_bypass": True}}, "bypassPermissions",
         )
         self.assertEqual(result["decision"], "ask")

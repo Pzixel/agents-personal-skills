@@ -8,7 +8,8 @@ class means). This file only reads stdin, reads the plan file a
 DESTRUCTIVE_PLAN marker names, calls the decision, logs every classed
 decision to ~/.claude/destructive-log.jsonl and prints the response. It fails
 closed: any error is a deny. The agents' kubeconfig is cluster-admin today, so
-the `impossible` class is enforced only here until RBAC is tightened.
+the `impossible` class is enforced only here until RBAC is tightened; an
+impossible step runs only from an owner-approved plan (APPROVE <hash>).
 File tools are checked only for a path under the approvals dir. An approved
 plan run consumes its approval file (written by plan-approval.py) before the
 allow is printed; when another PreToolUse hook then denies the same call,

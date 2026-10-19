@@ -2301,6 +2301,9 @@ def _kubectl_class(args, cfg, ctx):
         if keys and "--all" not in rest and all(key in cfg["ours_labels"] for key in keys):
             return [("ours", "kubectl delete by a session-owned label")]
         return [("approval", "kubectl delete of controller-managed objects")]
+    undo = _KUBECTL_CHEAP_UNDO.get(" ".join(words[:2])) or _KUBECTL_CHEAP_UNDO.get(verb)
+    if undo:
+        return [("ours", "kubectl " + " ".join(words[:2]) + " has a cheap mechanical undo: " + undo)]
     if names_secret or (
         verb in ("apply", "create", "replace") and _SECRET_MANIFEST_RE.search(ctx["text"])
     ):
@@ -2312,6 +2315,16 @@ _GIT_VALUE_OPTIONS = frozenset({
     "-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix", "--config-env",
 })
 _GIT_REDIRECT_RE = re.compile(r"--work-tree|--git-dir|\bGIT_WORK_TREE\b|\bGIT_DIR\b|\bcore\.(?:worktree|bare)\b")
+
+
+# Live writes with a cheap, known, mechanical undo (owner decision K27): run at once.
+_KUBECTL_CHEAP_UNDO = {
+    "scale": "scale back to the previous replica count",
+    "rollout restart": "none needed, pods are recreated from the unchanged spec",
+    "rollout undo": "kubectl rollout undo to the revision before",
+    "rollout pause": "kubectl rollout resume",
+    "rollout resume": "kubectl rollout pause",
+}
 
 
 def _git_own_repository(directory):
@@ -3055,4 +3068,9 @@ def _command_decision(command, cfg, cwd):
     cls, reason = max(found, key=lambda hit: _SEVERITY[hit[0]])
     if cls == "approval":
         reason += ": batch it into a plan script (# scope / # undo / # count / # contradiction / # prod_position / # way_back) run from the main session"
+    elif cls == "impossible":
+        reason += ("; if the step is needed, write a plan script stating exactly what it does"
+                   " (# scope / # undo: none / # count / # contradiction / # prod_position / # way_back),"
+                   " give the owner its path and ask for the line APPROVE <sha256>, then run it from the main"
+                   " session as bash <plan>  # DESTRUCTIVE_PLAN sha256=<hex>")
     return {"decision": _DECISION[cls], "class": cls, "reason": reason}
