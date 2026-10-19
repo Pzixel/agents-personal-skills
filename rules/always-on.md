@@ -23,3 +23,7 @@ Generic agent rules measured useful as always-on text (evidence: `ORIGINS.md`, "
 
 - A wait or window that delays a result or another step is sized from the decision it serves: read the current rate from the store first, then size the window to the data that decision needs at that rate, and state both next to the number; a round number with no such basis is not a default. Data a store keeps is queried after the event, never watched live; a wait is for an event, capped by a timeout.
 - Every task keeps the business metric it serves in view. When the numbers at the current level (one stage, one component: the database call) show the goal cannot be reached there, stop iterating at that level and move one level up inside the task scope (the whole request), taking the lever there; when the level above leaves the scope, ask for a scope widening with the numbers that prove it is needed. A failed iteration is one more such number: the question is asked again after each one, not after a count of them.
+
+## Scope
+
+- A change that makes a condition impossible ships no notification layer (alert, log line, metric, periodic check) on that condition in the same task; a notification on a condition that stays possible after the change is a separate task: named, not built here.
