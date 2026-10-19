@@ -782,25 +782,7 @@ class ReplyLintDecisionTest(unittest.TestCase):
             self.assertEqual(gate_policy.reply_lint_decision(text, False)["decision"], "allow", text)
 
     def test_negated_done_is_not_a_claim(self):
-        self.assertEqual(gate_policy.reply_lint_decision("Ещё не готово, CI идёт.", False)["decision"], "allow")
-
-    def test_unbacked_promise_is_returned(self):
-        for text in (
-            "The alert text is misleading. Поправлю текст отдельным PR.",
-            "The label is wrong; I'll fix it in a follow-up PR.",
-        ):
-            decision = gate_policy.reply_lint_decision(text, False)
-            self.assertEqual(decision["decision"], "block", text)
-            self.assertIn("promises future work", decision["reason"], text)
-
-    def test_backed_or_offered_promise_passes(self):
-        for text in (
-            "Текст алерта неверный. Поправлю отдельным PR, открыт как #42.",
-            "Текст алерта неверный. Не исправлено, записано в handoff-файле tmp/todo.md.",
-            "Причина в пороге. Поправлю по твоей команде.",
-            "The cause is the threshold. I'll fix it on your go.",
-            "Hook now matches \"I'll fix\" phrases.",
-        ):
+        for text in ("Ещё не готово, CI идёт.", "Работа ещё идёт, сделано пока не всё.", "Done not yet: CI runs."):
             self.assertEqual(gate_policy.reply_lint_decision(text, False)["decision"], "allow", text)
 
     def test_second_stop_passes(self):
@@ -836,67 +818,30 @@ class ReplyLintDecisionTest(unittest.TestCase):
         for text in ("Шаг #2 готов.", "Готово, проверено.", "Готово, 20 тестов."):
             self.assertEqual(self._decide(text), "block", text)
 
-    def test_offer_waiting_on_others_is_not_a_promise(self):
-        for text in (
-            "Пришлите URL, и я проверю API.",
-            "Once you allow writes, I'll write it.",
-        ):
-            self.assertEqual(self._decide(text), "allow", text)
-
-    def test_promise_waiting_on_own_work_is_returned(self):
-        for text in (
-            "Потом поправлю тесты.",
-            "Займусь этим позже.",
-            "Когда выкачу, сам проверю.",
-            "Ревьюер нашёл баг. Поправлю потом.",
-            "Жду ревью.\n\nПотом поправлю тесты.",
-            "Когда закончу миграцию, поправлю линтер.",
-            "Когда прогоню тесты, добавлю индекс.",
-            "After I run the suite, I'll open the PR.",
-            "After reviewing the code, I'll fix it.",
-            "After my review of the diff, I'll fix it.",
-            "После моего ревью поправлю тесты.",
-            "Я пока жду. Агент упал, потом поправлю.",
-        ):
-            self.assertEqual(self._decide(text), "block", text)
-
-    def test_promise_conditioned_on_own_finding_is_returned(self):
-        for text in (
-            "Если нормально отработает, открою PR.",
-            "Если ок, поправлю.",
-            "If it works, I'll open the PR.",
-        ):
-            self.assertEqual(self._decide(text), "block", text)
-
-    def test_promise_waiting_on_a_background_event_passes(self):
-        for text in (
-            "Когда агент закончит, проверю.",
-            "Жду ревьюера A, затем исправлю.",
-            "Жду ревью A. Затем исправлю.",
-            "Когда CI пройдёт, открою PR.",
-            "Работа продолжится по уведомлению, тогда допишу.",
-            "Once the reviewer finishes, I'll fix it.",
-            "Поправлю, когда агент закончит.",
-            "I'll fix it once the reviewer finishes.",
-            "Буду ждать ревьюера, затем исправлю.",
-            "Ожидаю ревью, потом исправлю.",
-        ):
-            self.assertEqual(self._decide(text), "allow", text)
-
-    def test_offer_waiting_on_owner_consent_passes(self):
-        for text in ("Если подходит, сделаю так.", "Если согласен, сделаю.", "If that works for you, I'll add it."):
-            self.assertEqual(self._decide(text), "allow", text)
+    @staticmethod
+    def _verdict(handoff=False, deferral=False):
+        return {"handoff": handoff, "sentence": "Решение за вами.", "deferral": deferral,
+                "deferral_sentence": "Поправлю отдельным PR."}
 
     def test_judged_hand_off_is_returned_with_its_sentence(self):
-        decision = gate_policy.reply_lint_decision(
-            "Есть два варианта.", False, {"handoff": True, "sentence": "Решение за вами."}
-        )
+        decision = gate_policy.reply_lint_decision("Есть два варианта.", False, self._verdict(handoff=True))
         self.assertEqual(decision["decision"], "block")
+        self.assertEqual(decision["rules"], ["handoff"])
         self.assertIn("Решение за вами.", decision["reason"])
         self.assertIn("AskUserQuestion", decision["reason"])
 
+    def test_judged_deferral_is_returned_with_its_sentence(self):
+        decision = gate_policy.reply_lint_decision("Текст алерта неверный.", False, self._verdict(deferral=True))
+        self.assertEqual(decision["decision"], "block")
+        self.assertEqual(decision["rules"], ["deferral"])
+        self.assertIn("Поправлю отдельным PR.", decision["reason"])
+
+    def test_every_fired_rule_is_named(self):
+        decision = gate_policy.reply_lint_decision("Готово, PR влит.", False, self._verdict(True, True))
+        self.assertEqual(decision["rules"], ["claim", "handoff", "deferral"])
+
     def test_no_hand_off_or_no_verdict_passes(self):
-        for verdict in (None, {"handoff": False, "sentence": "none"}):
+        for verdict in (None, {"handoff": False, "sentence": "none", "deferral": False, "deferral_sentence": "none"}):
             self.assertEqual(
                 gate_policy.reply_lint_decision("Есть два варианта, решение за вами.", False, verdict)["decision"],
                 "allow",
@@ -904,7 +849,7 @@ class ReplyLintDecisionTest(unittest.TestCase):
             )
 
     def test_second_stop_passes_a_judged_hand_off(self):
-        decision = gate_policy.reply_lint_decision("Your call.", True, {"handoff": True, "sentence": "Your call."})
+        decision = gate_policy.reply_lint_decision("Your call.", True, self._verdict(True, True))
         self.assertEqual(decision["decision"], "allow")
 
 
@@ -936,23 +881,31 @@ class HandoffJudgeTest(unittest.TestCase):
         ):
             self.assertFalse(gate_policy.addresses_owner(text), text)
 
+    def test_first_person_commitment_goes_to_the_judge(self):
+        for text in ("Потом поправлю тесты.", "Если нормально отработает, открою PR.", "I'll fix it in a follow-up PR."):
+            self.assertTrue(gate_policy.needs_judge(text), text)
+
+    def test_reply_with_no_owner_and_no_commitment_skips_the_judge(self):
+        for text in ("Вывод: сборка идёт, тесты зелёные.", "The layout is fixed; CI runs."):
+            self.assertFalse(gate_policy.needs_judge(text), text)
+
     @staticmethod
     def _cli(result, is_error=False):
         return json.dumps({"type": "result", "is_error": is_error, "result": result})
 
     def test_reply_reaches_the_prompt_verbatim(self):
         reply = 'Pick {a} or "b"?\nЖду ответа.'
-        prompt = gate_policy.handoff_judge_prompt(reply)
+        prompt = gate_policy.judge_prompt(reply)
         self.assertIn(json.dumps(reply, ensure_ascii=False), prompt)
 
     def test_verdict_object_is_parsed(self):
         for result in (
-            '{"sentence": "Your call.", "handoff": true}',
-            '```json\n{"sentence": "Your call.", "handoff": true}\n```',
+            '{"sentence": "Your call.", "handoff": true, "deferral_sentence": "none", "deferral": false}',
+            '```json\n{"sentence": "Your call.", "handoff": true, "deferral_sentence": "none", "deferral": false}\n```',
         ):
             self.assertEqual(
-                gate_policy.parse_handoff_verdict(self._cli(result)),
-                {"handoff": True, "sentence": "Your call."},
+                gate_policy.parse_judge_verdict(self._cli(result)),
+                {"handoff": True, "sentence": "Your call.", "deferral": False, "deferral_sentence": "none"},
                 result,
             )
 
@@ -963,9 +916,11 @@ class HandoffJudgeTest(unittest.TestCase):
             self._cli('{"sentence": "x", "handoff": true}', is_error=True),
             self._cli('Verdict: {"sentence": "x", "handoff": true}'),
             self._cli('{"sentence": "x", "handoff": "false"}'),
+            self._cli('{"sentence": "x", "handoff": true}'),
+            self._cli('{"sentence": "x", "handoff": true, "deferral": "false"}'),
             self._cli('{"sentence": "x"} {"handoff": true}'),
         ):
-            self.assertIsNone(gate_policy.parse_handoff_verdict(stdout), stdout)
+            self.assertIsNone(gate_policy.parse_judge_verdict(stdout), stdout)
 
 
 class BlankQuotedTest(unittest.TestCase):

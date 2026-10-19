@@ -1,27 +1,23 @@
 #!/usr/bin/env python3
-"""Stop hook (main session): the final reply carries its observation and does
-not promise work it did not do.
+"""Stop hook (main session): the final reply carries its observation, does
+not defer work it could do now, and does not leave the owner's input in plain text.
 
-Returned once, with the rule that failed, when the reply claims completion
-without an observation (command, value, time) or promises future work in the
-first person ("I'll fix it in a follow-up PR") without doing it or naming a
-durable handoff (issue, PR, handoff file), or leaves work waiting on the
-owner's choice, answer or approval in plain text. The hand-off judgement is a
-small model, called only when the reply addresses the owner
-(gate_policy.addresses_owner): `claude -p --model haiku` sees only the final reply
-(gate_policy.handoff_judge_prompt), runs with no hooks, plugins, MCP or
-settings, and is guarded by REPLY_LINT_JUDGE against recursion. The second
-stop (`stop_hook_active`) passes without a model call, so a flagged reply
-costs one extra turn, never a loop. A judge error, timeout or unparsable
-verdict passes the reply (fail open) and is logged.
-Not promises: a promise conditioned, in its sentence or the one before it in
-the same paragraph, on a background event of the agent's delegates or tools
-(an agent, review, CI or run finishing or arriving) or on the owner's consent
-("if that works for you"); the hand-off judge owns owner-consent waits. A
-condition on the agent's own act or result ("когда закончу", "if it works")
-still counts.
+Returned once, with the rules that failed, when the reply claims completion
+without an observation (command, value, time; a regex), or a small-model judge
+finds either an owner hand-off (work cannot continue now until the owner's
+choice, answer, approval or input, asked in plain text instead of
+AskUserQuestion, or a pointer to an earlier message) or an unbacked deferral
+(work the agent could do this turn, waiting on nothing, tracked nowhere). The
+judge is called only when gate_policy.needs_judge holds (the reply addresses
+the owner or holds a first-person commitment): `claude -p --model haiku` sees
+only the final reply (gate_policy.judge_prompt), runs with no hooks, plugins,
+MCP or settings, and is guarded by REPLY_LINT_JUDGE against recursion. The
+second stop (`stop_hook_active`) passes without a model call, so a flagged
+reply costs one extra turn, never a loop. A judge error, timeout or
+unparsable verdict passes the reply (fail open) and is logged; every record
+names the rules that fired. Measurement and acceptance condition: ORIGINS.md.
 Not claims (2026-10-15): Russian not-verified disclosures, done words as
-section labels or with a manner complement.
+section labels, with a manner complement or followed by a negation.
 Only payloads whose transcript_path is a file are logged, so probes stay out.
 The reason asks for an addendum with only the missing part, never a repeat
 of the whole reply.
@@ -58,11 +54,11 @@ JUDGE_ARGS = [
 ]
 
 
-def judge_handoff(text):
+def judge(text):
     """(verdict or None, error or None) from the nested small-model judge."""
     try:
         run = subprocess.run(
-            JUDGE_ARGS + [gate_policy.handoff_judge_prompt(text)],
+            JUDGE_ARGS + [gate_policy.judge_prompt(text)],
             capture_output=True, text=True, timeout=JUDGE_TIMEOUT_S,
             cwd=tempfile.gettempdir(), env=dict(os.environ, **{JUDGE_ENV: "1"}),
         )
@@ -70,7 +66,7 @@ def judge_handoff(text):
         return None, type(exc).__name__
     if run.returncode != 0:
         return None, "exit %d" % run.returncode
-    verdict = gate_policy.parse_handoff_verdict(run.stdout)
+    verdict = gate_policy.parse_judge_verdict(run.stdout)
     return verdict, None if verdict else "unparsable: " + run.stdout[-200:]
 
 
@@ -123,8 +119,8 @@ def main():
             return 0
         text = last_assistant_text(transcript)
     stop_hook_active = bool(payload.get("stop_hook_active"))
-    skip_judge = stop_hook_active or not gate_policy.addresses_owner(text)
-    verdict, judge_error = (None, None) if skip_judge else judge_handoff(text)
+    skip_judge = stop_hook_active or not gate_policy.needs_judge(text)
+    verdict, judge_error = (None, None) if skip_judge else judge(text)
     decision = gate_policy.reply_lint_decision(text, stop_hook_active, verdict)
     if os.path.isfile(payload.get("transcript_path") or ""):
         log(
@@ -132,7 +128,8 @@ def main():
                 "session_id": payload.get("session_id") or "",
                 "stop_hook_active": stop_hook_active,
                 "decision": decision["decision"],
-                "handoff": verdict,
+                "rules": decision["rules"],
+                "verdict": verdict,
                 "judge_error": judge_error,
                 "tail": text.strip()[-120:],
             }

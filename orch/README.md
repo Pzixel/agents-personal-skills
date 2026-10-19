@@ -90,21 +90,21 @@ Hooks enforce the gates; an agent obeys a refusal's message and never works arou
   `PROD_POSITION: <blast-radius dimension, production's number, source>` and
   `WAY_BACK: <undo, minutes>`, or `merge-gate` refuses it.
 - Final reply: the Stop hook `reply-lint` returns once a completion claim without its
-  observation, or a promise of later work that names no issue, PR or handoff file, and
-  asks for an addendum with only the missing part. It also returns once a reply that
-  leaves work waiting on the owner's choice, answer or approval in plain text: decide it
-  if it is inside the agent's authority, otherwise ask through `AskUserQuestion` with
-  self-contained options. That judgement is a nested `claude -p --model haiku` call that
-  sees only the final reply (prompt in `gate_policy.HANDOFF_JUDGE_PROMPT`) and runs with
-  no hooks, plugins, MCP or settings, and only when the reply addresses the owner or
-  conditions work on the owner's act (a second-person pronoun or verb, "owner", an idiom
-  like "пока не скажете" / "let me know", or a "?"); about 63% of stops skip it. Wall
-  time per call is 3.2-4.4 s single, up to about 6.7 s under load, capped by the 12 s
-  judge timeout; about 1.3 s per stop on average. The second stop passes without a model
-  call. A judge error, timeout or unparsable verdict passes the reply (fail open) and is
-  logged in `~/.claude/reply-lint-log.jsonl` as `judge_error`; a standing failure (no
-  login, rate limit, broken install) fails open on every stop, so a silent hand-off check
-  is diagnosed from that field.
+  observation, a reply that leaves work waiting on the owner's choice, answer or approval
+  in plain text (decide it if it is inside the agent's authority, otherwise ask through
+  `AskUserQuestion` with self-contained options), or a deferral of work the agent could do
+  this turn that waits on nothing and names no issue, PR or handoff file; it asks for an
+  addendum with only the missing part. The hand-off and deferral judgements are one nested
+  `claude -p --model haiku` call that sees only the final reply (prompt in
+  `gate_policy.JUDGE_PROMPT`), runs with no hooks, plugins, MCP or settings, and runs only
+  when the reply addresses the owner (a second-person pronoun or verb, "owner", an idiom
+  like "пока не скажете" / "let me know", or a "?") or holds a first-person commitment
+  ("поправлю", "I'll fix", "follow-up PR"); about half of stops skip it. Wall time and the
+  measurement are in `ORIGINS.md`; the 12 s judge timeout caps it. The second stop passes
+  without a model call. A judge error, timeout or unparsable verdict passes the reply (fail
+  open) and is logged in `~/.claude/reply-lint-log.jsonl` as `judge_error`, next to
+  `rules` (the rules that fired) and `verdict`; a standing failure (no login, rate limit,
+  broken install) fails open on every stop, so a silent check is diagnosed from that field.
 - Destructive commands are classified by `deny-destructive.py`
   (`gate_policy.destructive_decision`, table in `orchestrate-params.json`), never by the
   agent. `ours` (paths under `/tmp`, `tmp/`, `.worktrees/`; k8s objects labelled

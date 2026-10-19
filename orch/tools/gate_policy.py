@@ -1548,7 +1548,8 @@ _OBSERVATION_RE = re.compile(
     re.IGNORECASE,
 )
 # A first-person commitment to do work later: a perfective 1st-person future
-# verb of work, a deferral phrase, or "I'll <work verb>".
+# verb of work, a deferral phrase, or "I'll <work verb>". Only a judge prefilter:
+# the judge decides whether the commitment is an unbacked deferral.
 _PROMISE_RE = re.compile(
     r"\b(?:поправлю|исправлю|сделаю|добавлю|заведу|открою|починю|допишу|проверю"
     r"|вернусь\s+к|займусь|доделаю|перепишу)\b"
@@ -1557,17 +1558,10 @@ _PROMISE_RE = re.compile(
     r"|\b(?:in\s+a\s+)?follow-?up\s+PR\b|\bseparately\s+later\b",
     re.IGNORECASE,
 )
-# The promise is backed when the reply names a durable record of the remaining
-# work (an issue or PR number, a handoff/todo file).
-_PROMISE_BACKED_RE = re.compile(
-    r"#\d+|handoff|хендофф|\S*(?:todo|TODO|HANDOFF)\S*\.md",
-    re.IGNORECASE,
-)
 # Work offered on the owner's consent or command ("если подходит", "по твоей
 # команде", "if that works for you"). A condition on the agent's own result
 # ("если нормально отработает", "if it works") names no owner and is not one.
-# Shared by the promise check (such an offer is no promise) and the hand-off
-# prefilter (such an offer goes to the judge).
+# Part of the judge prefilter: such an offer goes to the judge.
 _OWNER_CONSENT = (
     r"\bесли\s+(?:\w+\s+)?(?:подход\w*|соглас\w*|хоти\w*|хочешь|устраива\w*|одобр\w*)\b"
     r"|\bесли\s+(?:тебе|вам)\s+(?:ок|окей|норм\w*)\b"
@@ -1585,8 +1579,8 @@ _CLAIM_REASON = (
     "a delegate is a claim until reproduced from the primary source. Append only the missing part; do not "
     "repeat the reply."
 )
-_PROMISE_REASON = (
-    REPLY_LINT_MARKER + " the reply promises future work that this turn did not do. "
+_DEFERRAL_REASON = (
+    REPLY_LINT_MARKER + " the reply defers work it could do this turn (\"{sentence}\"). "
     "Do it now if it is inside your authority, or state plainly that it is not done "
     "and name where it is tracked (issue, PR, handoff file). Append only the missing part; do not repeat the reply."
 )
@@ -1600,10 +1594,11 @@ _DONE_LABEL_RE = re.compile(
 _NON_ASSERTION_WORD_RE = re.compile(
     r"\b(?:как|how|когда|when|once|будет|будут|станет|will|если|if)\s+$", re.IGNORECASE
 )
-# A condition right after the done word qualifies the status, it does not claim it.
+# A condition or a negation right after the done word qualifies the status, it does not claim it.
 _QUALIFIED_AFTER_RE = re.compile(
     r"(?:готов\w*,?\s+когда|done\s+when)\b"
-    r"|(?:сделан\w*|done)\s+(?:через|в\s+виде|via|as\s+an?\b|\S+['`](?:ом|ем)\b)",
+    r"|(?:сделан\w*|done)\s+(?:через|в\s+виде|via|as\s+an?\b|\S+['`](?:ом|ем)\b)"
+    r"|(?:готов\w*|сделан\w*|done)\s+(?:пока\s+|ещё\s+|еще\s+|yet\s+)?(?:не|not)\b",
     re.IGNORECASE,
 )
 _NUMBER_WORDS = {
@@ -1615,43 +1610,6 @@ _NUMBER_WORDS = {
 _NUMBER = r"(\d+|" + "|".join(_NUMBER_WORDS) + r")"
 _PROGRESS_RE = re.compile(_NUMBER + r"\s+(?:из|of)\s+" + _NUMBER + r"(?!\w)", re.IGNORECASE)
 _SENTENCE_END_RE = re.compile(r"[.!?](?=\s)|\n")
-# An offer names, before its verb, an action of the owner or a third party
-# ("пришлите URL, и я проверю", "once you allow writes, I'll write it").
-_OFFER_RE = re.compile(
-    r"(?:пришли(?:те)?|разреши(?:те)?|напиши(?:те)?|скажи(?:те)?|дадите|дашь|ответит)(?![\w-])"
-    r"|\bвы\b|\bты\b|\byou\b|\ballow\b",
-    re.IGNORECASE,
-)
-
-
-# A condition on an event the agent does not drive this turn: a delegate or tool
-# of the agent finishing or arriving, named as a noun or by a third-person verb
-# ("когда агент закончит", "после ревью", "once the reviewer finishes", "по
-# уведомлению"), or the owner's consent. The words between the trigger and the
-# event stay inside one sentence and hold no first person, so the agent's own
-# act ("когда закончу", "after I run the tests") is not such an event.
-_EVENT_GAP = r"(?:[^\w.!?\n]+(?!(?:я|мы|мо[йеиёя]\w*|наш\w*|I|we|my|our)\b)\w+){0,3}?[^\w.!?\n]+"
-_EVENT_CONDITION_RE = re.compile(
-    r"(?:\b(?:когда|после|как(?:\s+только)?|о?жд\w*|ожида\w*|дожд\w*|once|when|after|until|wait\w*)\b"
-    + _EVENT_GAP
-    + r"(?:"
-    r"(?:суб)?агент\w*|ревью\w*|сборщик\w*|билдер\w*|проб[аыеу]\b|монитор\w*|CI\b|джоб\w*|jobs?\b"
-    r"|прогон(?:а|у|ом|е|ы|ов|ам)?\b|уведомлени\w*|notifications?\b|(?:sub)?agents?\b|reviews?\b"
-    r"|reviewers?\b|builders?\b|probes?\b|monitors?\b|runs?\b"
-    r"|законч(?:ит|ат|ится|атся)\b|заверш(?:ит|ат|ится|атся)\b|придёт|придет|придут"
-    r"|вернёт\w*|вернет\w*|вернут\b|пройд(?:[её]т|ут)\b|отработа(?:ет|ют)\b"
-    r"|finish(?:es|ed)\b|returns\b|arriv(?:es|ed)\b|completes\b|lands\b))"
-    r"|\bпо\s+уведомлени\w*|\bon\s+(?:the\s+)?notification\b|" + _OWNER_CONSENT,
-    re.IGNORECASE,
-)
-
-
-def _paragraph_previous_sentence_start(text, start):
-    """Start of the sentence before the one at ``start``, when both sit in
-    one paragraph (no blank line between); else ``start``."""
-    if start == 0 or re.search(r"\n\s*\n\s*$", text[:start]):
-        return start
-    return _sentence_bounds(text, max(start - 2, 0))[0]
 
 
 def _number(word):
@@ -1695,64 +1653,55 @@ def _has_done_claim(original):
     return False
 
 
-def _has_unbacked_promise(text):
-    """A promise counts when the reply names no durable record of the remaining
-    work, no action of another party precedes the promise in its sentence, and
-    neither its sentence nor the sentence before it in the same paragraph
-    conditions it on a background event or the owner's consent."""
-    if _PROMISE_BACKED_RE.search(text):
-        return False
-    blanked = _blank_quoted(text)
-    for match in _PROMISE_RE.finditer(blanked):
-        start, end = _sentence_bounds(blanked, match.start())
-        if _OFFER_RE.search(blanked, start, match.start()):
-            continue
-        window = _paragraph_previous_sentence_start(blanked, start)
-        if not _EVENT_CONDITION_RE.search(blanked, window, end):
-            return True
-    return False
-
-
-HANDOFF_JUDGE_PROMPT = (
+JUDGE_PROMPT = (
     "You check the final reply of a coding agent before its turn ends. The reply, as a JSON string:\n"
     "{reply}\n\n"
-    "Decide whether it is an OWNER HAND-OFF (any language). The agent's tool to ask the owner, "
-    "AskUserQuestion, pauses the turn and is not visible in this text, so a reply that ends the turn "
-    "while still needing the owner has not asked through it.\n\n"
-    "It is an owner hand-off when either holds:\n"
-    "1. Work stays waiting on the owner's choice, answer, approval, confirmation, permission or input. "
-    "Any shape counts: a direct question offering options (\"A or B?\", \"which do we do?\"), \"your call\", "
-    "\"waiting for your decision\", work conditioned on the owner's act (\"after your approval I will\", "
-    "\"I do it on your word\", \"not starting without your go\", \"if you allow it, I will\"), the owner's "
-    "choice named as pending (\"your choice\", \"three decisions still wait for you\"), an indirect question "
-    "(\"waiting to hear whether you approve B\"), or a reminder that an earlier question is still open. "
-    "This holds even while background jobs or agents run.\n"
+    "Answer two questions about it (the reply may be in any language).\n\n"
+    "QUESTION A, OWNER HAND-OFF. The agent's tool to ask the owner, AskUserQuestion, pauses the turn and is "
+    "not visible in this text, so a reply that ends the turn while still needing the owner has not asked "
+    "through it. It is a hand-off only when either holds:\n"
+    "1. Work cannot continue NOW until the owner gives a choice, answer, approval or input, and the reply "
+    "asks for it in plain text. Any shape counts: a direct question offering options (\"A or B?\"), "
+    "\"your call\", \"waiting for your decision\", the agent's next step conditioned on the owner's word "
+    "(\"I start on your go\"), the owner's choice named as pending (\"three decisions still wait for you\"), "
+    "an indirect question, or a reminder that an earlier question is still open.\n"
     "2. The reply points to content of an earlier message instead of stating it (\"see the options above\", "
-    "\"as in my previous message\") while asking the owner something about it.\n\n"
-    "NOT a hand-off:\n"
-    "- an answer to the owner's own question, even if it ends with a short optional follow-up offer;\n"
-    "- a tunable value already set and reported, e.g. \"set to 7 days, keep or change?\";\n"
-    "- a wait that is negated or resolved (\"nothing waits on you\", \"your answers were applied\", "
-    "\"no decision needed\");\n"
-    "- plain status, results, or a report of work that continues without the owner (background job, CI, "
-    "while the owner is away);\n"
-    "- a wait on the agent's own subagents, builders, reviewers, probes or background tasks (\"waiting for E and F\");\n"
-    "- waiting on a third party or an external event, not the owner;\n"
-    "- a statement of a limitation or of what blocks something, when nothing is asked of the owner;\n"
-    "- an idle tick of an unattended goal or loop that names the owner's own stated action as its resume "
-    "condition (\"waiting until you lift the goal\");\n"
-    "- a request for an action only the owner can perform, when the reply states the exact action and why: a "
-    "permission the hooks forbid to agents, a command the owner must type (\"! kill 1234\", an "
-    "`APPROVE <hash>` line for a named plan whose path, hash and scope the reply states);\n"
+    "\"the command is in my previous message\") for something it asks the owner now.\n"
+    "NOT a hand-off (these pass even when they mention the owner, approval or a hash):\n"
+    "- an action only the owner can perform, stated exactly: an `APPROVE <hash>` line or a `! command` "
+    "with the plan path or scope stated, e.g. \"Waits on you: the SQL change. Plan: /tmp/plan.sh. Rollback: "
+    "the same script, 2 min. To allow the run, reply: APPROVE 6892e423...\"; a permission the hooks forbid "
+    "to agents, named with its exact action;\n"
+    "- a consent the agent will request LATER, once something is ready: \"then I will send you the hash for "
+    "APPROVE\", \"the plan will need your APPROVE line\", \"if the reviewer approves, I will ask you to "
+    "confirm\", \"I will prepare it but will not run it without your approval\";\n"
+    "- a future step in a list of the agent's next steps, even if it is \"a question to you with options\";\n"
+    "- a statement of a limitation or of what blocks something (\"only a ticket you open with the provider "
+    "can lift this\"), when nothing is asked now;\n"
+    "- a stop or hold the owner already agreed to, named as the reason work stops (\"stopped at layer 1 "
+    "as agreed; further only if you say so\");\n"
+    "- an answer to the owner's own question, even with a short optional follow-up offer;\n"
+    "- a tunable value already set and reported (\"set to 7 days, keep or change?\");\n"
+    "- a wait that is negated or resolved (\"nothing waits on you\");\n"
+    "- status, results, or work that continues without the owner; a wait on the agent's own subagents, "
+    "reviewers, builders, probes, watchers, CI or background tasks; a wait on a third party or an event;\n"
+    "- an idle tick of an unattended goal naming the owner's own stated action as its resume condition;\n"
     "- quoting or describing such phrases as examples (in code, quotes, or rule text).\n\n"
-    "Decide in two steps. First find the one sentence in the reply, written by the agent and addressed to the "
-    "owner, that asks the owner for a choice, answer, approval, action or input, or says work waits on the "
-    "owner. If no such sentence exists, the reply is not a hand-off: a long status, a plan the agent carries "
-    "out itself, next steps it will take, a future review gate, or work waiting on CI, a deploy, a probe, a "
-    "reviewer, a builder or another agent all pass. If that sentence exists and none of the NOT cases covers "
-    "it, it is a hand-off. When unsure, pass.\n\n"
-    "Respond with one JSON object only, no other text, with \"sentence\" written before \"handoff\":\n"
-    "{{\"sentence\": \"<that sentence quoted, at most 15 words, or none>\", \"handoff\": <true or false>}}"
+    "QUESTION B, UNBACKED DEFERRAL. The agent says it will do some work later (\"I will add it to the "
+    "plan\", \"I'll fix it in a follow-up PR\") that it could do in this turn, the deferral waits on "
+    "nothing (no running agent, reviewer, tool, CI, test run, measurement, external event, or the owner's "
+    "answer), and the reply names no place where the remaining work is tracked (issue, PR, handoff or plan "
+    "file). Adding a point to a plan, a ticket or a file is itself work the agent can do now; a plan "
+    "counts as tracking only when the reply says the remaining work is already written there. NOT a deferral: a wait on any of those, even phrased in the first person (\"when I get the "
+    "agent's result I will update the ticket\", \"I will fix it after review A\", \"if the measurement shows "
+    "X, then I add a cache\"); a description of a plan a delegate carries out; a section label (\"How I will "
+    "check.\"); next steps of work in progress while agents run; a follow-up already tracked.\n\n"
+    "For each question, find the one sentence that makes it true. If none exists, or a NOT case covers it, "
+    "the answer is false. When unsure, answer false.\n\n"
+    "Respond with one JSON object only, no other text, sentences written before the booleans:\n"
+    "{{\"sentence\": \"<hand-off sentence quoted, at most 15 words, or none>\", \"handoff\": <true or false>, "
+    "\"deferral_sentence\": \"<deferral sentence quoted, at most 15 words, or none>\", "
+    "\"deferral\": <true or false>}}"
 )
 _HANDOFF_REASON = (
     REPLY_LINT_MARKER + " the reply leaves work waiting on the owner in plain text "
@@ -1768,7 +1717,7 @@ _JSON_FENCE_RE = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.S)
 # owner's act: a second-person pronoun, possessive, finite or imperative verb (RU/EN),
 # "owner", an idiom like "по команде" / "жду подтверждения" / "пока не скажете" /
 # "let me know", a consent offer ("если подходит, сделаю"), or a question mark. A wide
-# net: the model judge filters. Anything else skips the judge.
+# net: the model judge filters.
 _ADDRESSES_OWNER_RE = re.compile(
     r"\?"
     r"|\b(?:ты|тебя|тебе|тобой|тобою|тво[йяёеию]\w*|вы|вас|вам|вами|ваш\w*|владел\w*"
@@ -1788,19 +1737,25 @@ _ADDRESSES_OWNER_RE = re.compile(
 
 
 def addresses_owner(reply):
-    """The reply can be a hand-off at all, so the model judge is worth a call."""
+    """The reply can be a hand-off at all."""
     return bool(_ADDRESSES_OWNER_RE.search(reply))
 
 
-def handoff_judge_prompt(reply):
+def needs_judge(reply):
+    """The reply can be a hand-off or a deferral, so the model judge is worth a call:
+    it addresses the owner or holds a first-person commitment (``_PROMISE_RE``)."""
+    return addresses_owner(reply) or bool(_PROMISE_RE.search(_blank_quoted(reply)))
+
+
+def judge_prompt(reply):
     """The judge prompt for one final reply; the reply goes in as a JSON string."""
-    return HANDOFF_JUDGE_PROMPT.format(reply=json.dumps(reply, ensure_ascii=False))
+    return JUDGE_PROMPT.format(reply=json.dumps(reply, ensure_ascii=False))
 
 
-def parse_handoff_verdict(cli_stdout):
-    """Verdict from `claude -p --output-format json` output: {"handoff", "sentence"},
-    or None when the run failed or the result is not exactly one verdict object
-    (the hook then fails open)."""
+def parse_judge_verdict(cli_stdout):
+    """Verdict from `claude -p --output-format json` output:
+    {"handoff", "sentence", "deferral", "deferral_sentence"}, or None when the run
+    failed or the result is not exactly one verdict object (the hook then fails open)."""
     try:
         envelope = json.loads(cli_stdout)
     except ValueError:
@@ -1815,35 +1770,37 @@ def parse_handoff_verdict(cli_stdout):
         verdict = json.loads(result)
     except ValueError:
         return None
-    if not isinstance(verdict, dict) or not isinstance(verdict.get("handoff"), bool):
+    if not isinstance(verdict, dict) or not all(isinstance(verdict.get(k), bool) for k in ("handoff", "deferral")):
         return None
-    return {"handoff": verdict["handoff"], "sentence": str(verdict.get("sentence") or "")}
+    return {
+        "handoff": verdict["handoff"],
+        "sentence": str(verdict.get("sentence") or ""),
+        "deferral": verdict["deferral"],
+        "deferral_sentence": str(verdict.get("deferral_sentence") or ""),
+    }
 
 
-def reply_lint_decision(last_assistant_text, stop_hook_active, handoff=None):
+def reply_lint_decision(last_assistant_text, stop_hook_active, verdict=None):
     """Return the main session once when its final reply claims completion
-    without an observation, promises future work with no durable record
-    of it (issue, PR, handoff file), or hands work to the owner in plain
-    text. ``handoff`` is the judge verdict (``parse_handoff_verdict``), None
-    when no verdict exists.
+    without an observation, or the judge ``verdict`` (``parse_judge_verdict``,
+    None when no verdict exists) finds a plain-text hand-off to the owner or an
+    unbacked deferral of work. ``rules`` names every rule that fired.
     Not claims (2026-10-15): a Russian not-verified disclosure, a done word
     as a section label or with a manner complement.
     The second stop (``stop_hook_active``) always passes."""
-    if stop_hook_active:
-        return {"decision": "allow"}
     text = (last_assistant_text or "").strip()
-    if not text:
-        return {"decision": "allow"}
-    reasons = []
+    if stop_hook_active or not text:
+        return {"decision": "allow", "rules": []}
+    fired = []
     if _has_done_claim(text) and not _OBSERVATION_RE.search(text):
-        reasons.append(_CLAIM_REASON)
-    if _has_unbacked_promise(text):
-        reasons.append(_PROMISE_REASON)
-    if handoff and handoff["handoff"]:
-        reasons.append(_HANDOFF_REASON.format(sentence=handoff["sentence"].replace('"', "'")))
-    if not reasons:
-        return {"decision": "allow"}
-    return {"decision": "block", "reason": " ".join(reasons)}
+        fired.append(("claim", _CLAIM_REASON))
+    if verdict and verdict["handoff"]:
+        fired.append(("handoff", _HANDOFF_REASON.format(sentence=verdict["sentence"].replace('"', "'"))))
+    if verdict and verdict.get("deferral"):
+        fired.append(("deferral", _DEFERRAL_REASON.format(sentence=verdict.get("deferral_sentence", "").replace('"', "'"))))
+    if not fired:
+        return {"decision": "allow", "rules": []}
+    return {"decision": "block", "rules": [r for r, _ in fired], "reason": " ".join(m for _, m in fired)}
 
 
 # -- brief gate: a delegate's budget goes to the deliverable, not to discovery --
