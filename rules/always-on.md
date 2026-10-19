@@ -27,3 +27,4 @@ Generic agent rules measured useful as always-on text (evidence: `ORIGINS.md`, "
 ## Scope
 
 - A task that fixes a bug ships no alert, log line, metric, or periodic check on that same bug: the fix removes it, and the notification would be dead on arrival. Alerts on cases that can still go wrong after the fix may ship in the same task.
+- A change that is more than a value, a field or a config line is designed before it is coded: a written note with the scope and subsystems, the size, the premises the change rests on and how each was verified (a report, a docstring or a diagnosis is a claim until a read of the code or a run confirms it), and the rejected alternatives. Anything may follow the note: a reviewer, an automatic continuation, a question to the owner. Code before the note is the defect.

@@ -16,7 +16,7 @@ Declare every task `proof` or `ship` in the first line of the step 1 prompt.
 
 `<task>` is the user's text verbatim; `<ws>` the workspace: a worktree under `<main-checkout>/.worktrees/<task>/` on a branch from the fresh remote default tip, created by the main session before step 1 and removed by it after merge or abandonment (rule: AGENTS.md git section). `<head>` is the last hash in the builder's `commits`, `<base>` the parent of its first (`<first>^`); after a fix round `<old head>` is the previous `<head>`. `<notes>` is the `orch-notes/` directory the builder names in its reply; review files go there too. Wait for each reply before the next step.
 
-1. Builder. `files:` comes from one `orch:Explore` run. A size over about 400 LOC or more than one subsystem is split into slices, each with its own `check:`; a hook refuses a builder prompt without `files:` and `check:` lines.
+1. Builder. `files:` comes from one `orch:Explore` run. A change that is more than a value, a field or a config line carries `design: required` in its prompt: the builder writes DESIGN.md first (scope and subsystems, size, the premises the fix rests on and how each was verified, the rejected alternatives) and stops; step 2 runs on it whatever `risks[]` says. A size over about 400 LOC or more than one subsystem is split into slices, each with its own `check:`; a hook refuses a builder prompt without `files:` and `check:` lines.
 ```
 Agent(subagent_type: "orch:builder", description: <3-5 words>, prompt:
 task: <task>
@@ -26,7 +26,7 @@ size: <expected diff in LOC and the subsystems touched>
 check: <the run on the real path that proves the work; never only unit tests>
 Reply: commits, check, deviations, risks[], checklist, questions[].)
 ```
-2. Design review, only when `risks[]` is non-empty; one reviewer, one round:
+2. Design review, when `risks[]` is non-empty or the prompt carried `design: required`; one reviewer, one round:
 ```
 Agent(subagent_type: "orch:reviewer", model: "fable", description: ..., prompt:
 mode: review
