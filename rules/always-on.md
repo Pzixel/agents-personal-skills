@@ -26,4 +26,4 @@ Generic agent rules measured useful as always-on text (evidence: `ORIGINS.md`, "
 
 ## Scope
 
-- A change that makes a condition impossible ships no notification layer (alert, log line, metric, periodic check) on that condition in the same task; a notification on a condition that stays possible after the change is a separate task: named, not built here.
+- A task that fixes a bug ships no alert, log line, metric, or periodic check on that same bug: the fix removes it, and the notification would be dead on arrival. Alerts on cases that can still go wrong after the fix may ship in the same task.
