@@ -1,6 +1,6 @@
 ---
 name: pareto-design-selection
-description: Use when several reasonable strategies could change how a system decides (ordering, selection, allocation, scheduling, retry, throttling, routing), a wrong choice costs production, clients, or money, the business owner decides, and the decision is a pure function over observed facts. Cheap sound screening, bounded search, calibrated finalist validation, a Pareto table the owner chooses from. Skip when one option is obviously right, reversal is cheap, the design is execution, rendering, or UI, or no pure decision core exists; say so and stop. For a resource goal (units per second, cost per unit, CPU, disk) the "Optimization method" unit-cost table precedes step 0 and finalists are proved by a thin prototype on the real path, never by simulation alone.
+description: Use when several reasonable strategies could change how a system decides (ordering, selection, allocation, scheduling, retry, throttling, routing), a wrong choice costs production, clients, or money, and the decision is a pure function over observed facts. Cheap sound screening, bounded search, calibrated finalist validation, a Pareto table; the agent picks the finalist when the Pareto set differs only on technical axes, the owner picks, through AskUserQuestion with the table, when finalists differ on money, priority, or a client-visible effect; the agent recommends in both cases. Skip when one option is obviously right, reversal is cheap, the design is execution, rendering, or UI, or no pure decision core exists; say so and stop. For a resource goal (units per second, cost per unit, CPU, disk) the "Optimization method" unit-cost table precedes step 0 and finalists are proved by a thin prototype on the real path, never by simulation alone.
 ---
 
 # Pareto Design Selection
@@ -116,8 +116,10 @@ it starts.
 
 ## 6. Business choice
 
-- The owner chooses from the Pareto set. The agent recommends and explains
-  but does not decide for the owner.
+- The agent picks the finalist when the Pareto set differs only on technical
+  axes; the owner picks, through AskUserQuestion with the table, when finalists
+  differ on money, priority, or a client-visible effect. The agent recommends
+  in both cases.
 - Technical questions that appear on the way (priorities between neighbours,
   the exact definition of a metric) are decided by the agent from the data,
   with the reasoning recorded alongside the table.

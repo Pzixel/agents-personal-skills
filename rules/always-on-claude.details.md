@@ -12,17 +12,13 @@ Companion to [`always-on-claude.md`](always-on-claude.md). Each section is read 
 
 Classified by the orch hook `deny-destructive.py` (policy `gate_policy.destructive_decision`, table in `orchestrate-params.json`), never by the agent; no text an agent writes raises a decision.
 
-- `ours`: paths under `/tmp`, `tmp/`, `.worktrees/`; k8s objects with the `orch.session` label. Runs without a prompt.
-- `approval`: a live write with an undo. Goes into one plan script with `# scope / # undo / # count / # contradiction / # prod_position / # way_back` headers, run from the main session as `bash <abs path>  # DESTRUCTIVE_PLAN sha256=<hash>`. One owner approval per batch: native prompt where the session can prompt, otherwise the owner replies `APPROVE <hash>`.
-- `impossible`: no undo (DROP/TRUNCATE, Secret replace, namespace/PVC delete, force push, rm outside ours). Refused; the agent lists the skipped step.
+- `ours`: paths under `/tmp`, `tmp/`, `.worktrees/`; k8s objects with the `orch.session` label; live writes with a cheap mechanical undo (`kubectl scale`, `kubectl rollout restart|undo|pause|resume`, Flux reconcile/suspend/resume). Runs without a prompt.
+- `approval`: a live write whose undo is not mechanical (SQL writes, `kubectl apply/delete/patch`). Runs only from one plan script with `# scope / # undo / # count / # contradiction / # prod_position / # way_back` headers, run from the main session as `bash <abs path>  # DESTRUCTIVE_PLAN sha256=<hash>`, after the native prompt or the owner's `APPROVE <hash>`.
+- `impossible`: no undo (DROP/TRUNCATE, Secret replace, namespace/PVC delete, force push, rm outside ours). Refused as a bare command; it runs only from an approved plan that states what it does.
 
 ## Waits
 
 Run the condition once (`wait-for` exits 2 on a broken command), then Monitor in the main session. Never an LLM that ends its turn to wait; never a poll loop.
-
-## Delegation
-
-A delegate brief carries `files:` (pointers from one Explore run), `access:` (route to every system read), `size:` (expected diff). Over ~400 LOC or more than one subsystem means slices, each with its own check. The spawn hook refuses builders and probes without these fields.
 
 ## Secrets
 

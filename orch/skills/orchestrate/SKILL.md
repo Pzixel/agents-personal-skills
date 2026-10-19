@@ -14,7 +14,7 @@ Declare every task `proof` or `ship` in the first line of the step 1 prompt.
 
 ## The flow
 
-`<task>` is the user's text verbatim; `<ws>` the workspace. `<head>` is the last hash in the builder's `commits`, `<base>` the parent of its first (`<first>^`); after a fix round `<old head>` is the previous `<head>`. `<notes>` is the `orch-notes/` directory the builder names in its reply; review files go there too. Wait for each reply before the next step.
+`<task>` is the user's text verbatim; `<ws>` the workspace: a new git worktree of the main checkout at `<main-checkout>/.worktrees/<task>/` (`<main-checkout>` is the first entry of `git worktree list`; never a sibling directory), on a new branch cut from the fresh tip of the remote default branch; one branch and one worktree per task; the main session creates them before step 1, passes the path, and removes both when the branch is merged or abandoned. `<head>` is the last hash in the builder's `commits`, `<base>` the parent of its first (`<first>^`); after a fix round `<old head>` is the previous `<head>`. `<notes>` is the `orch-notes/` directory the builder names in its reply; review files go there too. Wait for each reply before the next step.
 
 1. Builder. `files:` comes from one `orch:Explore` run. A size over about 400 LOC or more than one subsystem is split into slices, each with its own `check:`; a hook refuses a builder prompt without `files:` and `check:` lines.
 ```
@@ -33,7 +33,7 @@ mode: review
 Review <notes>/DESIGN.md against the task. Findings file: <notes>/review-design.md.
 task: <task>)
 ```
-Then, without asking the user: SendMessage the builder `design reviewed, proceed to code` plus the majors as design fixes, after one design fix round if a BLOCKER exists. Stop for the user only on a product question the spec does not settle or a BLOCKER needing an owner choice (storage, external contract, data migration).
+Then, without asking the user: SendMessage the builder `design reviewed, proceed to code` plus the majors as design fixes, after one design fix round if a BLOCKER exists. Stop for the user only on a product question the spec does not settle or a BLOCKER whose options differ on money, priority, or a client-visible effect.
 3. Two independent reviewers, in one message:
 ```
 Agent(subagent_type: "orch:reviewer", model: "fable", description: ..., prompt:
@@ -86,4 +86,4 @@ Run the condition once in the foreground first (`wait-for` exits 2 on a broken c
 
 ## Destructive commands
 
-A production write is batched into one plan script with `# scope:`, `# undo:` and `# count:` header lines and run from the main session only as `bash <plan>  # DESTRUCTIVE_PLAN sha256=<hex>`. In a session that cannot prompt, give the owner the plan path and its hash; the owner replies `APPROVE <hash>`, one run per approval. For a command without an undo, the owner runs it or unlocks a credential for it. An agent removes its own scratch (inside a worktree, `<repo>/tmp`, `/tmp`) with `~/.claude/tools/rm-own -r <path>`, which checks the real path; it never asks the owner to clean up. An agent stops its own leftover kubectl port-forwards with `~/.claude/tools/kill-forward <pid>` (`--list` finds them). Classes and thresholds: `destructive` in `tools/orchestrate-params.json`.
+A production write the hook classes `approval` or `impossible` is batched into one plan script with `# scope:`, `# undo:` and `# count:` header lines and run from the main session only as `bash <plan>  # DESTRUCTIVE_PLAN sha256=<hex>`. In a session that cannot prompt, give the owner the plan path and its hash; the owner replies `APPROVE <hash>`, one run per approval. A command without undo runs only from an approved plan that states what it does. An agent removes its own scratch (inside a worktree, `<repo>/tmp`, `/tmp`) with `~/.claude/tools/rm-own -r <path>`, which checks the real path; it never asks the owner to clean up. An agent stops its own leftover kubectl port-forwards with `~/.claude/tools/kill-forward <pid>` (`--list` finds them). Classes and thresholds: `destructive` in `tools/orchestrate-params.json`.

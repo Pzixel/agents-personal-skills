@@ -47,7 +47,7 @@ Tick every item in the reply as `done` or `not applicable: <reason>`. Each one i
 
 ## Reply
 
-At most 300 tokens, in this shape:
+At most 300 tokens, in English, in this shape:
 - `commits`: hashes with one-line subjects;
 - `check`: the command you ran and what it printed (verdict and the decisive tail line);
 - `deviations`: where the work differs from the spec, and why;
