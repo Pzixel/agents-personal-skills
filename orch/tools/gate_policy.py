@@ -2307,8 +2307,11 @@ def _kubectl_class(args, cfg, ctx):
         return [("impossible", "kubectl writes a Secret: the previous value cannot be restored")]
     phrase = " ".join(words[:2]) if " ".join(words[:2]) in _KUBECTL_CHEAP_UNDO else verb
     undo = _KUBECTL_CHEAP_UNDO.get(phrase)
-    if undo and (any(a.split("=", 1)[0] == "--all" for a in rest) or _selector_keys(rest)):
-        return [("approval", "kubectl " + phrase + " with --all or a selector reaches beyond one object; the owner decides that blast radius")]
+    if undo and (
+        any(a.split("=", 1)[0] == "--all" for a in rest) or _selector_keys(rest)
+        or _kubectl_named_objects(rest, len(phrase.split())) > 1
+    ):
+        return [("approval", "kubectl " + phrase + " with --all, a selector or several objects reaches beyond one object; the owner decides that blast radius")]
     if undo:
         return [("ours", "kubectl " + phrase + " of one object has a cheap mechanical undo: " + undo)]
     return [("approval", "kubectl " + verb + " changes live cluster state")]
@@ -2318,6 +2321,32 @@ _GIT_VALUE_OPTIONS = frozenset({
     "-C", "-c", "--git-dir", "--work-tree", "--namespace", "--super-prefix", "--config-env",
 })
 _GIT_REDIRECT_RE = re.compile(r"--work-tree|--git-dir|\bGIT_WORK_TREE\b|\bGIT_DIR\b|\bcore\.(?:worktree|bare)\b")
+
+
+# Options of the cheap-undo verbs whose value is the next word, not an object.
+_KUBECTL_WRITE_VALUE_FLAGS = frozenset({
+    "-l", "--selector", "--replicas", "--current-replicas", "--resource-version", "--timeout",
+    "-o", "--output", "-f", "--filename", "--field-manager", "--template", "--to-revision",
+})
+
+
+def _kubectl_named_objects(rest, phrase_len):
+    """Number of objects a resource verb names: each TYPE/NAME word, or the
+    names after a bare TYPE (times the types in a TYPE,TYPE list)."""
+    targets, i = [], 0
+    while i < len(rest):
+        if rest[i] in _KUBECTL_WRITE_VALUE_FLAGS:
+            i += 2
+            continue
+        if not rest[i].startswith("-"):
+            targets.append(rest[i].rstrip("\\"))
+        i += 1
+    targets = targets[phrase_len:]
+    if not targets:
+        return 0
+    if "/" in targets[0]:
+        return len(targets)
+    return (len(targets) - 1) * len(targets[0].split(","))
 
 
 # Live writes with a cheap, known, mechanical undo (owner decision K27): run at once.

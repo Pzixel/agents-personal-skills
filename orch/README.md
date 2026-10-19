@@ -109,7 +109,8 @@ Hooks enforce the gates; an agent obeys a refusal's message and never works arou
   (`gate_policy.destructive_decision`, table in `orchestrate-params.json`), never by the
   agent. `ours` (paths under `/tmp`, `tmp/`, `.worktrees/`; k8s objects labelled
   `orch.session`; live writes with a cheap mechanical undo on one named object such as `kubectl scale`
-  or `kubectl rollout restart|undo`; with `--all` or a selector they are `approval`)
+  or `kubectl rollout restart|undo`; with `--all`, a selector or several
+  objects they are `approval`)
   runs without a prompt; Flux reconcile/suspend/resume is unclassed and runs. `approval` (a live write whose
   undo is not mechanical: SQL writes, `kubectl apply/delete/patch`) goes into
   one plan script with `# scope / # undo / # count / # contradiction / # prod_position /

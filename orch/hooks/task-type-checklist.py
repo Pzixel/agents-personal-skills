@@ -24,7 +24,7 @@ CHECKLISTS = [
         "- First action restores the last known-good state: revert the last change on the failing path (code by PR revert, config through git, half-applied state cleaned).\n"
         "- Owner status within 5 minutes: what is broken for users, since when, what was reverted.\n"
         "- Only then the cause, as a hypothesis x cheapest-check table.\n"
-        "- A mitigation that is reversible, bounded and ours is applied now, never listed as optional.",
+        "- A mitigation inside your authority (a technical question by the authority rule, or a tunable) is applied now, never listed as optional.",
     ),
     (
         r"(расслед|разбер|почему|не работа|не приход|не уход|сломал|упал|инцидент|incident|alert|алерт|отстава|lag\b|debug|why\b|investigate)",

@@ -1096,6 +1096,7 @@ class DestructiveDecisionTest(unittest.TestCase):
         for cmd in (
             "kubectl scale deploy/api --replicas=0",
             "kubectl -n app rollout restart deploy/x",
+            "kubectl -n app scale deploy api --replicas 3",
             "kubectl rollout undo deploy/x",
             "kubectl rollout pause deploy/x",
             "kubectl rollout resume deploy/x",
@@ -1112,6 +1113,9 @@ class DestructiveDecisionTest(unittest.TestCase):
             "kubectl scale deploy --selector=tier=api --replicas=0",
             "kubectl -n prod rollout restart deploy --all",
             "kubectl -n prod rollout restart deploy -l app=api",
+            "kubectl -n prod scale deploy a b --replicas=0",
+            "kubectl -n prod scale deploy/a deploy/b --replicas 0",
+            "kubectl -n prod rollout restart deploy a b",
         ):
             with self.subTest(cmd=cmd):
                 result = _destructive(cmd)
