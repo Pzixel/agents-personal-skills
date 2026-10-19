@@ -1130,6 +1130,8 @@ class DestructiveDecisionTest(unittest.TestCase):
             permission_mode="bypassPermissions",
         )
         self.assertEqual(result["decision"], "deny")
+        self.assertIn("kubectl patch", result["reason"])
+        self.assertIn("APPROVE <sha256>", result["reason"])
 
     def test_sql_delete_without_where_is_denied(self):
         self.assertEqual(_destructive('psql -c "DELETE FROM orders"')["decision"], "deny")

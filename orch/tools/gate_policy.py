@@ -3043,8 +3043,8 @@ def destructive_decision(
         and not cfg["ask_in_bypass"]
     ):
         return {"decision": "deny", "class": result["class"], "reason": (
-            "approval needs a permission prompt; this session runs in bypass mode and "
-            "cannot prompt (destructive.ask_in_bypass=false)"
+            result["reason"] + "; this session runs in bypass mode and cannot prompt "
+            "(destructive.ask_in_bypass=false): give the owner the plan path and ask for the line APPROVE <sha256>"
         )}
     return result
 
