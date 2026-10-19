@@ -2312,7 +2312,7 @@ def _kubectl_class(args, cfg, ctx):
         or any(re.match(r"-[fk](?!-)", a) for a in rest)
         or _selector_keys(rest) or _kubectl_named_objects(rest, len(phrase.split())) > 1
     ):
-        return [("approval", "kubectl " + phrase + " with --all, a selector or several objects reaches beyond one object; the owner decides that blast radius")]
+        return [("approval", "kubectl " + phrase + " with --all, a selector, several objects or a -f/-k manifest reaches beyond one object; the owner decides that blast radius")]
     if undo:
         return [("ours", "kubectl " + phrase + " of one object has a cheap mechanical undo: " + undo)]
     return [("approval", "kubectl " + verb + " changes live cluster state")]
