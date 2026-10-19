@@ -2308,8 +2308,9 @@ def _kubectl_class(args, cfg, ctx):
     phrase = " ".join(words[:2]) if " ".join(words[:2]) in _KUBECTL_CHEAP_UNDO else verb
     undo = _KUBECTL_CHEAP_UNDO.get(phrase)
     if undo and (
-        any(a.split("=", 1)[0] == "--all" for a in rest) or _selector_keys(rest)
-        or _kubectl_named_objects(rest, len(phrase.split())) > 1
+        any(a.split("=", 1)[0] in ("--all", "--filename", "-k", "--kustomize") for a in rest)
+        or any(re.match(r"-[fk](?!-)", a) for a in rest)
+        or _selector_keys(rest) or _kubectl_named_objects(rest, len(phrase.split())) > 1
     ):
         return [("approval", "kubectl " + phrase + " with --all, a selector or several objects reaches beyond one object; the owner decides that blast radius")]
     if undo:
@@ -2326,13 +2327,15 @@ _GIT_REDIRECT_RE = re.compile(r"--work-tree|--git-dir|\bGIT_WORK_TREE\b|\bGIT_DI
 # Options of the cheap-undo verbs whose value is the next word, not an object.
 _KUBECTL_WRITE_VALUE_FLAGS = frozenset({
     "-l", "--selector", "--replicas", "--current-replicas", "--resource-version", "--timeout",
-    "-o", "--output", "-f", "--filename", "--field-manager", "--template", "--to-revision",
+    "-o", "--output", "-f", "--filename", "-k", "--kustomize", "--field-manager", "--template",
+    "--to-revision",
 })
 
 
 def _kubectl_named_objects(rest, phrase_len):
-    """Number of objects a resource verb names: each TYPE/NAME word, or the
-    names after a bare TYPE (times the types in a TYPE,TYPE list)."""
+    """Number of objects a resource verb names on its command line: each
+    TYPE/NAME word, or the names after a bare TYPE (times the types in a
+    TYPE,TYPE list). Objects read from -f/-k are not counted here."""
     targets, i = [], 0
     while i < len(rest):
         if rest[i] in _KUBECTL_WRITE_VALUE_FLAGS:

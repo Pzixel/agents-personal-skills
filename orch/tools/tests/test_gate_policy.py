@@ -1116,6 +1116,7 @@ class DestructiveDecisionTest(unittest.TestCase):
             "kubectl -n prod scale deploy a b --replicas=0",
             "kubectl -n prod scale deploy/a deploy/b --replicas 0",
             "kubectl -n prod rollout restart deploy a b",
+            "kubectl -n prod scale -f deploys.yaml --replicas=0",
         ):
             with self.subTest(cmd=cmd):
                 result = _destructive(cmd)

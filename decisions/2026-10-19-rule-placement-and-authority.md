@@ -30,7 +30,7 @@ One owner file per rule. A rule lives where the harness injects it at the latest
 | `kubectl rollout restart` of one named object | approval | ours | none needed, same spec |
 | `kubectl rollout undo` | approval | ours | rollout undo to the revision before |
 | `kubectl rollout pause` / `resume` | approval | ours | the opposite verb |
-| `kubectl scale` / `rollout restart/undo/pause/resume` with `--all`, `-l`/`--selector` or several named objects | approval | approval (blast radius beyond one object is the owner's "important" axis) | - |
+| `kubectl scale` / `rollout restart/undo/pause/resume` with `--all`, `-l`/`--selector`, several named objects or `-f`/`-k` | approval | approval (blast radius beyond one object is the owner's "important" axis) | - |
 | Flux reconcile / suspend / resume | not classed (runs) | unchanged | - |
 | `kubectl apply` / `patch` / `delete` (controller objects), `drain`, other verbs | approval | approval | - |
 | SQL INSERT/UPDATE/DELETE ... WHERE, SQL from an unread file | approval | approval | - |
