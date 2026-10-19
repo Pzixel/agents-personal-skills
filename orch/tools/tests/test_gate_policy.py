@@ -765,7 +765,7 @@ class ReplyLintDecisionTest(unittest.TestCase):
             self.assertEqual(self._d(text), "block", text)
 
     def test_done_word_with_manner_complement_describes_shape(self):
-        for text in ("Фильтр сделан allowlist'ом.", "Фильтр сделан `allowlist`ом.", "The filter is done as a denylist.", "Он сделан через хук."):
+        for text in ("CASE-13 готов за минуту, идёт CASE-14.", "Готово за 2 часа.", "Фильтр сделан `allowlist`ом.", "The filter is done as a denylist.", "Он сделан через хук."):
             self.assertEqual(self._d(text), "allow", text)
         for text in ("Шаги 1-4 готовы в ветке X.", "Сделано полностью.", "Сделано мной.", "Done as requested."):
             self.assertEqual(self._d(text), "block", text)
@@ -835,6 +835,10 @@ class ReplyLintDecisionTest(unittest.TestCase):
         self.assertEqual(decision["decision"], "block")
         self.assertEqual(decision["rules"], ["deferral"])
         self.assertIn("Поправлю отдельным PR.", decision["reason"])
+
+    def test_first_person_commitment_without_a_deferral_verdict_passes(self):
+        for verdict in (None, self._verdict()):
+            self.assertEqual(gate_policy.reply_lint_decision("Потом поправлю тесты.", False, verdict)["decision"], "allow")
 
     def test_every_fired_rule_is_named(self):
         decision = gate_policy.reply_lint_decision("Готово, PR влит.", False, self._verdict(True, True))

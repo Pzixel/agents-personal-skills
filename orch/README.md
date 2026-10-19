@@ -99,8 +99,8 @@ Hooks enforce the gates; an agent obeys a refusal's message and never works arou
   `gate_policy.JUDGE_PROMPT`), runs with no hooks, plugins, MCP or settings, and runs only
   when the reply addresses the owner (a second-person pronoun or verb, "owner", an idiom
   like "пока не скажете" / "let me know", or a "?") or holds a first-person commitment
-  ("поправлю", "I'll fix", "follow-up PR"); about half of stops skip it. Wall time and the
-  measurement are in `ORIGINS.md`; the 12 s judge timeout caps it. The second stop passes
+  ("поправлю", "I'll fix", "follow-up PR"); about half of stops skip it. Mean added time is
+  about 3.4 s per stop (measurement in `ORIGINS.md`), capped by the 12 s judge timeout. The second stop passes
   without a model call. A judge error, timeout or unparsable verdict passes the reply (fail
   open) and is logged in `~/.claude/reply-lint-log.jsonl` as `judge_error`, next to
   `rules` (the rules that fired) and `verdict`; a standing failure (no login, rate limit,

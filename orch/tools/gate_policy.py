@@ -1598,7 +1598,8 @@ _NON_ASSERTION_WORD_RE = re.compile(
 _QUALIFIED_AFTER_RE = re.compile(
     r"(?:готов\w*,?\s+когда|done\s+when)\b"
     r"|(?:сделан\w*|done)\s+(?:через|в\s+виде|via|as\s+an?\b|\S+['`](?:ом|ем)\b)"
-    r"|(?:готов\w*|сделан\w*|done)\s+(?:пока\s+|ещё\s+|еще\s+|yet\s+)?(?:не|not)\b",
+    r"|(?:готов\w*|сделан\w*|done)\s+(?:пока\s+|ещё\s+|еще\s+|yet\s+)?(?:не|not)\b"
+    r"|(?:готов\w*|сделан\w*|done)\s+(?:за|in)\s+(?:\d+\s+)?(?:секунд\w*|минут\w*|час\w*|дн[ея]\w*|seconds?|minutes?|hours?|days?)\b",
     re.IGNORECASE,
 )
 _NUMBER_WORDS = {
@@ -1676,6 +1677,9 @@ JUDGE_PROMPT = (
     "APPROVE\", \"the plan will need your APPROVE line\", \"if the reviewer approves, I will ask you to "
     "confirm\", \"I will prepare it but will not run it without your approval\";\n"
     "- a future step in a list of the agent's next steps, even if it is \"a question to you with options\";\n"
+    "- an action only the owner can perform named as a future unblocker (\"only a ticket you open can lift "
+    "this\") while the agent's own work continues in the same reply; a hand-off needs work to wait on the "
+    "owner now;\n"
     "- a statement of a limitation or of what blocks something (\"only a ticket you open with the provider "
     "can lift this\"), when nothing is asked now;\n"
     "- a stop or hold the owner already agreed to, named as the reason work stops (\"stopped at layer 1 "
@@ -1695,7 +1699,9 @@ JUDGE_PROMPT = (
     "counts as tracking only when the reply says the remaining work is already written there. NOT a deferral: a wait on any of those, even phrased in the first person (\"when I get the "
     "agent's result I will update the ticket\", \"I will fix it after review A\", \"if the measurement shows "
     "X, then I add a cache\"); a description of a plan a delegate carries out; a section label (\"How I will "
-    "check.\"); next steps of work in progress while agents run; a follow-up already tracked.\n\n"
+    "check.\"); a next step the agent names while its own delegate, reviewer, job or monitor is still "
+    "running (the reply says so); a follow-up already tracked. A deferral needs the agent's work on the task "
+    "to have ended this turn with the step left undone and untracked.\n\n"
     "For each question, find the one sentence that makes it true. If none exists, or a NOT case covers it, "
     "the answer is false. When unsure, answer false.\n\n"
     "Respond with one JSON object only, no other text, sentences written before the booleans:\n"
@@ -1796,8 +1802,8 @@ def reply_lint_decision(last_assistant_text, stop_hook_active, verdict=None):
         fired.append(("claim", _CLAIM_REASON))
     if verdict and verdict["handoff"]:
         fired.append(("handoff", _HANDOFF_REASON.format(sentence=verdict["sentence"].replace('"', "'"))))
-    if verdict and verdict.get("deferral"):
-        fired.append(("deferral", _DEFERRAL_REASON.format(sentence=verdict.get("deferral_sentence", "").replace('"', "'"))))
+    if verdict and verdict["deferral"]:
+        fired.append(("deferral", _DEFERRAL_REASON.format(sentence=verdict["deferral_sentence"].replace('"', "'"))))
     if not fired:
         return {"decision": "allow", "rules": []}
     return {"decision": "block", "rules": [r for r, _ in fired], "reason": " ".join(m for _, m in fired)}
