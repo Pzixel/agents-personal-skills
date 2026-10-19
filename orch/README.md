@@ -108,13 +108,15 @@ Hooks enforce the gates; an agent obeys a refusal's message and never works arou
 - Destructive commands are classified by `deny-destructive.py`
   (`gate_policy.destructive_decision`, table in `orchestrate-params.json`), never by the
   agent. `ours` (paths under `/tmp`, `tmp/`, `.worktrees/`; k8s objects labelled
-  `orch.session`; live writes with a cheap mechanical undo such as `kubectl scale` or
-  `kubectl rollout restart|undo`) runs without a prompt. `approval` (a live write whose
+  `orch.session`; live writes with a cheap mechanical undo on one named object such as `kubectl scale`
+  or `kubectl rollout restart|undo`; with `--all` or a selector they are `approval`)
+  runs without a prompt; Flux reconcile/suspend/resume is unclassed and runs. `approval` (a live write whose
   undo is not mechanical: SQL writes, `kubectl apply/delete/patch`) goes into
   one plan script with `# scope / # undo / # count / # contradiction / # prod_position /
   # way_back` headers, run from the main session as
-  `bash <abs path>  # DESTRUCTIVE_PLAN sha256=<hash>`; one approval per batch, by the
-  native prompt or a reply `APPROVE <hash>`. `impossible` (no undo: DROP/TRUNCATE, Secret
+  `bash <abs path>  # DESTRUCTIVE_PLAN sha256=<hash>`; one approval per batch: the owner's
+  approval of the plan, the permission prompt, or `APPROVE <hash>` where the session
+  cannot prompt. `impossible` (no undo: DROP/TRUNCATE, Secret
   replace, namespace/PVC delete, force push, rm outside `ours`) is refused as a bare
   command and runs only from an approved plan that states what it does.
 - Waits: run the condition once (`wait-for` exits 2 on a broken command), then wait on it

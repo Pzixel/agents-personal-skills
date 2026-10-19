@@ -1105,6 +1105,23 @@ class DestructiveDecisionTest(unittest.TestCase):
                 self.assertEqual(result["decision"], "allow")
                 self.assertIn("undo", result["reason"])
 
+    def test_kubectl_mechanical_undo_beyond_one_object_asks(self):
+        for cmd in (
+            "kubectl scale --all -n prod deploy --replicas=0",
+            "kubectl scale deploy -l app=web -n prod --replicas=0",
+            "kubectl scale deploy --selector=tier=api --replicas=0",
+            "kubectl -n prod rollout restart deploy --all",
+            "kubectl -n prod rollout restart deploy -l app=api",
+        ):
+            with self.subTest(cmd=cmd):
+                result = _destructive(cmd)
+                self.assertEqual((result["decision"], result["class"]), ("ask", "approval"))
+
+    def test_kubectl_scale_naming_a_secret_is_denied(self):
+        for cmd in ("kubectl -n prod scale secret/x --replicas=0", "kubectl scale -f secret.yaml --replicas=0"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(_destructive(cmd)["decision"], "deny")
+
     def test_impossible_refusal_names_the_approved_plan_route(self):
         result = _destructive('psql -c "DROP TABLE orders"')
         self.assertEqual(result["decision"], "deny")

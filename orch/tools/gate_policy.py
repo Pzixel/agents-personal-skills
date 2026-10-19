@@ -1756,8 +1756,8 @@ HANDOFF_JUDGE_PROMPT = (
 )
 _HANDOFF_REASON = (
     REPLY_LINT_MARKER + " the reply leaves work waiting on the owner in plain text "
-    "(\"{sentence}\"). If the decision is inside your authority (reversible, bounded and ours, "
-    "or a tunable), decide it, do it now and report it. Otherwise ask now with the "
+    "(\"{sentence}\"). If the decision is inside your authority (a technical question by the "
+    "authority rule, or a tunable), decide it, do it now and report it. Otherwise ask now with the "
     "AskUserQuestion tool: each option self-contained (what the owner sees change, the "
     "deciding numbers, your recommendation first), never a pointer to an earlier message."
 )
@@ -2301,13 +2301,16 @@ def _kubectl_class(args, cfg, ctx):
         if keys and "--all" not in rest and all(key in cfg["ours_labels"] for key in keys):
             return [("ours", "kubectl delete by a session-owned label")]
         return [("approval", "kubectl delete of controller-managed objects")]
-    undo = _KUBECTL_CHEAP_UNDO.get(" ".join(words[:2])) or _KUBECTL_CHEAP_UNDO.get(verb)
-    if undo:
-        return [("ours", "kubectl " + " ".join(words[:2]) + " has a cheap mechanical undo: " + undo)]
     if names_secret or (
         verb in ("apply", "create", "replace") and _SECRET_MANIFEST_RE.search(ctx["text"])
     ):
         return [("impossible", "kubectl writes a Secret: the previous value cannot be restored")]
+    phrase = " ".join(words[:2]) if " ".join(words[:2]) in _KUBECTL_CHEAP_UNDO else verb
+    undo = _KUBECTL_CHEAP_UNDO.get(phrase)
+    if undo and (any(a.split("=", 1)[0] == "--all" for a in rest) or _selector_keys(rest)):
+        return [("approval", "kubectl " + phrase + " with --all or a selector reaches beyond one object; the owner decides that blast radius")]
+    if undo:
+        return [("ours", "kubectl " + phrase + " of one object has a cheap mechanical undo: " + undo)]
     return [("approval", "kubectl " + verb + " changes live cluster state")]
 
 
@@ -2319,7 +2322,7 @@ _GIT_REDIRECT_RE = re.compile(r"--work-tree|--git-dir|\bGIT_WORK_TREE\b|\bGIT_DI
 
 # Live writes with a cheap, known, mechanical undo (owner decision K27): run at once.
 _KUBECTL_CHEAP_UNDO = {
-    "scale": "scale back to the previous replica count",
+    "scale": "read the previous replica count first, then scale back to it",
     "rollout restart": "none needed, pods are recreated from the unchanged spec",
     "rollout undo": "kubectl rollout undo to the revision before",
     "rollout pause": "kubectl rollout resume",

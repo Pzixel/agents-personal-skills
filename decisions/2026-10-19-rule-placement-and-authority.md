@@ -20,16 +20,17 @@ One owner file per rule. A rule lives where the harness injects it at the latest
 | Production writes (K27, K28) | `~/.codex/AGENTS.md`; classes in `gate_policy.py` + `orchestrate-params.json` | `always-on-claude.md`, details "Destructive", orchestrate "Destructive commands", `orch/README.md` |
 | Delegate brief fields | `gate_policy.brief_decision` refusal text and orchestrate step-1 template | removed from `always-on-claude.md` and details |
 | Pareto chooser (K30) | `pareto-design-selection/SKILL.md` section 6 | reviewer `mode: pareto` |
-| Worktree per task | `~/.codex/AGENTS.md` git section | orchestrate `<ws>` definition |
+| Worktree per task | `~/.codex/AGENTS.md` git section | orchestrate `<ws>` definition (one-sentence pointer) |
 
 ## Destructive classes, before and after
 
 | Command | Before | After | Undo named in the reason |
 |---|---|---|---|
-| `kubectl scale` | approval | ours (runs at once) | scale back to the previous replica count |
-| `kubectl rollout restart` | approval | ours | none needed, same spec |
+| `kubectl scale` of one named object | approval | ours (runs at once) | read the previous replica count first, then scale back to it |
+| `kubectl rollout restart` of one named object | approval | ours | none needed, same spec |
 | `kubectl rollout undo` | approval | ours | rollout undo to the revision before |
 | `kubectl rollout pause` / `resume` | approval | ours | the opposite verb |
+| `kubectl scale` / `rollout restart/undo/pause/resume` with `--all` or `-l`/`--selector` | approval | approval (blast radius beyond one object is the owner's "important" axis) | - |
 | Flux reconcile / suspend / resume | not classed (runs) | unchanged | - |
 | `kubectl apply` / `patch` / `delete` (controller objects), `drain`, other verbs | approval | approval | - |
 | SQL INSERT/UPDATE/DELETE ... WHERE, SQL from an unread file | approval | approval | - |

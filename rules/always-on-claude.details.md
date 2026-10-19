@@ -12,8 +12,8 @@ Companion to [`always-on-claude.md`](always-on-claude.md). Each section is read 
 
 Classified by the orch hook `deny-destructive.py` (policy `gate_policy.destructive_decision`, table in `orchestrate-params.json`), never by the agent; no text an agent writes raises a decision.
 
-- `ours`: paths under `/tmp`, `tmp/`, `.worktrees/`; k8s objects with the `orch.session` label; live writes with a cheap mechanical undo (`kubectl scale`, `kubectl rollout restart|undo|pause|resume`, Flux reconcile/suspend/resume). Runs without a prompt.
-- `approval`: a live write whose undo is not mechanical (SQL writes, `kubectl apply/delete/patch`). Runs only from one plan script with `# scope / # undo / # count / # contradiction / # prod_position / # way_back` headers, run from the main session as `bash <abs path>  # DESTRUCTIVE_PLAN sha256=<hash>`, after the native prompt or the owner's `APPROVE <hash>`.
+- `ours`: paths under `/tmp`, `tmp/`, `.worktrees/`; k8s objects with the `orch.session` label; live writes with a cheap mechanical undo on one named object (`kubectl scale`, `kubectl rollout restart|undo|pause|resume`; with `--all` or a selector they are `approval`). Runs without a prompt. Flux reconcile/suspend/resume is unclassed and runs.
+- `approval`: a live write whose undo is not mechanical (SQL writes, `kubectl apply/delete/patch`). Runs only from one plan script with `# scope / # undo / # count / # contradiction / # prod_position / # way_back` headers, run from the main session as `bash <abs path>  # DESTRUCTIVE_PLAN sha256=<hash>`, after the owner's approval of the plan: the permission prompt, or `APPROVE <hash>` where the session cannot prompt.
 - `impossible`: no undo (DROP/TRUNCATE, Secret replace, namespace/PVC delete, force push, rm outside ours). Refused as a bare command; it runs only from an approved plan that states what it does.
 
 ## Waits

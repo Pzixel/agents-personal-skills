@@ -21,4 +21,4 @@ Rules:
 - No writes anywhere. Read-only `gh`, kubectl, logs, metrics, and SQL with time limits.
 - A deadline longer than about 8 hours does not fit this agent; say so in the reply instead of starting.
 
-Output, once: at most 800 tokens — outcome (success / failure / deadline), timestamps, the decisive evidence lines quoted exactly, and the path of any log you saved to the scratchpad.
+Output, once, in English: at most 800 tokens — outcome (success / failure / deadline), timestamps, the decisive evidence lines quoted exactly, and the path of any log you saved to the scratchpad.
