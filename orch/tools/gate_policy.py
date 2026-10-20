@@ -644,7 +644,25 @@ DEFAULT_PARAMS = {
     # {"allow": ..., "deny": {type: reason}} entry refuses the listed types
     # with their own reason.
     "spawn_rights": {
-        "main": ["builder", "reviewer", "Explore", "prod-probe", "watcher"],
+        "main": {
+            "allow": [
+                "builder",
+                "reviewer",
+                "Explore",
+                "prod-probe",
+                "watcher",
+                "claude-code-guide",
+            ],
+            "deny": {
+                "Plan": (
+                    "`Plan` is the harness's generic architect and skips the plan"
+                    " contract (spec note, premises, lenses). Write the plan in the"
+                    " main session with the `superpowers-writing-plans-psilon`"
+                    " skill; spawn `Explore` for code facts and `orch:reviewer`"
+                    " for the /simplify lenses."
+                ),
+            },
+        },
         "builder": ["Explore"],
         "reviewer": ["Explore"],
         "default": [],

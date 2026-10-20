@@ -490,7 +490,7 @@ class SpawnDecisionTest(unittest.TestCase):
     def test_main_session_may_spawn_the_flow_types(self):
         params = json.load(open(PARAMS_FILE))
         for p in (None, params):
-            for requested in ("builder", "reviewer", "Explore", "prod-probe", "watcher"):
+            for requested in ("builder", "reviewer", "Explore", "prod-probe", "watcher", "claude-code-guide"):
                 with self.subTest(params="file" if p else "defaults", requested=requested):
                     self.assertEqual(
                         gate_policy.spawn_decision("", requested, p)["decision"], "allow"
@@ -500,9 +500,17 @@ class SpawnDecisionTest(unittest.TestCase):
         params = json.load(open(PARAMS_FILE))
         for p in (None, params):
             with self.subTest(params="file" if p else "defaults"):
-                self.assertEqual(
-                    gate_policy.spawn_decision("", "Plan", p)["decision"], "deny"
-                )
+                decision = gate_policy.spawn_decision("", "Plan", p)
+                self.assertEqual(decision["decision"], "deny")
+                for replacement in ("superpowers-writing-plans-psilon", "`Explore`", "`orch:reviewer`"):
+                    self.assertIn(replacement, decision["reason"])
+
+    def test_both_default_copies_grant_main_the_same_rights(self):
+        params = json.load(open(PARAMS_FILE))
+        self.assertEqual(
+            params["spawn_rights"]["main"],
+            gate_policy.DEFAULT_PARAMS["spawn_rights"]["main"],
+        )
 
     def test_untyped_request_is_refused_even_from_the_main_session(self):
         self.assertEqual(

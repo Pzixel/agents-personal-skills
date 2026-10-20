@@ -52,14 +52,19 @@
   "_doc_process_skills": "Process skills tell the main session how to run the loop, so the main session may load them at any size. Expert skills are loaded by the agent that does the work. Add a process skill by name in process_skills, or by naming convention in process_skill_globs (fnmatch patterns on the skill name) - no code edit either way.",
   "spawn_rights": {
     "_doc": "Who may spawn whom, keyed by the type of the SPAWNING agent ('main' = the main session, which has no agent type). A list names the allowed types; \"*\" means everything the gate otherwise allows; {\"allow\": ..., \"deny\": {type: reason}} refuses the listed types with that reason; a type absent from this map gets the 'default' entry. Untyped requests (general-purpose/claude/empty) are refused for everyone. Escape hatch for both refusals, main session only: a spawn-prompt line `AGENT_TYPE_OVERRIDE: <reason>` (a reason is required). Adding an agent type needs an entry here, not a code edit.",
-    "main": [
-      "builder",
-      "reviewer",
-      "Explore",
-      "prod-probe",
-      "watcher",
-      "claude-code-guide"
-    ],
+    "main": {
+      "allow": [
+        "builder",
+        "reviewer",
+        "Explore",
+        "prod-probe",
+        "watcher",
+        "claude-code-guide"
+      ],
+      "deny": {
+        "Plan": "`Plan` is the harness's generic architect and skips the plan contract (spec note, premises, lenses). Write the plan in the main session with the `superpowers-writing-plans-psilon` skill; spawn `Explore` for code facts and `orch:reviewer` for the /simplify lenses."
+      }
+    },
     "builder": [
       "Explore"
     ],
