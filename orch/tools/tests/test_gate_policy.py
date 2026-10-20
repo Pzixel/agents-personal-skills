@@ -1697,6 +1697,22 @@ class DestructiveWorkingDirectoryTest(unittest.TestCase):
                                    env=dict(env, CLAUDE_PID="1"))
             self.assertEqual((other.returncode, alive()), (2, True))
             self.assertIn("belongs to live session " + str(os.getpid()), other.stderr)
+            # a platform binary hides its environment: a marker in its argv
+            # naming a gone pid must not make it eligible
+            gone = next(str(n) for n in range(99999, 90000, -1)
+                        if subprocess.run(["ps", "-p", str(n)], capture_output=True).returncode)
+            hidden = subprocess.run([sys.executable, "-c", "import subprocess,sys;print(subprocess.Popen("
+                                     "['/bin/zsh','-c','sleep 10; true','CLAUDE_PID=" + gone + "'],"
+                                     "stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).pid)"],
+                                    capture_output=True, text=True, start_new_session=True, env=env,
+                                    cwd=tempfile.gettempdir()).stdout.strip()
+            time.sleep(0.3)
+            relisted = subprocess.run([sys.executable, tool, "--list"], capture_output=True, text=True,
+                                      env=env)
+            self.assertNotIn(hidden, [l.split("\t")[0] for l in relisted.stdout.splitlines()])
+            unmarked = subprocess.run([sys.executable, tool, hidden], capture_output=True, text=True, env=env)
+            self.assertEqual(unmarked.returncode, 2)
+            self.assertIn("no agent session marker", unmarked.stderr)
             stopped = subprocess.run([sys.executable, tool, out], env=env)
             self.assertEqual(stopped.returncode, 0)
             for _ in range(50):
