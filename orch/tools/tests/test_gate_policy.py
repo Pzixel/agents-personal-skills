@@ -525,11 +525,10 @@ class SpawnDecisionTest(unittest.TestCase):
                     gate_policy.spawn_decision("builder", "Explore", p)["decision"],
                     "allow",
                 )
-                for requested in ("builder", "reviewer", "prod-probe"):
-                    self.assertEqual(
-                        gate_policy.spawn_decision("builder", requested, p)["decision"],
-                        "deny",
-                    )
+                for requested in ("builder", "reviewer", "prod-probe", "Plan"):
+                    decision = gate_policy.spawn_decision("builder", requested, p)
+                    self.assertEqual(decision["decision"], "deny")
+                    self.assertIn("may spawn only `Explore`", decision["reason"])
 
     def test_reviewer_may_spawn_a_search_agent(self):
         self.assertEqual(
