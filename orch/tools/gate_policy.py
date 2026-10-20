@@ -763,18 +763,16 @@ def _merged_params(params):
 
 
 _PLAN_REVIEW_MISSING = (
-    "plan-simplify-gate: run /simplify on the plan %s (reuse, simplification, "
-    "efficiency, altitude, premises), write the findings to %s, rework the plan "
-    "from them, then call ExitPlanMode again."
+    "run /simplify on the plan (reuse, simplification, efficiency, altitude, "
+    "premises), write the findings to %s after the last plan rewrite, rework the "
+    "plan from them"
 )
 _PLAN_FAN_OUT_MISSING = (
-    "plan-simplify-gate: the plan %s has %d words, at or above "
-    "plan_simplify.fan_out_min_words = %d, so /simplify needs at least %d lens "
-    "agents spawned by the main session after the plan was created, each lens "
-    "prompt naming the plan path `%s`; found %d agents at spawn depth 1 naming it. "
-    "Spawn the lens reviewers from the main session (`orch:reviewer`, one lens or "
-    "lens pair each, in one message); a subagent may not fan out. After "
-    "`claude --resume` the earlier agents may not be visible: re-run the fan-out."
+    "the plan has %d words, at or above plan_simplify.fan_out_min_words = %d, so "
+    "/simplify needs at least %d lens agents spawned by the main session, each "
+    "lens prompt naming the plan path `%s`; found %d agents at spawn depth 1 "
+    "naming it. Spawn the lens reviewers from the main session (`orch:reviewer`, "
+    "one lens or lens pair each, in one message); a subagent may not fan out"
 )
 
 
@@ -787,14 +785,18 @@ def plan_simplify_decision(plan, words, plan_created, review_mtime, agents_seen,
 
     Every plan needs a `.simplify.md` written at or after its creation; a plan
     of at least fan_out_min_words words also needs fan_out_min_agents lens
-    agents spawned by the main session and naming the plan."""
+    agents spawned by the main session and naming the plan. One refusal names
+    every unmet condition."""
+    unmet = []
     if review_mtime is None or review_mtime < plan_created:
-        return _PLAN_REVIEW_MISSING % (plan, plan_review_path(plan))
+        unmet.append(_PLAN_REVIEW_MISSING % plan_review_path(plan))
     rule = _merged_params(params)["plan_simplify"]
     min_words, min_agents = rule["fan_out_min_words"], rule["fan_out_min_agents"]
     if words >= min_words and agents_seen < min_agents:
-        return _PLAN_FAN_OUT_MISSING % (plan, words, min_words, min_agents, plan, agents_seen)
-    return None
+        unmet.append(_PLAN_FAN_OUT_MISSING % (words, min_words, min_agents, plan, agents_seen))
+    if not unmet:
+        return None
+    return "plan-simplify-gate: %s: %s; then call ExitPlanMode again." % (plan, "; ".join(unmet))
 
 
 def _cost_ceiling(agent_type, params):

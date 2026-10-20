@@ -6,8 +6,9 @@ gate_policy.plan_simplify_decision. The plan is the last `plans/<name>.md` the
 session wrote (Write/Edit/MultiEdit file_path; `-agent-*.md` drafts and
 `.simplify.md` findings excluded). Lens agents are the session's subagent
 transcripts `<dir>/<session_id>/subagents/agent-<id>.jsonl` whose meta file
-says spawnDepth 1, written at or after the plan's creation, whose first user
-message names the plan file. No plan in the transcript, or any error, exits 0.
+says spawnDepth 1 and whose first user message names the plan file, at any
+time: Write and Edit replace the plan's inode, so no file time marks its first
+creation. No plan in the transcript, or any error, exits 0.
 """
 import glob
 import json
@@ -21,7 +22,7 @@ sys.path.insert(0, TOOLS_DIR)
 import gate_policy  # noqa: E402
 
 _WRITE_TOOLS = ("Write", "Edit", "MultiEdit")
-_DRAFT = re.compile(r"-agent-[^/]*\.md$")
+_DRAFT = re.compile(r"-agent-[0-9a-f]+\.md$")
 
 
 def is_plan_path(path):
@@ -61,12 +62,12 @@ def first_user_text(transcript):
     return ""
 
 
-def lens_agents(subagents_dir, plan, plan_created):
+def lens_agents(subagents_dir, plan):
     name = os.path.basename(plan)
     count = 0
     for path in glob.glob(os.path.join(subagents_dir, "agent-*.jsonl")):
         meta_path = path[: -len(".jsonl")] + ".meta.json"
-        if not os.path.exists(meta_path) or os.path.getmtime(path) < plan_created:
+        if not os.path.exists(meta_path):
             continue
         with open(meta_path) as fh:
             if json.load(fh).get("spawnDepth") != 1:
@@ -92,7 +93,7 @@ def main():
         words = len(fh.read().split())
     subagents = os.path.join(os.path.dirname(transcript), session_id, "subagents")
     reason = gate_policy.plan_simplify_decision(
-        plan, words, created, review_mtime, lens_agents(subagents, plan, created),
+        plan, words, created, review_mtime, lens_agents(subagents, plan),
         gate_policy.load_params(),
     )
     if reason:

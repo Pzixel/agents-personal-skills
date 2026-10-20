@@ -4,7 +4,6 @@ import pathlib
 import subprocess
 import sys
 import tempfile
-import time
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
@@ -19,6 +18,11 @@ class PlanSimplifyDecisionTest(unittest.TestCase):
     def test_review_older_than_plan_is_refused(self):
         reason = gate_policy.plan_simplify_decision("/p/plans/a.md", 10, 50.0, 40.0, 0, PARAMS)
         self.assertIn("/p/plans/a.simplify.md", reason)
+
+    def test_one_refusal_names_both_unmet_conditions(self):
+        reason = gate_policy.plan_simplify_decision("/p/plans/a.md", 100, 50.0, None, 1, PARAMS)
+        self.assertIn("/p/plans/a.simplify.md", reason)
+        self.assertIn("found 1 agents", reason)
 
     def test_small_plan_with_fresh_review_passes_without_agents(self):
         self.assertIsNone(gate_policy.plan_simplify_decision("/p/plans/a.md", 99, 50.0, 60.0, 0, PARAMS))
@@ -55,8 +59,11 @@ class PlanSimplifyHookTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def write_plan(self, name, words):
+        """Writes like the harness: a new file replaces the old inode."""
         plan = self.plans / name
-        plan.write_text(" ".join(["word"] * words))
+        draft = self.plans / (name + ".tmp")
+        draft.write_text(" ".join(["word"] * words))
+        os.replace(draft, plan)
         line = {"type": "assistant", "message": {"content": [
             {"type": "tool_use", "name": "Write", "input": {"file_path": str(plan)}}]}}
         with open(self.transcript, "a") as fh:
@@ -64,13 +71,11 @@ class PlanSimplifyHookTest(unittest.TestCase):
         (self.plans / (name[:-3] + ".simplify.md")).write_text("findings")
         return plan
 
-    def add_agent(self, prompt, depth=1, age=0):
+    def add_agent(self, prompt, depth=1):
         self.agents += 1
         path = self.subagents / ("agent-a%d.jsonl" % self.agents)
         path.write_text(json.dumps({"type": "user", "message": {"role": "user", "content": prompt}}) + "\n")
         (self.subagents / ("agent-a%d.meta.json" % self.agents)).write_text(json.dumps({"spawnDepth": depth}))
-        if age:
-            os.utime(path, (time.time() - age, time.time() - age))
 
     def run_hook(self):
         payload = {"session_id": "sess", "transcript_path": str(self.transcript), "tool_name": "ExitPlanMode"}
@@ -94,22 +99,36 @@ class PlanSimplifyHookTest(unittest.TestCase):
         self.add_agent("lens: premises. Plan: %s" % plan)
         self.assertEqual(self.run_hook().returncode, 0)
 
-    def test_old_other_plan_and_nested_agents_are_not_counted(self):
+    def test_rewritten_plan_keeps_its_lens_agents(self):
+        plan = self.write_plan("big.md", 1300)
+        self.add_agent("lens: reuse. Plan: %s" % plan)
+        self.add_agent("lens: premises. Plan: %s" % plan)
+        self.write_plan("big.md", 1310)
+        self.assertEqual(self.run_hook().returncode, 0)
+
+    def test_agent_naming_another_plan_is_not_counted(self):
         self.write_plan("other.md", 10)
         plan = self.write_plan("big.md", 1300)
-        self.add_agent("lens: reuse. Plan: %s" % plan, age=3600)
         self.add_agent("lens: reuse. Plan: %s" % (self.plans / "other.md"))
+        self.add_agent("lens: premises. Plan: %s" % plan)
+        self.assertIn("found 1 agents", self.run_hook().stderr)
+
+    def test_nested_agent_is_not_counted(self):
+        plan = self.write_plan("big.md", 1300)
         self.add_agent("search for %s" % plan, depth=2)
         self.add_agent("lens: premises. Plan: %s" % plan)
-        result = self.run_hook()
-        self.assertEqual(result.returncode, 2)
-        self.assertIn("found 1 agents", result.stderr)
+        self.assertIn("found 1 agents", self.run_hook().stderr)
 
     def test_agent_draft_does_not_replace_the_session_plan(self):
         plan = self.write_plan("big.md", 1300)
         self.write_plan("big-agent-a1.md", 10)
         self.add_agent("lens: reuse. Plan: %s" % plan)
-        self.assertIn("big.md has 1300 words", self.run_hook().stderr)
+        self.assertIn("big.md: the plan has 1300 words", self.run_hook().stderr)
+
+    def test_plan_slug_containing_agent_is_still_gated(self):
+        plan = self.write_plan("review-agent-flow.md", 1300)
+        self.add_agent("lens: reuse. Plan: %s" % plan)
+        self.assertEqual(self.run_hook().returncode, 2)
 
     def test_session_without_a_plan_passes(self):
         self.transcript.write_text("")
