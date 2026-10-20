@@ -609,6 +609,7 @@ def budget_decision(
 # ---------------------------------------------------------------------------
 
 DEFAULT_PARAMS = {
+    "plan_simplify": {"fan_out_min_words": 1200, "fan_out_min_agents": 2},
     "work_agent_types": ["builder", "reviewer"],
     "context_soft": 150000,
     "context_hard": 220000,
@@ -759,6 +760,41 @@ def _merged_params(params):
         else:
             merged[key] = value
     return merged
+
+
+_PLAN_REVIEW_MISSING = (
+    "plan-simplify-gate: run /simplify on the plan %s (reuse, simplification, "
+    "efficiency, altitude, premises), write the findings to %s, rework the plan "
+    "from them, then call ExitPlanMode again."
+)
+_PLAN_FAN_OUT_MISSING = (
+    "plan-simplify-gate: the plan %s has %d words, at or above "
+    "plan_simplify.fan_out_min_words = %d, so /simplify needs at least %d lens "
+    "agents spawned by the main session after the plan was created, each lens "
+    "prompt naming the plan path `%s`; found %d agents at spawn depth 1 naming it. "
+    "Spawn the lens reviewers from the main session (`orch:reviewer`, one lens or "
+    "lens pair each, in one message); a subagent may not fan out. After "
+    "`claude --resume` the earlier agents may not be visible: re-run the fan-out."
+)
+
+
+def plan_review_path(plan):
+    return plan[: -len(".md")] + ".simplify.md"
+
+
+def plan_simplify_decision(plan, words, plan_created, review_mtime, agents_seen, params=None):
+    """ExitPlanMode gate over observed facts: a refusal message, or None.
+
+    Every plan needs a `.simplify.md` written at or after its creation; a plan
+    of at least fan_out_min_words words also needs fan_out_min_agents lens
+    agents spawned by the main session and naming the plan."""
+    if review_mtime is None or review_mtime < plan_created:
+        return _PLAN_REVIEW_MISSING % (plan, plan_review_path(plan))
+    rule = _merged_params(params)["plan_simplify"]
+    min_words, min_agents = rule["fan_out_min_words"], rule["fan_out_min_agents"]
+    if words >= min_words and agents_seen < min_agents:
+        return _PLAN_FAN_OUT_MISSING % (plan, words, min_words, min_agents, plan, agents_seen)
+    return None
 
 
 def _cost_ceiling(agent_type, params):

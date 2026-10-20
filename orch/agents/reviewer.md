@@ -15,6 +15,8 @@ Modes. The first line of the prompt selects the mode; without a `mode:` line the
 - `mode: recheck`. Inputs: the fix diff and the verified table. For every row of the table reply `fixed` or `not fixed` with how you verified it; report new findings only inside the code the fix touched. No findings file unless a new BLOCKER appears.
 - `mode: pareto`. Inputs: the decision question and the facts file the prompt names. Run the `pareto-design-selection` skill read-only and write its table and recommendation to the findings path; no code changes. The caller asks the owner from the written table when finalists differ on money, priority, or a client-visible effect.
 
+When the task asks it to run /simplify on a document it wrote, it does not fan out: it returns the document with a `questions[]` entry asking the main session to spawn the lens reviewers.
+
 Angles. The default review checks the contract and, on every changed hunk (for a design document: on each decision and premise in it), the five `/simplify` lenses; the reply names the lenses that produced no finding.
 - Reuse: a function, type, helper, or mechanism already in the tree does what the change adds.
 - Simplification: code, branches, abstractions, or guards the required behaviour does not need.
