@@ -2509,17 +2509,88 @@ def _is_own_tool(head, ctx, name):
     return real is not None and real in {os.path.realpath(t) for t in tools}
 
 
-def forward_refusal(pid, row, uid):
-    """None when ``pid`` may be stopped by kill-forward, else the reason.
-    ``row`` is the ``(uid, ppid, elapsed, args)`` ps shows for it, or None."""
-    if not pid.isdigit() or row is None:
-        return pid + ": no such process"
-    if row[0] != uid:
-        return pid + ": belongs to another user"
-    argv = row[3].split()
-    if os.path.basename(argv[0]) != "kubectl" or "port-forward" not in argv[1:]:
-        return pid + ": not a kubectl port-forward: " + row[3]
-    return None
+_AGENT_NAMES = ("claude", "codex")
+_SYSTEM_PREFIXES = ("/System/", "/Applications/", "/Library/", "/usr/libexec/", "/usr/sbin/", "/sbin/")
+
+
+def _is_agent(comm, args):
+    """True when a process is a claude or codex agent: by its executable
+    ``comm`` (intact, may hold spaces) or, for a script runtime, by the script
+    path in ``args``. Never a substring of the whole command: paths such as
+    ``~/.codex/plugins/...`` or ``~/.claude-accounts/...`` are not agents."""
+    if os.path.basename(comm) in _AGENT_NAMES or "/claude/versions/" in comm:
+        return True
+    if os.path.basename(comm) in ("node", "bun", "deno"):
+        for token in args.split()[1:3]:
+            if (os.path.basename(token) in _AGENT_NAMES + ("codex.js",)
+                    or "/@anthropic-ai/claude-code/" in token):
+                return True
+    return False
+
+
+def own_kill_refusals(pids, rows, launchd, caller, uid, platform, home):
+    """{pid: None when kill-own may SIGTERM it, else the reason}.
+
+    ``rows`` is ``{pid: (uid, ppid, tty, elapsed, comm, args)}`` from one ps
+    snapshot (str pids, tty ``??`` when none), ``launchd`` the set of pids
+    ``launchctl list`` shows, ``caller`` the pid of the calling process.
+    A pid is allowed when it is the caller's uid, not the caller or its
+    ancestor, its subtree holds no tty and no agent, and its parent chain
+    reaches the caller's agent session or reaches PID 1 through no agent with
+    a top process that is neither a launchd job nor a system or app binary."""
+    if platform != "darwin":
+        return {p: p + ": kill-own decides only on macOS" for p in pids}
+    children = {}
+    for p, row in rows.items():
+        children.setdefault(row[1], []).append(p)
+
+    def chain(p):
+        seen = []
+        while p in rows and p not in seen:
+            seen.append(p)
+            p = rows[p][1]
+        return seen
+
+    ancestors = chain(caller)
+    root = next((p for p in ancestors[1:] if _is_agent(rows[p][4], rows[p][5])), None)
+    excluded = _SYSTEM_PREFIXES + (os.path.join(home, "Library") + "/",)
+
+    def refusal(pid):
+        if not pid.isdigit() or pid not in rows:
+            return pid + ": no such process"
+        if rows[pid][0] != uid:
+            return pid + ": belongs to another user"
+        if pid in ancestors:
+            return pid + ": is the caller or its ancestor"
+        todo, seen = [pid], set()
+        while todo:
+            p = todo.pop()
+            if p in seen:
+                continue
+            seen.add(p)
+            _, _, tty, _, comm, args = rows[p]
+            if tty not in ("??", "?", "-", ""):
+                return pid + ": process " + p + " in its subtree has terminal " + tty
+            if _is_agent(comm, args):
+                return pid + ": process " + p + " in its subtree is an agent session"
+            todo.extend(children.get(p, []))
+        top = pid
+        for p in chain(pid)[1:]:
+            if p == root:
+                return None
+            if _is_agent(rows[p][4], rows[p][5]):
+                return pid + ": runs under live agent session " + p
+            if p == "1":
+                break
+            top = p
+        if top in launchd:
+            return pid + ": its top process " + top + " is a launchd job"
+        comm = rows[top][4]
+        if comm.startswith(excluded) or ".app/Contents/" in comm:
+            return pid + ": its top process " + top + " is a system or app binary: " + comm
+        return None
+
+    return {p: refusal(p) for p in pids}
 
 
 def _runs_computed_command(text):
@@ -2546,8 +2617,8 @@ def _classify_tokens(tokens, cfg, ctx):
         if _is_own_tool(tokens[len(tokens) - len(args) - 1], ctx, "rm-own"):
             return []  # the tool checks each real path itself
         program = "rm"  # another script by that name is judged as rm
-    if program == "kill-forward":
-        if _is_own_tool(tokens[len(tokens) - len(args) - 1], ctx, "kill-forward"):
+    if program == "kill-own":
+        if _is_own_tool(tokens[len(tokens) - len(args) - 1], ctx, "kill-own"):
             return []  # the tool checks each pid itself
         program = "kill"  # another script by that name is judged as kill
     if program in ("cd", "pushd", "popd"):
@@ -2559,7 +2630,7 @@ def _classify_tokens(tokens, cfg, ctx):
     if program in ("sudo", "doas", "alias", "apt", "apt-get") or program == "brew" and args[:1] == ["uninstall"]:
         return [("privileged", "privileged package or system command")]
     if program in ("kill", "pkill", "killall"):
-        return [("privileged", "kill: stop a job with its own tool or let it finish; stop your own leftover kubectl port-forwards with ~/.claude/tools/kill-forward <pid>...")]
+        return [("privileged", "kill: stop a job with its own tool or let it finish; stop your own leftover processes with ~/.claude/tools/kill-own <pid>... (~/.claude/tools/kill-own --list finds them)")]
     if program == "chmod":
         operands = _path_args(args)[1:]
         if operands and all(_ours(p, cfg, ctx) for p in operands):

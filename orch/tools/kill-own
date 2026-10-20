@@ -1,0 +1,88 @@
+#!/usr/bin/env python3
+"""kill-own [<pid>... | --list]
+
+Stops an agent's own leftover local processes (orphaned dev servers, debug
+binaries, port-forwards). The tool only gathers facts (ps, launchctl) and
+sends signals; gate_policy.own_kill_refusals decides. Every PID is checked
+before any signal is sent; one refusal kills nothing and exits 2 with one
+line per refused PID; otherwise each PID gets SIGTERM (never SIGKILL).
+Without arguments, or with --list, prints the eligible processes
+(pid, ppid, elapsed, cwd, command).
+"""
+
+import os
+import shutil
+import signal
+import subprocess
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import gate_policy  # noqa: E402
+
+
+def _ps(columns):
+    return subprocess.run(["ps", "-A", "-o", columns], capture_output=True,
+                          text=True, check=True).stdout.splitlines()
+
+
+def processes():
+    """{pid: (uid, ppid, tty, elapsed, comm, args)}; comm is the intact
+    executable path, read in its own ps call because it may hold spaces."""
+    comms = {}
+    for line in _ps("pid=,comm="):
+        pid, _, comm = line.strip().partition(" ")
+        comms[pid] = comm.strip()
+    rows = {}
+    for line in _ps("pid=,uid=,ppid=,tty=,etime=,args="):
+        fields = line.split(None, 5)
+        if len(fields) == 6 and fields[0] in comms:
+            pid, uid, ppid, tty, etime, args = fields
+            rows[pid] = (int(uid), ppid, tty, etime, comms[pid], args)
+    return rows
+
+
+def launchd_pids():
+    if not shutil.which("launchctl"):
+        return set()
+    out = subprocess.run(["launchctl", "list"], capture_output=True, text=True).stdout
+    return {line.split()[0] for line in out.splitlines()[1:] if line.split()[:1] and line.split()[0].isdigit()}
+
+
+def cwds(pids):
+    if not pids or not shutil.which("lsof"):
+        return {}
+    out = subprocess.run(["lsof", "-a", "-d", "cwd", "-p", ",".join(pids), "-Fn"],
+                         capture_output=True, text=True).stdout
+    found, pid = {}, None
+    for line in out.splitlines():
+        if line.startswith("p"):
+            pid = line[1:]
+        elif line.startswith("n") and pid:
+            found[pid] = line[1:]
+    return found
+
+
+def main(argv):
+    rows = processes()
+    facts = (rows, launchd_pids(), str(os.getpid()), os.getuid(), sys.platform,
+             os.path.expanduser("~"))
+    if not argv or argv == ["--list"]:
+        verdicts = gate_policy.own_kill_refusals(list(rows), *facts)
+        eligible = sorted((p for p, why in verdicts.items() if why is None), key=int)
+        where = cwds(eligible)
+        for pid in eligible:
+            _, ppid, _, etime, _, args = rows[pid]
+            print("\t".join((pid, ppid, etime, where.get(pid, "-"), args)))
+        return 0
+    refusals = [why for why in gate_policy.own_kill_refusals(argv, *facts).values() if why]
+    if refusals:
+        for r in refusals:
+            print("kill-own: refused " + r, file=sys.stderr)
+        return 2
+    for pid in argv:
+        os.kill(int(pid), signal.SIGTERM)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

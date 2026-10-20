@@ -1525,28 +1525,49 @@ class DestructiveWorkingDirectoryTest(unittest.TestCase):
             ("./rm-own -r tmp/x", "{wt}"): "allow",
         })
 
-    def test_only_the_real_kill_forward_is_exempt(self):
-        tool = os.path.join(os.path.dirname(os.path.realpath(gate_policy.__file__)), "kill-forward")
+    def test_only_the_real_kill_own_is_exempt(self):
+        tool = os.path.join(os.path.dirname(os.path.realpath(gate_policy.__file__)), "kill-own")
         self._table({
             (tool + " 1234", "{wt}"): "allow",
-            ("./kill-forward 1234", "{wt}"): "deny",
+            ("./kill-own 1234", "{wt}"): "deny",
             ("kill 1234", "{wt}"): "deny",
         })
 
-    def test_kill_forward_accepts_only_own_kubectl_port_forwards(self):
-        uid = 501
-        cases = {
-            ("10", (uid, "1", "01:00", "kubectl -n x port-forward svc/a 0:80")): True,
-            ("11", (uid, "1", "01:00", "/usr/local/bin/kubectl port-forward pod/p 5432")): True,
-            ("12", (0, "1", "01:00", "kubectl port-forward svc/a 0:80")): False,
-            ("13", (uid, "1", "01:00", "kubectl -n x get pods")): False,
-            ("14", (uid, "1", "01:00", "sleep port-forward")): False,
-            ("15", None): False,
-            ("-1", (uid, "1", "01:00", "kubectl port-forward svc/a 0:80")): False,
+    def test_kill_own_accepts_only_own_leftovers(self):
+        me, home = 501, "/Users/u"
+        rows = {
+            "1": (0, "0", "??", "9", "/sbin/launchd", "/sbin/launchd"),
+            # Terminal -> login -> -zsh -> claude (session) -> zsh -c -> caller
+            "10": (me, "1", "??", "9", "/System/Applications/Utilities/Terminal.app/Contents/MacOS/Terminal", "Terminal"),
+            "11": (me, "10", "ttys001", "9", "login", "login -pf u"),
+            "12": (me, "11", "ttys001", "9", "-zsh", "-zsh"),
+            "13": (me, "12", "ttys001", "9", "claude", "claude --dangerously-skip-permissions"),
+            "14": (me, "13", "??", "9", "/bin/zsh", "/bin/zsh -c source /Users/u/.claude-accounts/x.sh"),
+            "15": (me, "14", "??", "9", "python3", "python3 kill-own 20"),
+            "16": (me, "14", "??", "9", "/usr/bin/node", "node /w/node_modules/.bin/vite"),
+            # orphans: plain leftover, its child, one with a tty child, one with an agent child
+            "20": (me, "1", "??", "9", "./target/debug/collect", "./target/debug/collect"),
+            "21": (me, "20", "??", "9", "sleep", "sleep 9"),
+            "22": (me, "1", "??", "9", "/usr/bin/tmux", "tmux"),
+            "23": (me, "22", "ttys009", "9", "-zsh", "-zsh"),
+            "24": (me, "1", "??", "9", "/usr/bin/node", "node /x/@openai/codex/bin/codex.js"),
+            # another live session (native installer path with spaces elsewhere) and its job
+            "30": (me, "1", "??", "9", "/Users/u/.local/share/claude/versions/2.1.0", "claude"),
+            "31": (me, "30", "??", "9", "sleep", "sleep 9"),
+            # launchd job, app and home Library binaries, other user
+            "40": (me, "1", "??", "9", "/usr/local/bin/agentd", "agentd"),
+            "41": (me, "1", "??", "9", "/Users/u/Applications/My App.app/Contents/MacOS/My App", "My"),
+            "42": (me, "1", "??", "9", "/Users/u/Library/Application Support/x/jetbrainsd", "jetbrainsd"),
+            "43": (0, "1", "??", "9", "/opt/x", "x"),
+            # not an agent: a helper path holding .codex
+            "44": (me, "1", "??", "9", "/Users/u/.codex/plugins/helper", "/Users/u/.codex/plugins/helper"),
         }
-        for (pid, row), allowed in cases.items():
-            with self.subTest(pid=pid):
-                self.assertEqual(gate_policy.forward_refusal(pid, row, uid) is None, allowed)
+        allowed = {"16", "20", "21", "44"}
+        why = gate_policy.own_kill_refusals(list(rows) + ["x1", "99"], rows, {"40"}, "15", me, "darwin", home)
+        self.assertEqual({p for p, r in why.items() if r is None}, allowed)
+        self.assertIn("live agent session 30", why["31"])
+        linux = gate_policy.own_kill_refusals(["20"], rows, set(), "15", me, "linux", home)
+        self.assertIn("only on macOS", linux["20"])
 
     def test_git_discards_only_in_an_agent_worktree(self):
         self._table({
@@ -1620,27 +1641,32 @@ class DestructiveWorkingDirectoryTest(unittest.TestCase):
         self.assertEqual((os.path.lexists(os.path.join(self.wt, "tmp", "up")),
                           os.path.isdir(os.path.join(self.main, "src"))), (False, True))
 
-    def test_kill_forward_stops_only_when_every_pid_is_a_forward(self):
-        import shutil
+    @unittest.skipUnless(sys.platform == "darwin", "kill-own decides only on macOS")
+    def test_kill_own_stops_only_when_every_pid_is_eligible(self):
         import subprocess
-        tool = os.path.join(os.path.dirname(os.path.realpath(gate_policy.__file__)), "kill-forward")
-        # sleep ignores argv[0], so ps shows it as a kubectl port-forward
-        forward = subprocess.Popen(["kubectl -n x port-forward svc/a 0:80", "30"],
-                                   executable=shutil.which("sleep"))
-        other = subprocess.Popen(["sleep", "30"])
+        tool = os.path.join(os.path.dirname(os.path.realpath(gate_policy.__file__)), "kill-own")
+        # a detached sleep reparents to PID 1 without a terminal: a leftover
+        out = subprocess.run(["sh", "-c", "sleep 30 >/dev/null 2>&1 & echo $!"], capture_output=True,
+                             text=True, start_new_session=True).stdout.strip()
+
+        def alive():
+            return subprocess.run(["kill", "-0", out], stderr=subprocess.DEVNULL).returncode == 0
         try:
             listed = subprocess.run([sys.executable, tool, "--list"], capture_output=True, text=True)
-            self.assertIn(str(forward.pid), [l.split("\t")[0] for l in listed.stdout.splitlines()])
-            refused = subprocess.run([sys.executable, tool, str(forward.pid), str(other.pid)],
-                                     stderr=subprocess.DEVNULL)
-            self.assertEqual((refused.returncode, forward.poll(), other.poll()), (2, None, None))
-            stopped = subprocess.run([sys.executable, tool, str(forward.pid)])
-            self.assertEqual((stopped.returncode, forward.wait(5), other.poll()), (0, -15, None))
+            self.assertIn(out, [l.split("\t")[0] for l in listed.stdout.splitlines()])
+            refused = subprocess.run([sys.executable, tool, out, "1"], stderr=subprocess.DEVNULL)
+            self.assertEqual((refused.returncode, alive()), (2, True))
+            stopped = subprocess.run([sys.executable, tool, out])
+            self.assertEqual(stopped.returncode, 0)
+            for _ in range(50):
+                if not alive():
+                    break
+                import time
+                time.sleep(0.1)
+            self.assertFalse(alive())
         finally:
-            for p in (forward, other):
-                if p.poll() is None:
-                    p.terminate()
-                p.wait()
+            if alive():
+                os.kill(int(out), 15)
 
     def test_heredoc_sql_file_written_after_cd_is_classed(self):
         cmd = "cd {wt} && cat > q.sql <<'EOF'\nDR" "OP TABLE t;\nEOF\npsql -f q.sql"
