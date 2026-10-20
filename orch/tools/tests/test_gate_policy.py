@@ -1656,10 +1656,11 @@ class DestructiveWorkingDirectoryTest(unittest.TestCase):
     @unittest.skipUnless(sys.platform == "darwin", "kill-own decides only on macOS")
     def test_kill_own_stops_only_when_every_pid_is_eligible(self):
         import subprocess
+        import time
         tool = os.path.join(os.path.dirname(os.path.realpath(gate_policy.__file__)), "kill-own")
         # a detached sleep reparents to PID 1 without a terminal: a leftover
         out = subprocess.run(["sh", "-c", "sleep 30 >/dev/null 2>&1 & echo $!"], capture_output=True,
-                             text=True, start_new_session=True).stdout.strip()
+                             text=True, start_new_session=True, cwd=tempfile.gettempdir()).stdout.strip()
 
         def alive():
             return subprocess.run(["kill", "-0", out], stderr=subprocess.DEVNULL).returncode == 0
@@ -1673,7 +1674,6 @@ class DestructiveWorkingDirectoryTest(unittest.TestCase):
             for _ in range(50):
                 if not alive():
                     break
-                import time
                 time.sleep(0.1)
             self.assertFalse(alive())
         finally:

@@ -27,8 +27,8 @@ def _ps(columns):
 
 
 def processes():
-    """{pid: (uid, ppid, tty, elapsed, comm, args)}; comm is the intact
-    executable path, read in its own ps call because it may hold spaces."""
+    """{pid: (uid, ppid, tty, elapsed, comm, args)}; comm is argv[0] as ps
+    shows it, read in its own ps call because it may hold spaces."""
     comms = {}
     for line in _ps("pid=,comm="):
         pid, _, comm = line.strip().partition(" ")
