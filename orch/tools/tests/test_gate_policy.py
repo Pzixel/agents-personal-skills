@@ -1534,7 +1534,7 @@ class DestructiveWorkingDirectoryTest(unittest.TestCase):
         })
 
     def test_kill_own_accepts_only_own_leftovers(self):
-        me, home = 501, "/Users/u"
+        me = 501
         rows = {
             "1": (0, "0", "??", "9", "/sbin/launchd", "/sbin/launchd"),
             # Terminal -> login -> -zsh -> claude (session) -> zsh -c -> caller
@@ -1545,28 +1545,40 @@ class DestructiveWorkingDirectoryTest(unittest.TestCase):
             "14": (me, "13", "??", "9", "/bin/zsh", "/bin/zsh -c source /Users/u/.claude-accounts/x.sh"),
             "15": (me, "14", "??", "9", "python3", "python3 kill-own 20"),
             "16": (me, "14", "??", "9", "/usr/bin/node", "node /w/node_modules/.bin/vite"),
-            # orphans: plain leftover, its child, one with a tty child, one with an agent child
+            # orphans in a work tree: a leftover, its child, a temp-dir leftover
             "20": (me, "1", "??", "9", "./target/debug/collect", "./target/debug/collect"),
             "21": (me, "20", "??", "9", "sleep", "sleep 9"),
+            "25": (me, "1", "??", "9", "sleep", "sleep 9"),
+            # refused: tty child, agent child (codex.js), another session's job (native path)
             "22": (me, "1", "??", "9", "/usr/bin/tmux", "tmux"),
             "23": (me, "22", "ttys009", "9", "-zsh", "-zsh"),
             "24": (me, "1", "??", "9", "/usr/bin/node", "node /x/@openai/codex/bin/codex.js"),
-            # another live session (native installer path with spaces elsewhere) and its job
             "30": (me, "1", "??", "9", "/Users/u/.local/share/claude/versions/2.1.0", "claude"),
             "31": (me, "30", "??", "9", "sleep", "sleep 9"),
-            # launchd job, app and home Library binaries, other user
+            # refused: launchd job, cwd outside git and temp, unknown cwd, other user
             "40": (me, "1", "??", "9", "/usr/local/bin/agentd", "agentd"),
-            "41": (me, "1", "??", "9", "/Users/u/Applications/My App.app/Contents/MacOS/My App", "My"),
-            "42": (me, "1", "??", "9", "/Users/u/Library/Application Support/x/jetbrainsd", "jetbrainsd"),
+            "41": (me, "1", "??", "9", "/opt/updater", "updater"),
+            "42": (me, "1", "??", "9", "/opt/daemon", "daemon"),
             "43": (0, "1", "??", "9", "/opt/x", "x"),
-            # not an agent: a helper path holding .codex
+            # not an agent although its path holds .codex
             "44": (me, "1", "??", "9", "/Users/u/.codex/plugins/helper", "/Users/u/.codex/plugins/helper"),
         }
-        allowed = {"16", "20", "21", "44"}
-        why = gate_policy.own_kill_refusals(list(rows) + ["x1", "99"], rows, {"40"}, "15", me, "darwin", home)
-        self.assertEqual({p for p, r in why.items() if r is None}, allowed)
-        self.assertIn("live agent session 30", why["31"])
-        linux = gate_policy.own_kill_refusals(["20"], rows, set(), "15", me, "linux", home)
+        cwds = {"10": "/", "20": "/w/repo/sub", "22": "/w/repo", "24": "/w/repo", "30": "/w/repo",
+                "25": "/private/tmp/x", "40": "/w/repo", "41": "/Users/u/Library", "43": "/w/repo",
+                "44": "/w/repository"}
+        why = gate_policy.own_kill_refusals(list(rows) + ["x1", "99"], rows, {"40"}, "15", me, "darwin",
+                                            cwds, {"/w/repo"}, {"/private/tmp"})
+        self.assertEqual({p for p, r in why.items() if r is None}, {"16", "20", "21", "25"})
+        expected = {"x1": "no such process", "99": "no such process", "43": "another user",
+                    "13": "caller or its ancestor", "10": "caller or its ancestor",
+                    "22": "terminal ttys009", "24": "agent session", "31": "live agent session 30",
+                    "40": "launchd job", "41": "outside a git work tree", "44": "outside a git work tree",
+                    "42": "is unknown"}
+        for pid, reason in expected.items():
+            with self.subTest(pid=pid):
+                self.assertIn(reason, why[pid])
+        linux = gate_policy.own_kill_refusals(["20"], rows, set(), "15", me, "linux",
+                                              cwds, {"/w/repo"}, {"/private/tmp"})
         self.assertIn("only on macOS", linux["20"])
 
     def test_git_discards_only_in_an_agent_worktree(self):

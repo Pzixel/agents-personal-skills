@@ -2510,7 +2510,6 @@ def _is_own_tool(head, ctx, name):
 
 
 _AGENT_NAMES = ("claude", "codex")
-_SYSTEM_PREFIXES = ("/System/", "/Applications/", "/Library/", "/usr/libexec/", "/usr/sbin/", "/sbin/")
 
 
 def _is_agent(comm, args):
@@ -2528,16 +2527,24 @@ def _is_agent(comm, args):
     return False
 
 
-def own_kill_refusals(pids, rows, launchd, caller, uid, platform, home):
+def _inside(path, roots):
+    """True when ``path`` is one of ``roots`` or below one."""
+    return any(path == r or path.startswith(r.rstrip("/") + "/") for r in roots)
+
+
+def own_kill_refusals(pids, rows, launchd, caller, uid, platform, cwds, git_dirs, temp_dirs):
     """{pid: None when kill-own may SIGTERM it, else the reason}.
 
     ``rows`` is ``{pid: (uid, ppid, tty, elapsed, comm, args)}`` from one ps
     snapshot (str pids, tty ``??`` when none), ``launchd`` the set of pids
-    ``launchctl list`` shows, ``caller`` the pid of the calling process.
-    A pid is allowed when it is the caller's uid, not the caller or its
-    ancestor, its subtree holds no tty and no agent, and its parent chain
-    reaches the caller's agent session or reaches PID 1 through no agent with
-    a top process that is neither a launchd job nor a system or app binary."""
+    ``launchctl list`` shows, ``caller`` the pid of the calling process,
+    ``cwds`` the working directory of processes whose parent is PID 1,
+    ``git_dirs`` the directories that hold a ``.git`` entry, ``temp_dirs`` the
+    resolved temp directories. A pid is allowed when it is the caller's uid,
+    not the caller or its ancestor, its subtree holds no tty and no agent, and
+    its parent chain reaches the caller's agent session or reaches PID 1
+    through no agent with a top process that is not a launchd job and whose
+    working directory lies in a git work tree or a temp directory."""
     if platform != "darwin":
         return {p: p + ": kill-own decides only on macOS" for p in pids}
     children = {}
@@ -2553,7 +2560,6 @@ def own_kill_refusals(pids, rows, launchd, caller, uid, platform, home):
 
     ancestors = chain(caller)
     root = next((p for p in ancestors[1:] if _is_agent(rows[p][4], rows[p][5])), None)
-    excluded = _SYSTEM_PREFIXES + (os.path.join(home, "Library") + "/",)
 
     def refusal(pid):
         if not pid.isdigit() or pid not in rows:
@@ -2585,9 +2591,11 @@ def own_kill_refusals(pids, rows, launchd, caller, uid, platform, home):
             top = p
         if top in launchd:
             return pid + ": its top process " + top + " is a launchd job"
-        comm = rows[top][4]
-        if comm.startswith(excluded) or ".app/Contents/" in comm:
-            return pid + ": its top process " + top + " is a system or app binary: " + comm
+        cwd = cwds.get(top)
+        if cwd is None:
+            return pid + ": working directory of its top process " + top + " is unknown"
+        if not (_inside(cwd, git_dirs) or _inside(cwd, temp_dirs)):
+            return pid + ": its top process " + top + " runs outside a git work tree and temp: " + cwd
         return None
 
     return {p: refusal(p) for p in pids}

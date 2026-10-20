@@ -15,6 +15,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import gate_policy  # noqa: E402
@@ -62,10 +63,28 @@ def cwds(pids):
     return found
 
 
+def git_dirs(paths):
+    """Directories among ``paths`` and their ancestors that hold ``.git``."""
+    found = set()
+    for path in paths:
+        d = path
+        while True:
+            if os.path.lexists(os.path.join(d, ".git")):
+                found.add(d)
+                break
+            if os.path.dirname(d) == d:
+                break
+            d = os.path.dirname(d)
+    return found
+
+
 def main(argv):
     rows = processes()
-    facts = (rows, launchd_pids(), str(os.getpid()), os.getuid(), sys.platform,
-             os.path.expanduser("~"))
+    uid = os.getuid()
+    tops = cwds([p for p, r in rows.items() if r[1] == "1" and r[0] == uid])
+    temps = {os.path.realpath(t) for t in ("/tmp", "/private/tmp", tempfile.gettempdir())}
+    facts = (rows, launchd_pids(), str(os.getpid()), uid, sys.platform,
+             tops, git_dirs(set(tops.values())), temps)
     if not argv or argv == ["--list"]:
         verdicts = gate_policy.own_kill_refusals(list(rows), *facts)
         eligible = sorted((p for p, why in verdicts.items() if why is None), key=int)
@@ -80,7 +99,10 @@ def main(argv):
             print("kill-own: refused " + r, file=sys.stderr)
         return 2
     for pid in argv:
-        os.kill(int(pid), signal.SIGTERM)
+        try:
+            os.kill(int(pid), signal.SIGTERM)
+        except ProcessLookupError:
+            pass  # already gone, e.g. a child that exited with its parent
     return 0
 
 
