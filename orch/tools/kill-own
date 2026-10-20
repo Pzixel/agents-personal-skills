@@ -11,6 +11,7 @@ Without arguments, or with --list, prints the eligible processes
 """
 
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -63,6 +64,25 @@ def cwds(pids):
     return found
 
 
+def session_markers():
+    """{pid: CLAUDE_PID or None} for processes whose environment ps shows.
+    ``ps -E`` appends the environment to the command with no delimiter, so the
+    environment is the part after the plain command; a pid whose line does
+    not start with its plain command is left out as unreadable."""
+    def lines(extra):
+        out = subprocess.run(["ps", "-A", "-ww"] + extra + ["-o", "pid=,command="],
+                             capture_output=True, text=True, check=True).stdout
+        return dict(line.strip().partition(" ")[::2] for line in out.splitlines())
+    plain, full = lines([]), lines(["-E"])
+    found = {}
+    for pid, command in plain.items():
+        if pid in full and full[pid].startswith(command):
+            env = full[pid][len(command):]
+            hits = re.findall(r"(?:^|\s)CLAUDE_PID=(\d+)(?=\s|$)", env)
+            found[pid] = hits[-1] if hits else None
+    return found
+
+
 def git_dirs(paths):
     """Directories among ``paths`` and their ancestors that hold ``.git``."""
     found = set()
@@ -84,7 +104,8 @@ def main(argv):
     tops = cwds([p for p, r in rows.items() if r[1] == "1" and r[0] == uid])
     temps = {os.path.realpath(t) for t in ("/tmp", "/private/tmp", tempfile.gettempdir())}
     facts = (rows, launchd_pids(), str(os.getpid()), uid, sys.platform,
-             tops, git_dirs(set(tops.values())), temps)
+             tops, git_dirs(set(tops.values())), temps, session_markers(),
+             os.environ.get("CLAUDE_PID"))
     if not argv or argv == ["--list"]:
         verdicts = gate_policy.own_kill_refusals(list(rows), *facts)
         eligible = sorted((p for p, why in verdicts.items() if why is None), key=int)

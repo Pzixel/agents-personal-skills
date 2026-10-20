@@ -2532,7 +2532,8 @@ def _inside(path, roots):
     return any(path == r or path.startswith(r.rstrip("/") + "/") for r in roots)
 
 
-def own_kill_refusals(pids, rows, launchd, caller, uid, platform, cwds, git_dirs, temp_dirs):
+def own_kill_refusals(pids, rows, launchd, caller, uid, platform, cwds, git_dirs, temp_dirs,
+                      markers, session):
     """{pid: None when kill-own may SIGTERM it, else the reason}.
 
     ``rows`` is ``{pid: (uid, ppid, tty, elapsed, comm, args)}`` from one ps
@@ -2540,11 +2541,16 @@ def own_kill_refusals(pids, rows, launchd, caller, uid, platform, cwds, git_dirs
     ``launchctl list`` shows, ``caller`` the pid of the calling process,
     ``cwds`` the working directory of processes whose parent is PID 1,
     ``git_dirs`` the directories that hold a ``.git`` entry, ``temp_dirs`` the
-    resolved temp directories. A pid is allowed when it is the caller's uid,
+    resolved temp directories, ``markers`` the ``CLAUDE_PID`` value in each
+    process environment that could be read (``None`` when readable without
+    one; absent when unreadable), ``session`` the caller's own ``CLAUDE_PID``.
+    A pid is allowed when it is the caller's uid,
     not the caller or its ancestor, its subtree holds no tty and no agent, and
     its parent chain reaches the caller's agent session or reaches PID 1
     through no agent with a top process that is not a launchd job and whose
-    working directory lies in a git work tree or a temp directory."""
+    working directory lies in a git work tree or a temp directory and whose
+    subtree carries at least one session marker, every marker naming the
+    caller's session or a pid no process holds any more."""
     if platform != "darwin":
         return {p: p + ": kill-own decides only on macOS" for p in pids}
     children = {}
@@ -2591,6 +2597,17 @@ def own_kill_refusals(pids, rows, launchd, caller, uid, platform, cwds, git_dirs
             top = p
         if top in launchd:
             return pid + ": its top process " + top + " is a launchd job"
+        found, todo = set(), [top]
+        while todo:
+            p = todo.pop()
+            if markers.get(p):
+                found.add(markers[p])
+            todo.extend(children.get(p, []))
+        if not found:
+            return pid + ": its top process " + top + " has no agent session marker"
+        for m in sorted(found):
+            if m != session and m in rows:
+                return pid + ": its top process " + top + " belongs to live session " + m
         cwd = cwds.get(top)
         if cwd is None:
             return pid + ": working directory of its top process " + top + " is unknown"

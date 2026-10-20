@@ -1562,23 +1562,38 @@ class DestructiveWorkingDirectoryTest(unittest.TestCase):
             "43": (0, "1", "??", "9", "/opt/x", "x"),
             # not an agent although its path holds .codex
             "44": (me, "1", "??", "9", "/Users/u/.codex/plugins/helper", "/Users/u/.codex/plugins/helper"),
+            # session markers: a shell whose child carries ours, none, another
+            # live process's in a child, an unreadable env
+            "26": (me, "1", "??", "9", "/bin/zsh", "/bin/zsh -c python3 x.py"),
+            "27": (me, "26", "??", "9", "python3", "python3 x.py"),
+            "50": (me, "1", "??", "9", "python3", "python3 y.py"),
+            "51": (me, "1", "??", "9", "/bin/zsh", "/bin/zsh -c python3 z.py"),
+            "52": (me, "51", "??", "9", "python3", "python3 z.py"),
+            "53": (me, "1", "??", "9", "sleep", "sleep 9"),
         }
+        # 13 is the caller's session; 777 no longer exists; 10 is a live process
+        markers = {"20": "13", "21": "13", "25": "777", "26": None, "27": "13", "50": None,
+                   "51": "13", "52": "10", "22": "13", "24": "13", "30": "13", "40": "13",
+                   "41": "13", "42": "13", "43": "13", "44": "13"}
         cwds = {"10": "/", "20": "/w/repo/sub", "22": "/w/repo", "24": "/w/repo", "30": "/w/repo",
                 "25": "/private/tmp/x", "40": "/w/repo", "41": "/Users/u/Library", "43": "/w/repo",
-                "44": "/w/repository"}
+                "44": "/w/repository", "26": "/private/tmp", "50": "/w/repo", "51": "/w/repo",
+                "53": "/private/tmp"}
         why = gate_policy.own_kill_refusals(list(rows) + ["x1", "99"], rows, {"40"}, "15", me, "darwin",
-                                            cwds, {"/w/repo"}, {"/private/tmp"})
-        self.assertEqual({p for p, r in why.items() if r is None}, {"16", "20", "21", "25"})
+                                            cwds, {"/w/repo"}, {"/private/tmp"}, markers, "13")
+        self.assertEqual({p for p, r in why.items() if r is None}, {"16", "20", "21", "25", "26", "27"})
         expected = {"x1": "no such process", "99": "no such process", "43": "another user",
                     "13": "caller or its ancestor", "10": "caller or its ancestor",
                     "22": "terminal ttys009", "24": "agent session", "31": "live agent session 30",
                     "40": "launchd job", "41": "outside a git work tree", "44": "outside a git work tree",
-                    "42": "is unknown"}
+                    "42": "is unknown", "50": "no agent session marker",
+                    "53": "no agent session marker", "52": "belongs to live session 10",
+                    "51": "belongs to live session 10"}
         for pid, reason in expected.items():
             with self.subTest(pid=pid):
                 self.assertIn(reason, why[pid])
         linux = gate_policy.own_kill_refusals(["20"], rows, set(), "15", me, "linux",
-                                              cwds, {"/w/repo"}, {"/private/tmp"})
+                                              cwds, {"/w/repo"}, {"/private/tmp"}, markers, "13")
         self.assertIn("only on macOS", linux["20"])
 
     def test_git_discards_only_in_an_agent_worktree(self):
@@ -1658,18 +1673,28 @@ class DestructiveWorkingDirectoryTest(unittest.TestCase):
         import subprocess
         import time
         tool = os.path.join(os.path.dirname(os.path.realpath(gate_policy.__file__)), "kill-own")
-        # a detached sleep reparents to PID 1 without a terminal: a leftover
-        out = subprocess.run(["sh", "-c", "sleep 30 >/dev/null 2>&1 & echo $!"], capture_output=True,
-                             text=True, start_new_session=True, cwd=tempfile.gettempdir()).stdout.strip()
+        # a detached job of this session reparents to PID 1 without a terminal
+        # and carries the session marker in its environment: a leftover
+        env = dict(os.environ, CLAUDE_PID=str(os.getpid()))
+        out = subprocess.run([sys.executable, "-c", "import subprocess,sys;print(subprocess.Popen("
+                              "[sys.executable,'-c','import time;time.sleep(30)'],"
+                              "stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).pid)"],
+                             capture_output=True, text=True, start_new_session=True, env=env,
+                             cwd=tempfile.gettempdir()).stdout.strip()
 
         def alive():
             return subprocess.run(["kill", "-0", out], stderr=subprocess.DEVNULL).returncode == 0
         try:
-            listed = subprocess.run([sys.executable, tool, "--list"], capture_output=True, text=True)
+            listed = subprocess.run([sys.executable, tool, "--list"], capture_output=True, text=True,
+                                    env=env)
             self.assertIn(out, [l.split("\t")[0] for l in listed.stdout.splitlines()])
-            refused = subprocess.run([sys.executable, tool, out, "1"], stderr=subprocess.DEVNULL)
+            refused = subprocess.run([sys.executable, tool, out, "1"], stderr=subprocess.DEVNULL, env=env)
             self.assertEqual((refused.returncode, alive()), (2, True))
-            stopped = subprocess.run([sys.executable, tool, out])
+            other = subprocess.run([sys.executable, tool, out], capture_output=True, text=True,
+                                   env=dict(env, CLAUDE_PID="1"))
+            self.assertEqual((other.returncode, alive()), (2, True))
+            self.assertIn("belongs to live session " + str(os.getpid()), other.stderr)
+            stopped = subprocess.run([sys.executable, tool, out], env=env)
             self.assertEqual(stopped.returncode, 0)
             for _ in range(50):
                 if not alive():
