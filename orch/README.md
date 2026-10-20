@@ -92,7 +92,8 @@ Hooks enforce the gates; an agent obeys a refusal's message and never works arou
 - Final reply: the Stop hook `reply-lint` returns once a completion claim without its
   observation, a reply that leaves work waiting on the owner's choice, answer or approval
   in plain text (decide it if it is inside the agent's authority, otherwise ask through
-  `AskUserQuestion` with self-contained options), or a deferral of work the agent could do
+  `AskUserQuestion` with self-contained options, written in the language the agent's rules set
+  for chat replies), or a deferral of work the agent could do
   this turn that waits on nothing and names no issue, PR or handoff file; it asks for an
   addendum with only the missing part. The hand-off and deferral judgements are one nested
   `claude -p --model haiku` call that sees only the final reply (prompt in

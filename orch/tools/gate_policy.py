@@ -1752,7 +1752,9 @@ _HANDOFF_REASON = (
     "(\"{sentence}\"). If the decision is inside your authority (a technical question by the "
     "authority rule, or a tunable), decide it, do it now and report it. Otherwise ask now with the "
     "AskUserQuestion tool: each option self-contained (what the owner sees change, the "
-    "deciding numbers, your recommendation first), never a pointer to an earlier message."
+    "deciding numbers, your recommendation first), never a pointer to an earlier message. The "
+    "question and its options are a chat reply to the owner, not an artifact: write them in the "
+    "language your reply rules set for chat replies."
 )
 _JSON_FENCE_RE = re.compile(r"^```(?:json)?\s*(.*?)\s*```$", re.S)
 
