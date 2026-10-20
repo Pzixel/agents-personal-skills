@@ -65,7 +65,8 @@ def cwds(pids):
 
 
 def session_markers():
-    """{pid: CLAUDE_PID or None} for processes whose environment ps shows.
+    """{pid: set of CLAUDE_PID values} for processes whose environment ps
+    shows; every hit is kept, so a stray value can only add a refusal.
     ``ps -E`` appends the environment to the command with no delimiter, so the
     environment is the part after the plain command; a pid whose line does
     not start with its plain command is left out as unreadable."""
@@ -78,8 +79,7 @@ def session_markers():
     for pid, command in plain.items():
         if pid in full and full[pid].startswith(command):
             env = full[pid][len(command):]
-            hits = re.findall(r"(?:^|\s)CLAUDE_PID=(\d+)(?=\s|$)", env)
-            found[pid] = hits[-1] if hits else None
+            found[pid] = set(re.findall(r"(?:^|\s)CLAUDE_PID=(\d+)(?=\s|$)", env))
     return found
 
 

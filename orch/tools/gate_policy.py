@@ -2541,9 +2541,8 @@ def own_kill_refusals(pids, rows, launchd, caller, uid, platform, cwds, git_dirs
     ``launchctl list`` shows, ``caller`` the pid of the calling process,
     ``cwds`` the working directory of processes whose parent is PID 1,
     ``git_dirs`` the directories that hold a ``.git`` entry, ``temp_dirs`` the
-    resolved temp directories, ``markers`` the ``CLAUDE_PID`` value in each
-    process environment that could be read (``None`` when readable without
-    one; absent when unreadable), ``session`` the caller's own ``CLAUDE_PID``.
+    resolved temp directories, ``markers`` the set of ``CLAUDE_PID`` values found in each
+    process environment ps shows, ``session`` the caller's own ``CLAUDE_PID``.
     A pid is allowed when it is the caller's uid,
     not the caller or its ancestor, its subtree holds no tty and no agent, and
     its parent chain reaches the caller's agent session or reaches PID 1
@@ -2600,8 +2599,7 @@ def own_kill_refusals(pids, rows, launchd, caller, uid, platform, cwds, git_dirs
         found, todo = set(), [top]
         while todo:
             p = todo.pop()
-            if markers.get(p):
-                found.add(markers[p])
+            found |= markers.get(p, set())
             todo.extend(children.get(p, []))
         if not found:
             return pid + ": its top process " + top + " has no agent session marker"
