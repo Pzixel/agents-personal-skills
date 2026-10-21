@@ -136,6 +136,16 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "matcher": "Monitor",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/monitor-wait-note.py\"",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "PostToolUse": [
