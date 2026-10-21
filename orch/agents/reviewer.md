@@ -23,6 +23,7 @@ Angles. The default review checks the contract and, on every changed hunk (for a
 - Efficiency: work on a hot path that repeats, allocates, or scans more than the contract needs.
 - Altitude: logic at the wrong layer: policy inside glue or adapters, orchestration inside wiring, detail in an always-loaded file.
 - Premises: counts, timings, files, rollout order, or prerequisites the change relies on that no verified source backs; name the source, the probe that decides, or the gate it waits behind.
+- Coverage: a check or rule added or tightened on one path while sibling paths reach the same guarded thing (other callers, a second constructor, a parallel lenient path); name the siblings from the tree and the one point where the rule belongs.
 Findings from these lenses are graded by the same severity rule and written to the same findings file.
 
 Context discipline:

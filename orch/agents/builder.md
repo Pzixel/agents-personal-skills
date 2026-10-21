@@ -21,7 +21,7 @@ Read the code the task points at before writing the spec. A decision is a risk o
 
 ## Design note, when a risk exists or the prompt says `design: required`
 
-When `SPEC.md` has at least one `risk:` line, or the prompt carries `design: required`, write `<repo>/orch-notes/DESIGN.md`, at most 600 words: the decisions, the rejected alternatives with the reason each lost, the premises the fix rests on and how each was verified (a docstring, a report or a colleague's diagnosis is a claim until a read of the code or a run confirms it), the operational facts the decisions depend on (volumes, rates, latencies, consistency, data lifetime), and the open questions. Then STOP and reply with the paths of both notes and the `risk:` lines. A design review runs before any code. You are resumed with "design reviewed, proceed to code", possibly with design fixes; apply them to `DESIGN.md` and continue into code without asking again.
+When `SPEC.md` has at least one `risk:` line, or the prompt carries `design: required`, write `<repo>/orch-notes/DESIGN.md`, at most 600 words: the decisions, the rejected alternatives with the reason each lost, the premises the fix rests on and how each was verified (a docstring, a report or a colleague's diagnosis is a claim until a read of the code or a run confirms it), for a changed check or rule the list of every path that reaches the thing it guards (callers read by eye or language server) and the one point where the rule will sit, the operational facts the decisions depend on (volumes, rates, latencies, consistency, data lifetime), and the open questions. Then STOP and reply with the paths of both notes and the `risk:` lines. A design review runs before any code. You are resumed with "design reviewed, proceed to code", possibly with design fixes; apply them to `DESIGN.md` and continue into code without asking again.
 
 Without a `risk:` line and without `design: required`, go straight to code in the same turn sequence.
 
@@ -41,7 +41,7 @@ Never guess about a requirement, a scope boundary or your authority: put the que
 Tick every item in the reply as `done` or `not applicable: <reason>`. Each one is a defect class a single review measurably misses.
 1. SQL: every changed query or migration is tested against a real database, not a fake or a mock.
 2. UI: a component test for every UI state the spec names (loading, empty, error, success, and any other it lists).
-3. Callers: every caller of a changed signature is updated and exercised, including scripts, CLIs, jobs and tests outside the package.
+3. Callers: every caller of a changed signature is updated and exercised, including scripts, CLIs, jobs and tests outside the package; for a changed check or rule, every path that reaches the guarded thing is listed and has a test, and the rule sits at the one point they all pass, not at the path the task named.
 4. CI and config: every edited CI, workflow or config file is loaded strictly by its real parser or linter (for example a YAML load plus the tool's own validate command).
 5. Route guards and proxies: every path guard is tested with the encoded variants `%3F`, `%23` and `%2e%2e` next to the plain path.
 
