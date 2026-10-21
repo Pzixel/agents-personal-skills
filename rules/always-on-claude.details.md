@@ -18,7 +18,7 @@ Classified by the orch hook `deny-destructive.py` (policy `gate_policy.destructi
 
 ## Waits
 
-Run the condition once (`wait-for` exits 2 on a broken command), then Monitor in the main session. Never an LLM that ends its turn to wait; never a poll loop.
+A wait on a condition: run the condition once (`wait-for` exits 2 on a broken command), then one Monitor in the main session (up to 60 minutes; re-arm on the same run if it times out while the job lives). A wait until a clock time, or longer than one Monitor (a deploy window hours away, a nightly pass): one `CronCreate` one-shot at that time, session-only, its prompt carrying the check and the steps or the handoff path; `/schedule` when the session may close before then. Never an LLM that ends its turn to wait; never a poll loop, a `sleep` until the time, or monitors re-armed every hour. The reply names the mechanism: tool, task id, fire time, `CronList` to see it, session exit as what kills it, and the handoff file for that case.
 
 ## Secrets
 

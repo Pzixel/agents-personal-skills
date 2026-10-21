@@ -324,7 +324,9 @@ _POLL_REASON = (
     "waits on external state with a Monitor whose command prints nothing until the "
     "state is terminal, or a `watcher` agent, or background wait-for only for a few "
     "minutes (the harness kills background Bash tasks with exit 144 at its own events, "
-    "and a killed task reports nothing). Escape hatch: a line "
+    "and a killed task reports nothing). A wait until a clock time, or longer than one "
+    "Monitor (a deploy window hours away), is one `CronCreate` one-shot at that time, "
+    "named in the reply with its id. Escape hatch: a line "
     "`NO_POLL_OVERRIDE: <reason>` in the command (a reason is required); it overrides the polling heuristic "
     "only, and every use is logged."
 )
