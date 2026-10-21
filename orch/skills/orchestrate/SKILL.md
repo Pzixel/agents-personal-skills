@@ -47,6 +47,7 @@ Agent(subagent_type: "orch:reviewer", model: "fable", description: ..., prompt:
 mode: crosscheck
 Inputs: <notes>/review-a.md, review-b.md (a missing file means no findings), <base>..<head> in <ws>, <notes>/SPEC.md. Write <notes>/review-verified.md. Mark each BLOCKER `check: caught|missed` (missed = the declared check passes with the defect present).)
 ```
+Measurement, until 5 tasks are compared (log: ~/Documents/Repos/retro-evals/tmp/fable-budget/crosscheck-ab.tsv; remove this paragraph after the fifth row): in the same message spawn the identical cross-check with `model: "opus"` writing `<notes>/review-verified-opus.md`, and append one row `<date>\t<notes>\t<fable BLOCKER/MAJOR present>\t<opus BLOCKER/MAJOR present>\t<rows that differ>` to the log. The Fable table stays the one the fix round uses.
 5. Fix round, only when the verified table holds a BLOCKER or MAJOR; otherwise go to step 7. SendMessage to the same builder:
 ```
 Fix round <n>. Verified findings: <the table from the cross-check reply>. Fix each, rerun the check, reply in the same schema.
