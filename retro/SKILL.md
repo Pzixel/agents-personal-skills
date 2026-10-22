@@ -40,8 +40,13 @@ pre-registered and the comparison cost stated.
    verbatim, nothing after), one Question the agent should have asked itself
    there, a mandatory Answer form, Minimum, Not required, Fail,
    Counterexample, the confirmed wrong action and a source pointer (grader
-   and author only). Never write success as an instruction: the user's
-   "good" is a floor, any route to the Minimum passes. Ask the user to
+   and author only). The case's title and Question name the general
+   property ("a negative conclusion before the named scope is read in
+   full"), never the instance ("the residue hid a day"); the instance is a
+   subtitle, and the case names the existing rule whose boundary the
+   property widens, or states that none exists. Never write success as an
+   instruction: the user's "good" is a floor, any route to the Minimum
+   passes. Ask the user to
    confirm the Minimum with one pass and one fail example; the case decides
    nothing until confirmed.
 3. **Baseline.** k=3 subject runs per case, each a fresh headless session
@@ -77,7 +82,10 @@ pre-registered and the comparison cost stated.
    Every applied result lands in the agents-personal-skills repository (a rules file,
    skill, hook or gate) through its change flow, never only in local user files
    such as `~/.codex/AGENTS.md` or `~/.claude/user-rules.md`, unless the owner
-   says otherwise.
+   says otherwise. The change widens the boundary of the existing rule the
+   case names (its scope word: "check" to "shared thing", "deploy" to "any
+   action on a shared resource") before a new line is considered; a new
+   line is added only when the case names no rule to extend.
    A running session keeps its instruction snapshot, so its subagents
    measure the old rules: re-measure in fresh headless sessions. The live arms
    measure the placement. A live miss is a placement or wording fault; fix
