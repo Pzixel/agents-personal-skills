@@ -83,7 +83,7 @@ A question without a code change: one `orch:prod-probe` (report path in the prom
 
 ## Waiting
 
-Run the condition once in the foreground first (`wait-for` exits 2 on a broken condition). A wait over about two minutes in the main session goes to the harness `Monitor` tool; an `orch:watcher` collects the evidence after it fires, or stands in when `Monitor` is unavailable. Short waits: `~/.claude/tools/wait-for --every 30 --max 570 -- <condition>`; name terminal failure exits with `--fail-on` (`wait-for --fail-on 1 -- gh pr checks <n>` exits 3 at once on a failed check).
+Run the condition once in the foreground first (`wait-for` exits 2 on a broken condition). A wait over about two minutes in the main session goes to the harness `Monitor` tool; an `orch:watcher` collects the evidence after it fires, or stands in when `Monitor` is unavailable. Short waits: `~/.claude/tools/wait-for --every 30 --max 270 -- <condition>`; name terminal failure exits with `--fail-on` (`wait-for --fail-on 1 -- gh pr checks <n>` exits 3 at once on a failed check).
 
 ## Destructive commands
 
