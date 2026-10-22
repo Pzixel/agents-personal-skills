@@ -8,11 +8,17 @@ from chat_policy import Session, match, parse_query  # noqa: E402
 
 A = Session("25caeb48-d171-43a4-87dd-256d48fa958b", "a", ("measure-api-latency", "delivery-fixes"), 2.0)
 B = Session("25ca0000-0000-4000-8000-000000000000", "b", ("Delivery-Review",), 3.0)
-C = Session("9c06f3d5-b788-4d78-b11f-0e029bed5846", "c", (), 1.0)
+C = Session("9c06f3d5-b788-4d78-b11f-0e029bed5846", "c", ("workspace-1596",), 1.0)
 
 
 def resolve(query):
-    return [s.path for s in match(*parse_query(query), [A, B, C])]
+    """Mirror of `chat find`: the first kind with a match wins."""
+    kinds, value = parse_query(query)
+    for kind in kinds:
+        hits = [s.path for s in match(kind, value, [A, B, C])]
+        if hits:
+            return hits
+    return []
 
 
 class ChatMatchTest(unittest.TestCase):
@@ -27,6 +33,10 @@ class ChatMatchTest(unittest.TestCase):
 
     def test_ambiguous_fragment_lists_all_case_insensitively_most_recent_first(self):
         self.assertEqual(resolve("delivery"), ["b", "a"])
+
+    def test_hex_looking_title_fragment_falls_back_to_name_when_no_id_matches(self):
+        self.assertEqual(parse_query("ace-1596"), (("id", "name"), "ace-1596"))
+        self.assertEqual(resolve("ace-1596"), ["c"])
 
 
 if __name__ == "__main__":

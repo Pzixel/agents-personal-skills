@@ -7,8 +7,8 @@
 
 A name query is a case-insensitive fragment of any title the session ever had
 (renames keep old titles in the transcript). Exactly one match: `find` prints
-`path<TAB>id<TAB>current title<TAB>project dir<TAB>mtime`. Zero or several
-matches: candidates go to stderr and the exit code is 1. Subagent transcripts
+the transcript path alone on stdout and `id<TAB>latest title<TAB>project
+dir<TAB>mtime` on stderr. Zero or several matches: candidates go to stderr and the exit code is 1. Subagent transcripts
 are excluded. Transcripts live under $CLAUDE_CONFIG_DIR (default ~/.claude)/projects.
 """
 
@@ -36,16 +36,18 @@ def projects_dir():
 
 
 def titles_by_path(paths_or_root):
-    """customTitle values per transcript, in file order, via rg."""
-    cmd = ["rg", "--no-heading", "--with-filename", "-o", TITLE_RE,
+    """Distinct customTitle values per transcript, first-seen order, via rg."""
+    cmd = ["rg", "--no-heading", "--with-filename", "--null", "-o", TITLE_RE,
            "--glob", "*.jsonl", "--glob", "!**/subagents/**"]
     out = subprocess.run(cmd + list(paths_or_root), stdout=subprocess.PIPE,
                          universal_newlines=True, errors="replace").stdout
     titles = {}
     for line in out.splitlines():
-        path, _, hit = line.partition(":")
+        path, _, hit = line.partition("\0")
         title = json.loads("{" + hit + "}")["customTitle"]
-        titles.setdefault(path, []).append(title)
+        seen = titles.setdefault(path, [])
+        if title not in seen:
+            seen.append(title)
     return titles
 
 
@@ -53,24 +55,29 @@ def session(path, titles):
     return Session(os.path.basename(path)[:-6], path, tuple(titles), os.path.getmtime(path))
 
 
-def find(query):
-    root = projects_dir()
-    kind, value = parse_query(query)
+def candidates(kind, value, root):
     if kind == "id":
         paths = glob.glob(os.path.join(root, "*", value + "*.jsonl"))
         titles = titles_by_path(paths) if paths else {}
-        hits = match(kind, value, [session(p, titles.get(p, [])) for p in paths])
-        if hits or "-" in value:
-            return hits
-        kind = "name"  # a hex-looking word with no ID match may still be a title
-    titles = titles_by_path([root])
-    return match(kind, value, [session(p, t) for p, t in titles.items()])
+        return [session(p, titles.get(p, [])) for p in paths]
+    return [session(p, t) for p, t in titles_by_path([root]).items()]
+
+
+def find(query):
+    root = projects_dir()
+    kinds, value = parse_query(query)
+    hits = []
+    for kind in kinds:
+        hits = match(kind, value, candidates(kind, value, root))
+        if hits:
+            break
+    return hits
 
 
 def describe(s):
     stamp = time.strftime("%Y-%m-%d %H:%M", time.localtime(s.mtime))
     title = s.titles[-1] if s.titles else "-"
-    return "\t".join([s.path, s.id, title, os.path.basename(os.path.dirname(s.path)), stamp])
+    return "\t".join([s.id, title, os.path.basename(os.path.dirname(s.path)), stamp])
 
 
 def resolve(query):
@@ -83,7 +90,7 @@ def resolve(query):
     else:
         sys.stderr.write("%d sessions match %r, most recent first:\n" % (len(hits), query))
         for s in hits[:MAX_CANDIDATES]:
-            sys.stderr.write(describe(s) + "  [titles: " + " | ".join(s.titles) + "]\n")
+            sys.stderr.write(s.path + "\t" + describe(s) + "  [titles: " + " | ".join(s.titles) + "]\n")
         if len(hits) > MAX_CANDIDATES:
             sys.stderr.write("... %d more\n" % (len(hits) - MAX_CANDIDATES))
     sys.exit(1)
@@ -159,7 +166,9 @@ def main():
     p.add_argument("--width", type=int, default=1500, help="characters per text block")
     args = parser.parse_args()
     if args.cmd == "find":
-        print(describe(resolve(args.query)))
+        s = resolve(args.query)
+        sys.stderr.write(describe(s) + "\n")
+        print(s.path)
     elif args.cmd == "humans":
         cmd_humans(args)
     else:
