@@ -22,7 +22,6 @@ Generic agent rules measured useful as always-on text (evidence: `ORIGINS.md`, "
 - Work longer than one session is built as a thin end-to-end slice of the core logic first, shown to the owner or run through the real path before the rest exists; widen from what that check showed. A first version that is already complete in every part is the wrong shape, not thoroughness.
 - A cause given for a number (why it is low, high, or differs) is a claim of its own: reproducing the number does not verify it. State a cause as fact only after a check that rules out the alternatives; otherwise write it as an unchecked hypothesis with the check that decides it.
 - A load-bearing premise is verified in the code of the layer the question is about: a question about a screen is answered from the screen's code, about a service from that service; an adjacent layer is named as a proxy, never passed off as the answer.
-- A real disagreement between two sources of one statistic blocks it; a residue that no source explains after the main mass reconciles is not that blocker: it ships as its own labelled category with its count, every item of it inside that category, the period stays visible with that share marked however large it is, and the residue's explanation does not hold publication.
 - Parallel opinions (designers, reviewers, graders) are independent only when their briefs start from different premises; a shared skeleton in the brief predetermines convergence, and that convergence is not evidence.
 
 ## Measurement
