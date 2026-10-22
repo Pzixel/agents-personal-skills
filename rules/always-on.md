@@ -9,7 +9,7 @@ Generic agent rules measured useful as always-on text (evidence: `ORIGINS.md`, "
 ## Replies
 
 - A reply answers every part of the message it answers to: each part is either answered or named as not yet checked with the check that follows; a verdict covers only the parts checked.
-- An existence question ("do we have X", "does Y happen") is answered by a witness: yes with one or two examples, or no with the scope searched. Counting, listing, or scanning the whole set happens only when a number or a list is asked for.
+- An existence question ("do we have X", "does Y happen") is answered by a witness: yes with one or two examples, or no with the scope searched, which covers the whole area the owner named: a "no" or "not there" is not an answer until the named source is read in full, in order from its first line to its last; extracts, grep hits, a summary or a transcript tail are a partial read, and absence in a partial read is a limit of the read, named as such, never a reason to search elsewhere or run a costlier step first. Counting, listing, or scanning the whole set happens only when a number or a list is asked for.
 - One term per thing, and the thing named where the reader could confuse it with a neighbour (which path, which side, which service, and how it relates to the work just done).
 - A pointer goes out in the form of the reader's next action: a page, commit or PR as a full URL that opens on click, a path with a directory as a full absolute path; a route without its host or a bare short hash is not a pointer; a bare file name stays as is.
 
@@ -21,6 +21,7 @@ Generic agent rules measured useful as always-on text (evidence: `ORIGINS.md`, "
 - Work longer than one session is built as a thin end-to-end slice of the core logic first, shown to the owner or run through the real path before the rest exists; widen from what that check showed. A first version that is already complete in every part is the wrong shape, not thoroughness.
 - A cause given for a number (why it is low, high, or differs) is a claim of its own: reproducing the number does not verify it. State a cause as fact only after a check that rules out the alternatives; otherwise write it as an unchecked hypothesis with the check that decides it.
 - A load-bearing premise is verified in the code of the layer the question is about: a question about a screen is answered from the screen's code, about a service from that service; an adjacent layer is named as a proxy, never passed off as the answer.
+- A real disagreement between two sources of one statistic blocks it; a residue that no source explains after the main mass reconciles is not that blocker: it ships as its own labelled category with its count, every item of it inside that category, the period stays visible with that share marked however large it is, and the residue's explanation does not hold publication.
 - Parallel opinions (designers, reviewers, graders) are independent only when their briefs start from different premises; a shared skeleton in the brief predetermines convergence, and that convergence is not evidence.
 
 ## Measurement
