@@ -6,6 +6,10 @@ Supplements [`always-on.md`](always-on.md) with Claude Code mechanisms; Codex do
 
 - A `user` or `feedback` memory that holds outside this repository goes into the user-level rules file (`~/.codex/AGENTS.md` or `CLAUDE.md`) as one line (merge with an existing line, keep its scope); otherwise into project memory. One owner per fact. A one-off request is not a global rule.
 
+## Past sessions
+
+- A past Claude Code session named by ID, ID prefix or name is located and read with `~/.claude/tools/chat` (`find`, `humans`, `assistant`; `--help`), never with an ad-hoc transcript parser.
+
 ## Hooks and gates
 
 - Hooks enforce the gates; obey a refusal's message, never work around it. The merge command carries `CHECK_RAN: <what ran, result>`, `PROD_POSITION: <blast-radius dimension, production's number, source>` and `WAY_BACK: <undo, minutes>`, plus `ALWAYS_ON:` when it changes an always-on rules file, or `merge-gate` refuses it. The Stop hook `reply-lint` returns once a reply that leaves a choice or answer to the owner in plain text (decide it, or ask through AskUserQuestion with self-contained options), a completion claim without its observation, and a reply whose prose is not in the chat-reply language (hook templates and rule text are English; the reply is not) (details "Gates").

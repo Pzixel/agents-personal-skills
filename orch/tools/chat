@@ -1,0 +1,170 @@
+#!/usr/bin/env python3
+"""Read past Claude Code sessions by ID, ID prefix, pasted "Session ID:" block or name.
+
+    chat find <query>
+    chat humans <query|path> [--grep REGEX] [--width N]
+    chat assistant <query|path> FROM TO [--width N]
+
+A name query is a case-insensitive fragment of any title the session ever had
+(renames keep old titles in the transcript). Exactly one match: `find` prints
+`path<TAB>id<TAB>current title<TAB>project dir<TAB>mtime`. Zero or several
+matches: candidates go to stderr and the exit code is 1. Subagent transcripts
+are excluded. Transcripts live under $CLAUDE_CONFIG_DIR (default ~/.claude)/projects.
+"""
+
+import argparse
+import glob
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+
+from chat_policy import Session, match, parse_query  # noqa: E402
+
+MAX_CANDIDATES = 15
+NOISE_PREFIXES = ("<task-notification", "<system-reminder", "<local-command")
+TITLE_RE = r'"customTitle":"(?:[^"\\]|\\.)*"'
+
+
+def projects_dir():
+    base = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude")
+    return os.path.realpath(os.path.join(base, "projects"))
+
+
+def titles_by_path(paths_or_root):
+    """customTitle values per transcript, in file order, via rg."""
+    cmd = ["rg", "--no-heading", "--with-filename", "-o", TITLE_RE,
+           "--glob", "*.jsonl", "--glob", "!**/subagents/**"]
+    out = subprocess.run(cmd + list(paths_or_root), stdout=subprocess.PIPE,
+                         universal_newlines=True, errors="replace").stdout
+    titles = {}
+    for line in out.splitlines():
+        path, _, hit = line.partition(":")
+        title = json.loads("{" + hit + "}")["customTitle"]
+        titles.setdefault(path, []).append(title)
+    return titles
+
+
+def session(path, titles):
+    return Session(os.path.basename(path)[:-6], path, tuple(titles), os.path.getmtime(path))
+
+
+def find(query):
+    root = projects_dir()
+    kind, value = parse_query(query)
+    if kind == "id":
+        paths = glob.glob(os.path.join(root, "*", value + "*.jsonl"))
+        titles = titles_by_path(paths) if paths else {}
+        hits = match(kind, value, [session(p, titles.get(p, [])) for p in paths])
+        if hits or "-" in value:
+            return hits
+        kind = "name"  # a hex-looking word with no ID match may still be a title
+    titles = titles_by_path([root])
+    return match(kind, value, [session(p, t) for p, t in titles.items()])
+
+
+def describe(s):
+    stamp = time.strftime("%Y-%m-%d %H:%M", time.localtime(s.mtime))
+    title = s.titles[-1] if s.titles else "-"
+    return "\t".join([s.path, s.id, title, os.path.basename(os.path.dirname(s.path)), stamp])
+
+
+def resolve(query):
+    """The one matching Session; candidates on stderr and exit 1 otherwise."""
+    hits = find(query)
+    if len(hits) == 1:
+        return hits[0]
+    if not hits:
+        sys.stderr.write("no session matches %r\n" % query)
+    else:
+        sys.stderr.write("%d sessions match %r, most recent first:\n" % (len(hits), query))
+        for s in hits[:MAX_CANDIDATES]:
+            sys.stderr.write(describe(s) + "  [titles: " + " | ".join(s.titles) + "]\n")
+        if len(hits) > MAX_CANDIDATES:
+            sys.stderr.write("... %d more\n" % (len(hits) - MAX_CANDIDATES))
+    sys.exit(1)
+
+
+def transcript(query):
+    return query if os.path.isfile(query) else resolve(query).path
+
+
+def records(path):
+    with open(path, errors="replace") as f:
+        for line_no, line in enumerate(f, 1):
+            try:
+                yield line_no, json.loads(line)
+            except json.JSONDecodeError:
+                continue
+
+
+def human_text(record):
+    if record.get("type") != "user" or record.get("isSidechain"):
+        return None
+    content = record.get("message", {}).get("content")
+    if isinstance(content, list):
+        if any(isinstance(x, dict) and x.get("type") == "tool_result" for x in content):
+            return None
+        text = " ".join(x.get("text", "") for x in content if isinstance(x, dict))
+    else:
+        text = content or ""
+    text = text.strip()
+    if not text or text.startswith(NOISE_PREFIXES):
+        return None
+    return text
+
+
+def cmd_humans(args):
+    pattern = re.compile(args.grep, re.IGNORECASE) if args.grep else None
+    for line_no, record in records(transcript(args.query)):
+        text = human_text(record)
+        if text is None or (pattern and not pattern.search(text)):
+            continue
+        stamp = record.get("timestamp", "")[5:16]
+        print("L%d %s | %s" % (line_no, stamp, text[: args.width].replace("\n", " ")))
+
+
+def cmd_assistant(args):
+    for line_no, record in records(transcript(args.query)):
+        if line_no < args.start:
+            continue
+        if line_no > args.end:
+            break
+        if record.get("type") != "assistant":
+            continue
+        stamp = record.get("timestamp", "")[5:16]
+        for block in record.get("message", {}).get("content", []):
+            if isinstance(block, dict) and block.get("type") == "text" and len(block["text"]) > 40:
+                print("A L%d %s | %s\n" % (line_no, stamp, block["text"][: args.width]))
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    sub = parser.add_subparsers(dest="cmd")
+    sub.required = True
+    p = sub.add_parser("find", help="resolve a session; print its transcript path")
+    p.add_argument("query")
+    p = sub.add_parser("humans", help="human messages with line numbers")
+    p.add_argument("query")
+    p.add_argument("--grep", help="regex; print only matching messages (case-insensitive)")
+    p.add_argument("--width", type=int, default=400, help="characters per message")
+    p = sub.add_parser("assistant", help="assistant text for a line range")
+    p.add_argument("query")
+    p.add_argument("start", type=int)
+    p.add_argument("end", type=int)
+    p.add_argument("--width", type=int, default=1500, help="characters per text block")
+    args = parser.parse_args()
+    if args.cmd == "find":
+        print(describe(resolve(args.query)))
+    elif args.cmd == "humans":
+        cmd_humans(args)
+    else:
+        cmd_assistant(args)
+
+
+if __name__ == "__main__":
+    main()

@@ -14,9 +14,10 @@ repository.
   `${CLAUDE_SESSION_ID}`.
 - Codex: `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`; first record
   `session_meta` with `cwd`, `id`, `parent_thread_id`.
-- Never load a whole transcript. `scripts/humans.py <jsonl> [--grep REGEX]
-  [--width N]` prints human messages with line numbers; `scripts/assistant.py
-  <jsonl> FROM TO [--width N]` prints assistant text for a line range. Count
+- Never load a whole transcript. `~/.claude/tools/chat humans <session|jsonl>
+  [--grep REGEX] [--width N]` prints human messages with line numbers; `chat
+  assistant <session|jsonl> FROM TO [--width N]` prints assistant text for a
+  line range; `chat find <id|prefix|name>` resolves a session. Count
   a shared fork or resume prefix once. State gaps.
 - Scans over human messages: (a) correction and emphasis (negation, repeated
   asks, capitals, profanity, interruptions, status questions during an

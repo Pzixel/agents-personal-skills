@@ -121,6 +121,8 @@ Adapted from the Russian draft the owner supplied on 2026-10-09; no upstream SHA
 2026-10-19: budget line landed in reference.md section 6 (placement follows the form the winning comparison measured; CASE-19 0/3 -> 3/3).
 2026-10-19: budget line placement moved to the merge gate: a push changing an always-on rules file carries `ALWAYS_ON:` (on-demand placement live 0/3).
 
+2026-10-22: `scripts/humans.py` and `scripts/assistant.py` moved into the shared tool `orch/tools/chat` (installed as `~/.claude/tools/chat`), with session lookup by ID, ID prefix, pasted `Session ID:` block, or a fragment of any title the session ever had. Reason: agents reading a past session wrote an ad-hoc JSONL parser each time (1-6 calls per case over 13 cases in one week) because the parsers sat inside this manual-only skill. Name lookup pulls `customTitle` records with rg (0.2-0.6 s over 5 GB of transcripts, measured 2026-10-22); an always-on Claude line points agents to the tool.
+
 ### `orch`
 
 Explore agent model choice, measured 2026-09-18 on 58 held-out questions: Opus with Grep/Read output clamped by the `scout-bounds` hook scored 0.897 accuracy, 6 accepted-wrong, $0.033 per question; Sonnet (0.862) and Haiku (0.828) under the same clamp were cheaper and not significantly worse at n=58. The numbers lived in `orch/agents/Explore.md` until 2026-10-17; they are provenance, not behaviour, so they moved here.
