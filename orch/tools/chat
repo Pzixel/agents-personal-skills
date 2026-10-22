@@ -36,7 +36,7 @@ def projects_dir():
 
 
 def titles_by_path(paths_or_root):
-    """Distinct customTitle values per transcript, first-seen order, via rg."""
+    """Distinct customTitle values per transcript, last-seen order (current title last), via rg."""
     cmd = ["rg", "--no-heading", "--with-filename", "--null", "-o", TITLE_RE,
            "--glob", "*.jsonl", "--glob", "!**/subagents/**"]
     out = subprocess.run(cmd + list(paths_or_root), stdout=subprocess.PIPE,
@@ -46,8 +46,9 @@ def titles_by_path(paths_or_root):
         path, _, hit = line.partition("\0")
         title = json.loads("{" + hit + "}")["customTitle"]
         seen = titles.setdefault(path, [])
-        if title not in seen:
-            seen.append(title)
+        if title in seen:
+            seen.remove(title)
+        seen.append(title)
     return titles
 
 
