@@ -75,7 +75,7 @@
     "default": []
   },
   "model_override_rights": {
-    "_doc": "An agent's model comes from its definition in ~/.claude/agents. Only the main session (no agent type) may pass `model` to the Agent tool freely; every other spawner needs the exact (spawning type -> requested type -> model) triple listed here. A call without a `model` parameter is always allowed. Granting an exception is an entry here, not a code edit."
+    "_doc": "An agent's model comes from its definition in orch/agents. Only the main session (no agent type) may pass `model` to the Agent tool freely; every other spawner needs the exact (spawning type -> requested type -> model) triple listed here. A call without a `model` parameter is always allowed. Granting an exception is an entry here, not a code edit."
   },
   "build": {
     "_doc": "Read by the orchestrate skill: at most fix_rounds_max fix rounds per task, and the number of independent reviewers per candidate.",
