@@ -1,4 +1,5 @@
 import json
+import re
 import os
 import shutil
 import sys
@@ -536,7 +537,26 @@ class SpawnDecisionTest(unittest.TestCase):
                 for requested in ("builder", "reviewer", "prod-probe", "Plan"):
                     decision = gate_policy.spawn_decision("builder", requested, p)
                     self.assertEqual(decision["decision"], "deny")
-                    self.assertIn("may spawn only `scout`", decision["reason"])
+                    self.assertIn("may spawn only `orch:scout`", decision["reason"])
+
+    def test_refusal_texts_name_orch_agents_as_the_model_spawns_them(self):
+        # The model sees orch agents only as `orch:<type>`; a bare name or a
+        # pointer at ~/.claude/agents sends it to a type that does not exist.
+        bare = re.compile(r"`(%s)`" % "|".join(map(re.escape, gate_policy.ORCH_AGENTS)))
+        texts = [
+            v for k, v in vars(gate_policy).items()
+            if isinstance(v, str) and re.search(r"_(REASON|DENY)$", k)
+        ]
+        texts += [
+            gate_policy.spawn_decision("builder", "orch:reviewer")["reason"],
+            gate_policy.spawn_decision("", "general-purpose")["reason"],
+            gate_policy.model_override_decision("builder", "orch:scout", "opus")["reason"],
+        ]
+        self.assertIn("scout", gate_policy.ORCH_AGENTS)
+        for text in texts:
+            with self.subTest(text=text[:60]):
+                self.assertIsNone(bare.search(text))
+                self.assertNotIn("~/.claude/agents", text)
 
     def test_reviewer_may_spawn_a_search_agent(self):
         self.assertEqual(

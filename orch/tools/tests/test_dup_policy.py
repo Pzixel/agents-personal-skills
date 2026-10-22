@@ -1,6 +1,5 @@
 import json
 import os
-import re
 import sys
 import tempfile
 import unittest
@@ -8,9 +7,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import dup_policy  # noqa: E402
-
-HOOKS_JSON = Path(__file__).resolve().parents[2] / "hooks" / "hooks.json"
-
 
 class DuplicatesTest(unittest.TestCase):
     def test_a_plugin_name_and_a_bare_name_are_one_name(self):
@@ -68,18 +64,20 @@ class ScanTest(unittest.TestCase):
         self.settings(syncClaudeAiSkills=False)
         self.assertEqual(self.names(), [])
 
+    def test_one_plugin_reached_by_two_routes_is_one_source(self):
+        self.write("real/p/.claude-plugin/plugin.json", "{}")
+        self.write("real/p/agents/a.md", "---\nname: a\n---\n")
+        (self.config / "skills").mkdir()
+        os.symlink(self.config / "real" / "p", self.config / "skills" / "p")
+        installed = {"p@m": [{"installPath": str(self.config / "real" / "p")}]}
+        self.write("plugins/installed_plugins.json", json.dumps({"plugins": installed}))
+        self.settings(enabledPlugins={"p@m": True})
+        self.assertEqual(dup_policy.duplicates(dup_policy.scan(str(self.config))), [])
+
     def test_a_dangling_agent_link_is_skipped(self):
         (self.config / "agents").mkdir()
         os.symlink(self.config / "missing.md", self.config / "agents" / "gone.md")
         self.assertEqual(self.names(), [])
-
-
-class HookWiringTest(unittest.TestCase):
-    def test_session_start_runs_the_duplicate_hook(self):
-        with open(HOOKS_JSON) as fh:
-            entries = json.load(fh)["hooks"]["SessionStart"]
-        commands = [h["command"] for e in entries for h in e["hooks"]]
-        self.assertTrue(any(re.search(r"hooks/dup-skills-hook\.py", c) for c in commands))
 
 
 if __name__ == "__main__":

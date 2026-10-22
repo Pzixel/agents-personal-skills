@@ -20,6 +20,6 @@ try:
             "Skill/agent names visible from two sources (remove one copy; "
             "rerun install.sh for links into agents-personal-skills): " + "; ".join(found)
         )
-except BaseException:
+except Exception:
     pass
 sys.exit(0)

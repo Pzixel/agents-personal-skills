@@ -11,7 +11,8 @@ import json
 import os
 import re
 
-_PREFIX = re.compile(r"^[A-Za-z0-9_-]+:")
+from gate_policy import agent_type_name
+
 _NAME = re.compile(r"^name:\s*['\"]?([^'\"\n]+?)['\"]?\s*$", re.M)
 
 
@@ -22,7 +23,7 @@ def duplicates(entries):
     """
     seen = {}
     for kind, name, source in entries:
-        key = (kind, _PREFIX.sub("", name, count=1))
+        key = (kind, agent_type_name(name))
         seen.setdefault(key, [])
         if source not in seen[key]:
             seen[key].append(source)
@@ -53,7 +54,10 @@ def _dirs(path):
     return [(n, os.path.join(path, n)) for n in names]
 
 
-def _plugin_entries(root, label):
+def _plugin_entries(root):
+    # One plugin directory reached by two routes (a skills-dir link and a
+    # marketplace install) is one source: label it by its real path.
+    label = "plugin " + os.path.realpath(root)
     out = []
     for name, d in _dirs(os.path.join(root, "skills")):
         md = os.path.join(d, "SKILL.md")
@@ -80,7 +84,7 @@ def scan(config):
     skills = os.path.join(config, "skills")
     for name, d in _dirs(skills):
         if os.path.isfile(os.path.join(d, ".claude-plugin", "plugin.json")):
-            entries += _plugin_entries(d, "skills-dir plugin " + d)
+            entries += _plugin_entries(d)
         md = os.path.join(d, "SKILL.md")
         if os.path.isfile(md):
             entries.append(("skill", _frontmatter_name(md, name), d))
@@ -94,7 +98,7 @@ def scan(config):
         for install in (installed.get("plugins") or {}).get(plugin) or []:
             path = install.get("installPath")
             if path:
-                entries += _plugin_entries(path, "plugin " + plugin)
+                entries += _plugin_entries(path)
     if settings.get("syncClaudeAiSkills") is not False:
         for _, d in _dirs(os.path.join(skills, "synced")):
             manifest = _load_json(os.path.join(d, "manifest.json"))

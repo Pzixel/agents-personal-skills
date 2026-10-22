@@ -99,6 +99,18 @@ def agent_type_name(raw):
     return _AGENT_TYPE_PREFIX.sub("", (raw or "").strip(), count=1)
 
 
+# The orch plugin's agent types, read from its agents/ directory next to this
+# file; the model spawns them only as `orch:<type>`, so every text it reads
+# names them that way. Built-in types (`claude-code-guide`) stay bare.
+_ORCH_AGENTS_DIR = os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "agents")
+ORCH_AGENTS = frozenset(n[:-3] for n in os.listdir(_ORCH_AGENTS_DIR) if n.endswith(".md"))
+
+
+def agent_ref(type_name):
+    """The name the model spawns ``type_name`` by: ``orch:<type>`` for an orch type."""
+    return "orch:" + type_name if type_name in ORCH_AGENTS else type_name
+
+
 def _strip_quotes(cmd):
     """Blank out single/double-quoted spans so their contents cannot be read as
     shell structure (``grep -r "sleep" .`` must not look like a sleep call)."""
@@ -322,7 +334,7 @@ _POLL_REASON = (
     "`sleep` pacing requests is allowed. A loop inside ONE Bash call does not itself "
     "cost a model turn per iteration; repeated tool round trips do. " + _SUBAGENT_PROTOCOL + " The main session "
     "waits on external state with a Monitor whose command prints nothing until the "
-    "state is terminal, or a `watcher` agent, or background wait-for only for a few "
+    "state is terminal, or an `orch:watcher` agent, or background wait-for only for a few "
     "minutes (the harness kills background Bash tasks with exit 144 at its own events, "
     "and a killed task reports nothing). A wait until a clock time, or longer than one "
     "Monitor (a deploy window hours away), is one `CronCreate` one-shot at that time, "
@@ -518,7 +530,7 @@ _BUDGET_DENY = (
     "Main-session hands-on budget spent for this window ({calls} calls at {ctx}k "
     "context). Combine the remaining reads into ONE call -- issue the tool calls in "
     "parallel in a single message, or run one composite shell command -- or hand the "
-    "reading to an `orch:scout` or `prod-probe` subagent that carries a cheap context and "
+    "reading to an `orch:scout` or `orch:prod-probe` subagent that carries a cheap context and "
     "reports back a summary. Validation and delivery commands (git status, git diff "
     "--stat, gh pr checks without --watch, gh pr create/merge/view, git push/fetch/pull, "
     "git worktree, scout, wait-for, usage-audit, reading handoff/report markdown) "
@@ -966,7 +978,7 @@ _SKILL_DENY = (
     "Expert skills are loaded by the agent that does the work, not by the main "
     "session: `{skill}` puts {on_load_bytes} bytes of instructions into this context on "
     "load (the threshold is {threshold} bytes), and its documents add up to {docs_kb}k if read in full, for the rest of the "
-    "session. Hand the task to a `builder` or `prod-probe` agent; it loads the skill "
+    "session. Hand the task to an `orch:builder` or `orch:prod-probe` agent; it loads the skill "
     "itself. If the main session really must read it, put "
     "`SKILL_LOAD_OVERRIDE: <reason>` in your message and request the skill again."
 )
@@ -1118,13 +1130,15 @@ def is_read_call(tool, command=None):
 _UNTYPED = frozenset({"", "general-purpose", "claude"})
 
 _UNTYPED_REASON = (
-    "Untyped subagent refused (45k-token base per turn). Name a type from "
-    "~/.claude/agents whose description matches the work. If none fits, the main session "
+    "Untyped subagent refused (45k-token base per turn). Name a type from the Agent "
+    "tool's list whose description matches the work (orch types: "
+    + ", ".join("`orch:%s`" % a for a in sorted(ORCH_AGENTS))
+    + "). If none fits, the main session "
     "adds a line `AGENT_TYPE_OVERRIDE: <reason>` to the prompt (a reason is required)."
 )
 
 _SPAWN_REASON = (
-    "A `{spawner}` agent may not spawn `{requested}`: {allowed}. Spawn rights are set "
+    "Agent `{spawner}` may not spawn `{requested}`: {allowed}. Spawn rights are set "
     "per spawning type in ~/.claude/tools/orchestrate-params.json (`spawn_rights`) so "
     "that work stays on the agent that was given it. Do the part you were assigned and "
     "return what you cannot do as a question; only the main session may add a line "
@@ -1161,12 +1175,12 @@ def spawn_decision(spawner_type, requested_type, params=None):
     if allowed == "*" or requested in (allowed or []):
         return {"decision": "allow"}
 
-    listed = ", ".join("`%s`" % a for a in (allowed or []))
+    listed = ", ".join("`%s`" % agent_ref(a) for a in (allowed or []))
     phrase = ("it may spawn only " + listed) if listed else "it may not spawn agents"
     return {
         "decision": "deny",
         "reason": _SPAWN_REASON.format(
-            spawner=spawner, requested=requested, allowed=phrase
+            spawner=agent_ref(spawner), requested=agent_ref(requested), allowed=phrase
         ),
     }
 
@@ -1202,8 +1216,8 @@ def spawn_gate_decision(spawner_type, requested_type, model, prompt, params=None
 # ---------------------------------------------------------------------------
 
 _MODEL_REASON = (
-    "Repeat the Agent call without the `model` parameter. The model of a `{requested}` "
-    "is set by its definition in ~/.claude/agents/{requested}.md; a `{spawner}` agent "
+    "Repeat the Agent call without the `model` parameter. The model of `{requested}` "
+    "is set by its agent definition; agent `{spawner}` "
     "does not choose it, so passing `model` here only makes the work dearer than the "
     "type was designed to be. Exceptions are listed per (spawner, requested) pair in "
     "~/.claude/tools/orchestrate-params.json (`model_override_rights`)."
@@ -1236,7 +1250,7 @@ def model_override_decision(
         return {"decision": "allow"}
     return {
         "decision": "deny",
-        "reason": _MODEL_REASON.format(spawner=spawner, requested=requested),
+        "reason": _MODEL_REASON.format(spawner=agent_ref(spawner), requested=agent_ref(requested)),
     }
 
 
