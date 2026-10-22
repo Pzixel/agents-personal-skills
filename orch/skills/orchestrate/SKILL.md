@@ -9,7 +9,7 @@ description: Required before editing code or investigating a failure (why a test
 
 Declare every task `proof` or `ship` in the first line of the step 1 prompt.
 
-- `proof`: the deliverable is a number or a scenario on the real system. One builder, a time cap stated in the prompt (default 4 hours), no DESIGN.md, no steps 2-6; the code is throwaway unless the user promotes it, the run record is not: before the task closes the builder commits `<repo>/decisions/<slug>.md` with the version or image measured, the inputs, the commands or where the scripts live, and the numbers. A task with a numeric goal starts as `proof`.
+- `proof`: the deliverable is a number or a scenario on the real system. One builder, a time cap stated in the prompt (default 4 hours), no DESIGN.md, no steps 2-6; the code is throwaway unless the user promotes it, the run record is not: the version or image measured, the inputs, the commands or where the scripts live, and the numbers go into the body of the PR that lands the result, or, when nothing lands, appended to the one existing doc on that subject (never a new file per run); a script that will run again lives in a tracked tools directory, a one-off is named as scratch. A task with a numeric goal starts as `proof`.
 - `ship`: the full flow below.
 
 ## The flow
