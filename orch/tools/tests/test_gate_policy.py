@@ -796,7 +796,7 @@ class ReplyLintDecisionTest(unittest.TestCase):
         self.assertEqual(gate_policy.reply_lint_decision("Готово.", True)["decision"], "allow")
 
     def _lang(self, text, stop_hook_active=False):
-        return gate_policy.reply_lint_decision(text, stop_hook_active, None, gate_policy.CYRILLIC)
+        return gate_policy.reply_lint_decision(text, stop_hook_active, None, gate_policy.SCRIPTS["cyrillic"])
 
     def test_english_prose_fires_language(self):
         for text in (
@@ -833,6 +833,17 @@ class ReplyLintDecisionTest(unittest.TestCase):
             "/Users/pzixel/Documents/Repos/retro-evals/runs/baseline/CASE-43/run-1.md",
         ):
             self.assertEqual(self._lang(text)["decision"], "allow", text)
+
+    def test_reply_script_comes_from_the_user_rules_line(self):
+        self.assertIs(gate_policy.reply_script_from_rules("- Chat replies in Russian; artifacts in English."), gate_policy.SCRIPTS["cyrillic"])
+        self.assertIs(gate_policy.reply_script_from_rules("chat replies in Greek"), gate_policy.SCRIPTS["greek"])
+        for rules in ("- Chat replies in Polish; artifacts in English.", "- Chat replies in English.", "no language line", ""):
+            self.assertIsNone(gate_policy.reply_script_from_rules(rules), rules)
+
+    def test_language_counts_letters_of_any_script(self):
+        greek = gate_policy.SCRIPTS["greek"]
+        self.assertEqual(gate_policy.reply_lint_decision("Два агента запущены: один читает код retry, другой историю падений за четырнадцать дней.", False, None, greek)["rules"], ["language"])
+        self.assertEqual(gate_policy.reply_lint_decision("Δύο πράκτορες τρέχουν: ο ένας διαβάζει τον κώδικα, ο άλλος το ιστορικό.", False, None, greek)["decision"], "allow")
 
     def test_language_off_without_script_and_on_second_stop(self):
         text = "Two agents running: one reads retry code, one reads the failure history. Waiting for both of them."
