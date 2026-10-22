@@ -10,7 +10,7 @@ ID_PREFIX_RE = re.compile(r"^[0-9a-f][0-9a-f-]{3,}$", re.I)
 class Session(NamedTuple):
     id: str
     path: str
-    titles: Tuple[str, ...]  # distinct, first-seen order
+    titles: Tuple[str, ...]  # distinct, last-seen order (current title last)
     mtime: float
 
 
