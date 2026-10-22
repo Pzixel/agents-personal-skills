@@ -21,6 +21,12 @@ section labels, with a manner complement or followed by a negation.
 Only payloads whose transcript_path is a file are logged, so probes stay out.
 The reason asks for an addendum with only the missing part, never a repeat
 of the whole reply.
+A reply whose prose (no code, URLs or table lines) holds no letter of the
+chat-reply script and 40+ letters of another one is returned once with the rule
+`language` (retro 2026-10-22, CASE-43: hook templates and rule text in English
+pulled three sessions into English for 86-100% of their replies; the rule line
+alone did not hold). Harness texts in the assistant slot (`API Error:`, limit
+notices) are skipped.
 Decision: gate_policy.reply_lint_decision. Any error exits 0 with no output.
 
 Why a hook: the rule "every done carries proof" was loaded in the reviewed sessions and not applied at the moment
@@ -43,6 +49,9 @@ sys.path.insert(0, TOOLS_DIR)
 import gate_policy  # noqa: E402
 
 LOG_PATH = os.path.expanduser("~/.claude/reply-lint-log.jsonl")
+# The chat-reply language of the owner's rules (~/.codex/AGENTS.md "Chat replies in
+# Russian"); this hook is that line's enforcement, so the script lives here too.
+REPLY_SCRIPT = gate_policy.CYRILLIC
 JUDGE_ENV = "REPLY_LINT_JUDGE"
 # Under the hook's 15 s timeout; judge wall time p90 is in ORIGINS.md.
 JUDGE_TIMEOUT_S = 12
@@ -121,7 +130,7 @@ def main():
     stop_hook_active = bool(payload.get("stop_hook_active"))
     skip_judge = stop_hook_active or not gate_policy.needs_judge(text)
     verdict, judge_error = (None, None) if skip_judge else judge(text)
-    decision = gate_policy.reply_lint_decision(text, stop_hook_active, verdict)
+    decision = gate_policy.reply_lint_decision(text, stop_hook_active, verdict, REPLY_SCRIPT)
     if os.path.isfile(payload.get("transcript_path") or ""):
         log(
             {

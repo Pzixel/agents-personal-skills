@@ -795,6 +795,50 @@ class ReplyLintDecisionTest(unittest.TestCase):
     def test_second_stop_passes(self):
         self.assertEqual(gate_policy.reply_lint_decision("Готово.", True)["decision"], "allow")
 
+    def _lang(self, text, stop_hook_active=False):
+        return gate_policy.reply_lint_decision(text, stop_hook_active, None, gate_policy.CYRILLIC)
+
+    def test_english_prose_fires_language(self):
+        for text in (
+            "lever #1: inventory misbehaviours in last-week sessions not covered by current rules; blocker: none; doing: read repo workflow + session store.",
+            "Two agents running: one reads retry/re-run code, one reads 14-day failure history and pass speed on prod. Waiting for both.",
+            "Readings:\n1. New retro case: find the session, locate the switch, draft the case.\n2. Only diagnose.",
+        ):
+            d = self._lang(text)
+            self.assertEqual(d["decision"], "block", text)
+            self.assertEqual(d["rules"], ["language"], text)
+
+    def test_russian_prose_passes_language(self):
+        for text in (
+            "Два агента запущены: один читает код retry, другой историю падений за 14 дней. Жду обоих.",
+            "lever #1: инвентаризация плохих эпизодов за неделю; blocker: none; doing: читаю сессии.",
+        ):
+            self.assertEqual(self._lang(text)["decision"], "allow", text)
+
+    def test_english_only_in_code_urls_tables_passes_language(self):
+        for text in (
+            "Запустил:\n```\n$ cargo test --workspace\ntest result: ok. 42 passed; 0 failed; finished in 3.21s\n```",
+            "См. `upstream returned HTTP 500 Internal Server Error` и https://github.com/example/repo/pull/293",
+            "| workspace | object | error |\n|---|---|---|\n| ws-a | audit_log | upstream returned HTTP 500 Internal Server Error |",
+            "Ошибка: `upstream request timed out`.",
+        ):
+            self.assertEqual(self._lang(text)["decision"], "allow", text)
+
+    def test_harness_texts_and_short_tokens_pass_language(self):
+        for text in (
+            "API Error: Can't reach the API server. Check your internet connection or set a proxy.",
+            "You've reached your Fable limit. Switch to another model or wait until the limit resets.",
+            "You've hit your session limit for this period.",
+            "written run-1.md",
+            "/Users/pzixel/Documents/Repos/retro-evals/runs/baseline/CASE-43/run-1.md",
+        ):
+            self.assertEqual(self._lang(text)["decision"], "allow", text)
+
+    def test_language_off_without_script_and_on_second_stop(self):
+        text = "Two agents running: one reads retry code, one reads the failure history. Waiting for both of them."
+        self.assertEqual(gate_policy.reply_lint_decision(text, False)["decision"], "allow")
+        self.assertEqual(self._lang(text, True)["decision"], "allow")
+
     def _decide(self, text):
         return gate_policy.reply_lint_decision(text, False)["decision"]
 
