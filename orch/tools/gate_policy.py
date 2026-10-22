@@ -1901,91 +1901,13 @@ def parse_judge_verdict(cli_stdout):
     }
 
 
-# -- reply language: the prose of a chat reply is in the script of the user's chat language --
-
-# Scripts the check can tell apart from Latin prose. A chat language written in Latin
-# script maps to nothing: a letter test cannot separate two Latin-script languages, so
-# the rule stays off for it.
-SCRIPTS = {
-    "cyrillic": re.compile("[\u0400-\u04ff]"),
-    "greek": re.compile("[\u0370-\u03ff]"),
-    "armenian": re.compile("[\u0530-\u058f]"),
-    "hebrew": re.compile("[\u0590-\u05ff]"),
-    "arabic": re.compile("[\u0600-\u06ff]"),
-    "georgian": re.compile("[\u10a0-\u10ff]"),
-    "thai": re.compile("[\u0e00-\u0e7f]"),
-    "cjk": re.compile("[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]"),
-}
-_LANGUAGE_SCRIPT = {
-    "russian": "cyrillic", "ukrainian": "cyrillic", "belarusian": "cyrillic",
-    "bulgarian": "cyrillic", "serbian": "cyrillic", "macedonian": "cyrillic",
-    "kazakh": "cyrillic", "kyrgyz": "cyrillic", "mongolian": "cyrillic",
-    "greek": "greek", "armenian": "armenian", "hebrew": "hebrew",
-    "arabic": "arabic", "persian": "arabic", "urdu": "arabic", "georgian": "georgian",
-    "thai": "thai", "japanese": "cjk", "chinese": "cjk", "korean": "cjk",
-}
-# The user's own rules file names the chat language in this form; nothing else is read.
-_REPLY_LANGUAGE_LINE = re.compile(r"\bChat replies in ([A-Za-z]+)", re.IGNORECASE)
-_LETTER_RE = re.compile(r"[^\W\d_]")
-_FENCE_RE = re.compile(r"```.*?(?:```|\Z)", re.S)
-_INLINE_CODE_RE = re.compile(r"`[^`\n]*`")
-_URL_RE = re.compile(r"https?://\S+")
-_PATH_TOKEN_RE = re.compile(r"\S+/\S+")
-# Letters of prose below this count carry no language: a path, a command, a status token.
-REPLY_LANGUAGE_MIN_LETTERS = 40
-# Texts the harness puts in the assistant slot; not the agent's prose (backtest 2026-10-22,
-# 39 of 40 false fires over 10 days of sessions).
-_HARNESS_TEXT_PREFIXES = ("API Error:", "You've reached your", "You've hit your")
-
-
-def reply_script_from_rules(rules_text):
-    """The script regex of the chat language named by a line ``Chat replies in
-    <Language>`` in the user's rules text; None when no line names one or the
-    language is written in Latin script (the rule is then off)."""
-    m = _REPLY_LANGUAGE_LINE.search(rules_text or "")
-    if not m:
-        return None
-    return SCRIPTS.get(_LANGUAGE_SCRIPT.get(m.group(1).lower()))
-
-
-def reply_prose(text):
-    """The prose of a reply: no fenced or inline code, URLs, path tokens, or table lines."""
-    text = _FENCE_RE.sub(" ", text or "")
-    text = _INLINE_CODE_RE.sub(" ", text)
-    text = _URL_RE.sub(" ", text)
-    text = _PATH_TOKEN_RE.sub(" ", text)
-    return "\n".join(line for line in text.split("\n") if not line.lstrip().startswith("|"))
-
-
-def reply_language_fires(text, script_re):
-    """True when the reply's prose holds no letter of ``script_re`` and enough
-    letters of other scripts to be prose."""
-    stripped = (text or "").lstrip()
-    if stripped.startswith(_HARNESS_TEXT_PREFIXES):
-        return False
-    prose = reply_prose(stripped)
-    if script_re.search(prose):
-        return False
-    return len(_LETTER_RE.findall(prose)) >= REPLY_LANGUAGE_MIN_LETTERS
-
-
-_LANGUAGE_REASON = (
-    REPLY_LINT_MARKER + " the reply's prose is not in the chat-reply language the owner's "
-    "rules set (hook templates and rule text are English; the reply to the owner is not). "
-    "Rewrite the prose in that language; code, commands, paths, identifiers and quoted "
-    "errors stay verbatim. Send the rewritten reply only; change no file."
-)
-
-
-def reply_lint_decision(last_assistant_text, stop_hook_active, verdict=None, reply_script=None):
+def reply_lint_decision(last_assistant_text, stop_hook_active, verdict=None):
     """Return the main session once when its final reply claims completion
     without an observation, or the judge ``verdict`` (``parse_judge_verdict``,
     None when no verdict exists) finds a plain-text hand-off to the owner or an
     unbacked deferral of work. ``rules`` names every rule that fired.
     Not claims (2026-10-15): a Russian not-verified disclosure, a done word
     as a section label or with a manner complement.
-    With ``reply_script`` (``reply_script_from_rules`` of the user's rules text), a reply
-    whose prose holds no letter of that script fires ``language`` (``reply_language_fires``).
     The second stop (``stop_hook_active``) always passes."""
     text = (last_assistant_text or "").strip()
     if stop_hook_active or not text:
@@ -1993,8 +1915,6 @@ def reply_lint_decision(last_assistant_text, stop_hook_active, verdict=None, rep
     fired = []
     if _has_done_claim(text) and not _OBSERVATION_RE.search(text):
         fired.append(("claim", _CLAIM_REASON))
-    if reply_script is not None and reply_language_fires(text, reply_script):
-        fired.append(("language", _LANGUAGE_REASON))
     if verdict and verdict["handoff"]:
         fired.append(("handoff", _HANDOFF_REASON.format(sentence=verdict["sentence"].replace('"', "'"))))
     if verdict and verdict["deferral"]:
