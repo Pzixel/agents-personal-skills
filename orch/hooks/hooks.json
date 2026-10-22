@@ -128,7 +128,7 @@
         ]
       },
       {
-        "matcher": "ExitPlanMode",
+        "matcher": "ExitPlanMode|SendMessage|Agent",
         "hooks": [
           {
             "type": "command",

@@ -787,36 +787,91 @@ _PLAN_REVIEW_MISSING = (
     "premises), write the findings to %s after the last plan rewrite, rework the "
     "plan from them"
 )
+_LENS_PROMPT = (
+    "through a lens agent whose first message carries the full path `%s` and the "
+    "literal `/simplify`; it writes %s, an empty file when it finds nothing"
+)
+_DESIGN_REVIEW_MISSING = (
+    "run /simplify on the design (reuse, simplification, efficiency, altitude, "
+    "premises) " + _LENS_PROMPT + ", after the last DESIGN.md change"
+)
+_HANDOFF_REVIEW_MISSING = (
+    "%s is missing: a handoff builder at the design stage is spawned only after "
+    "step 2 ran on the design; run /simplify on it " + _LENS_PROMPT + ", and put "
+    "both findings sets (review-design.md, DESIGN.simplify.md) into the handoff prompt"
+)
 _PLAN_FAN_OUT_MISSING = (
-    "the plan has %d words, at or above plan_simplify.fan_out_min_words = %d, so "
+    "the %s has %d words, at or above plan_simplify.fan_out_min_words = %d, so "
     "/simplify needs at least %d lens agents spawned by the main session, each "
-    "lens prompt naming the plan path `%s`; found %d agents at spawn depth 1 "
+    "lens prompt naming the path `%s`; found %d agents at spawn depth 1 "
     "naming it. Spawn the lens reviewers from the main session (`orch:reviewer`, "
     "one lens or lens pair each, in one message); a subagent may not fan out"
 )
+_GO_AHEAD = re.compile(r"\Adesign reviewed\b.*proceed to code", re.I | re.S)
+_BUILDER_TYPE = re.compile(r"^(orch:)?builder$")
+_WORKSPACE_LINE = re.compile(r"^workspace:\s*(\S+)", re.M)
 
 
 def plan_review_path(plan):
     return plan[: -len(".md")] + ".simplify.md"
 
 
-def plan_simplify_decision(plan, words, plan_created, review_mtime, agents_seen, params=None):
-    """ExitPlanMode gate over observed facts: a refusal message, or None.
+def design_gate_target(tool, tool_input, recipient_type=None, recipient_prompt=""):
+    """Which builder design a tool call moves into code: (DESIGN.md path, kind) or None.
 
-    Every plan needs a `.simplify.md` written at or after its creation; a plan
-    of at least fan_out_min_words words also needs fan_out_min_agents lens
-    agents spawned by the main session and naming the plan. One refusal names
-    every unmet condition."""
+    - SendMessage to a builder whose trimmed message starts with `design
+      reviewed` and contains `proceed to code` (any case; the orchestrate
+      template's go-ahead, so a message that only mentions the phrase passes);
+      the builder is recipient_type (`builder` or `orch:builder`), recipient_prompt its
+      first user message: kind "design", the simplify pass must be fresh.
+    - Agent spawning a builder whose prompt carries `handoff:`: kind "handoff",
+      the simplify file must exist (the builder edits DESIGN.md after the pass).
+    The design is `<workspace>/orch-notes/DESIGN.md`, `<workspace>` the first
+    token of the builder prompt's `workspace:` line; no such line: None."""
+    if tool == "SendMessage":
+        if not _GO_AHEAD.search((tool_input.get("message") or "").strip()):
+            return None
+        builder, prompt, kind = recipient_type, recipient_prompt, "design"
+    elif tool == "Agent":
+        prompt = tool_input.get("prompt") or ""
+        if "handoff:" not in prompt:
+            return None
+        builder, kind = tool_input.get("subagent_type"), "handoff"
+    else:
+        return None
+    match = _WORKSPACE_LINE.search(prompt or "")
+    if not _BUILDER_TYPE.match(builder or "") or not match:
+        return None
+    return os.path.join(match.group(1), "orch-notes", "DESIGN.md"), kind
+
+
+def plan_simplify_decision(plan, words, plan_changed, review_mtime, agents_seen, params=None, kind="plan"):
+    """Simplify gate over observed facts: a refusal message, or None.
+
+    kind "plan" (ExitPlanMode), "design" (`proceed to code` to a builder) or
+    "handoff" (a builder spawned from a handoff). "plan" and "design" need a
+    `.simplify.md` written at or after plan_changed (the caller's moment of the
+    last relevant change); "handoff" needs it to exist only. A plan of at least
+    fan_out_min_words words also needs fan_out_min_agents lens agents spawned by
+    the main session and naming the plan. One refusal names every unmet
+    condition."""
     unmet = []
-    if review_mtime is None or review_mtime < plan_created:
-        unmet.append(_PLAN_REVIEW_MISSING % plan_review_path(plan))
+    review = plan_review_path(plan)
+    if kind == "handoff":
+        if review_mtime is None:
+            unmet.append(_HANDOFF_REVIEW_MISSING % (review, plan, review))
+    elif review_mtime is None or review_mtime < plan_changed:
+        unmet.append(_PLAN_REVIEW_MISSING % review if kind == "plan"
+                     else _DESIGN_REVIEW_MISSING % (plan, review))
     rule = _merged_params(params)["plan_simplify"]
     min_words, min_agents = rule["fan_out_min_words"], rule["fan_out_min_agents"]
     if words >= min_words and agents_seen < min_agents:
-        unmet.append(_PLAN_FAN_OUT_MISSING % (words, min_words, min_agents, plan, agents_seen))
+        noun = "plan" if kind == "plan" else "design"
+        unmet.append(_PLAN_FAN_OUT_MISSING % (noun, words, min_words, min_agents, plan, agents_seen))
     if not unmet:
         return None
-    return "plan-simplify-gate: %s: %s; then call ExitPlanMode again." % (plan, "; ".join(unmet))
+    tail = "then call ExitPlanMode again" if kind == "plan" else "then retry"
+    return "plan-simplify-gate: %s: %s; %s." % (plan, "; ".join(unmet), tail)
 
 
 def _cost_ceiling(agent_type, params):

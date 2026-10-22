@@ -24,16 +24,20 @@ workspace: <ws>
 files: <file:line pointers from the Explore run>
 size: <expected diff in LOC and the subsystems touched>
 check: <the run on the real path that proves the work; never only unit tests>
-Reply: commits, check, deviations, risks[], checklist, questions[].)
+Reply: commits, check, size, deviations, risks[], checklist, questions[].)
 ```
-2. Design review, when `risks[]` is non-empty or the prompt carried `design: required`; one reviewer, one round:
+2. Design review and simplify pass, when `risks[]` is non-empty or the prompt carried `design: required`; one round, both agents in one message on the same DESIGN.md revision. Load the `simplify` skill in the main session and run its lens pass on the design: a design is about 600 words (builder.md), so normally one lens agent applies all five lenses; at `plan_simplify.fan_out_min_words` words or more the fan-out of the plan rule applies (rule: superpowers-writing-plans-psilon/SKILL.md, decisions/plan-simplify-fan-out-by-plan-size.md); the reviewer checks the contract, not the lenses:
 ```
 Agent(subagent_type: "orch:reviewer", model: "fable", description: ..., prompt:
 mode: review
-Review <notes>/DESIGN.md against the task. Findings file: <notes>/review-design.md.
+Review <notes>/DESIGN.md against the task: premises verified, callers listed, risks, size. Findings file: <notes>/review-design.md.
+task: <task>)
+Agent(subagent_type: "orch:reviewer", model: "fable", description: ..., prompt:
+/simplify lens pass (reuse, simplification, efficiency, altitude, premises) on <notes>/DESIGN.md (full path), on each decision and premise. Always write <notes>/DESIGN.simplify.md, an empty file when nothing is found.
 task: <task>)
 ```
-Then, without asking the user: SendMessage the builder `design reviewed, proceed to code` plus the majors as design fixes, after one design fix round if a BLOCKER exists. Stop for the user only on a product question the spec does not settle or a BLOCKER whose options differ on money, priority, or a client-visible effect, or an irreversible effect on client data.
+Then, without asking the user: SendMessage the builder a message that starts with exactly `design reviewed, proceed to code` (the start the gate matches; any other message passes it) plus the majors of both files as design fixes; the builder applies them to DESIGN.md, the main session never edits it. After a BLOCKER design-fix round both agents rerun on the new revision. `plan-simplify-gate` refuses that go-ahead while `<notes>/DESIGN.simplify.md` is missing or its mtime is older than the last content change of DESIGN.md (max of its birth time and mtime); a lens agent counts only when its first message carries the DESIGN.md full path and the literal `/simplify`. Stop for the user only on a product question the spec does not settle or a BLOCKER whose options differ on money, priority, or a client-visible effect, or an irreversible effect on client data.
+2a. Size, on the step 1 reply and on the redelivery after a 2a return: added plus removed lines of `git diff --stat <base>..<head>` (the builder's `size:` line) against the upper bound of the step 1 prompt's `size:` range. At 3x the estimate or more (set to 3x from the owner's "several times", not measured) do not go to step 3: SendMessage the builder back to the design (reshape from reuse; step 2 reruns on the revised DESIGN.md). One return only: when the second delivery is still at 3x or more and DESIGN.md states why the size is intrinsic, go on to step 3 and carry the reason into the step 7 report. A size deviation on a fix-round reply goes into the step 7 report. A ship task with no DESIGN.md sent back to the design gets `design: required` in the return message, so the builder writes DESIGN.md first and step 2 runs on it.
 3. Two independent reviewers, in one message:
 ```
 Agent(subagent_type: "orch:reviewer", model: "fable", description: ..., prompt:
@@ -70,12 +74,12 @@ questions[]: <for the user only>
 
 ## Stop rules
 
-- One chat per task. The main session reads only agent replies: no findings files, reports or diffs. Steps 1-7 with one fix round take 6 turns (8 with a design review); only a second fix round, a question exchange or a re-spawn below adds turns.
+- One chat per task. The main session reads only agent replies: no findings files, reports or diffs. Steps 1-7 with one fix round take 6 turns (8 with a design review and simplify pass, 10 with a size return); only a second fix round, a question exchange or a re-spawn below adds turns.
 - At most 2 fix rounds, and none without a new verified finding.
 - Before step 5: when a BLOCKER is `check: missed`, instead re-spawn `orch:builder` with `effort: medium`: the step 1 prompt plus `handoff: <head>, <notes>/review-verified.md; the spec and design stand`. It does this and every later fix round.
 - A reply whose check failed: one SendMessage `the check fails: <tail>; fix and rerun, same schema`; a second failure goes to step 7.
 - `questions[]` from any agent: the main session answers technical ones by SendMessage (before step 3 only when the answer changes the code, otherwise into the report); product questions go to the user.
-- When a hook stops a builder at 220k context with a handoff file, spawn a fresh builder: the step 1 prompt plus `handoff: <file>; the spec and design stand`, and continue from the step it stopped at.
+- When a hook stops a builder at 220k context with a handoff file, spawn a fresh builder: the step 1 prompt plus `handoff: <file>; the spec and design stand`, and continue from the step it stopped at; a handoff before step 2 has passed is spawned only after step 2 ran on the design, with both findings sets in its prompt (`plan-simplify-gate` refuses a builder spawn with `handoff:` while `<notes>/DESIGN.simplify.md` does not exist; a handoff after `proceed to code` passes on its existence alone, since the builder edits DESIGN.md while applying the findings).
 
 ## Investigations
 

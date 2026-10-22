@@ -178,7 +178,7 @@
     "approvals_dir": "~/.claude/approvals"
   },
   "plan_simplify": {
-    "_doc": "plan-simplify-gate (ExitPlanMode): a plan of at least fan_out_min_words words (whitespace split) needs at least fan_out_min_agents /simplify lens agents spawned by the main session (spawn depth 1) naming the plan path. Set to 1200 from 53 plans on 2026-10-20: median 891, p75 1315, max 4187.",
+    "_doc": "plan-simplify-gate (ExitPlanMode; SendMessage to a builder starting `design reviewed` and containing `proceed to code`; Agent spawn of a builder with `handoff:`): a plan or a builder DESIGN.md of at least fan_out_min_words words (whitespace split) needs at least fan_out_min_agents /simplify lens agents spawned by the main session (spawn depth 1) naming the plan path. Set to 1200 from 53 plans on 2026-10-20: median 891, p75 1315, max 4187.",
     "fan_out_min_words": 1200,
     "fan_out_min_agents": 2
   }

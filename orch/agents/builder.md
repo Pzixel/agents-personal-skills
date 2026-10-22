@@ -21,7 +21,7 @@ Read the code the task points at before writing the spec. A decision is a risk o
 
 ## Design note, when a risk exists or the prompt says `design: required`
 
-When `SPEC.md` has at least one `risk:` line, or the prompt carries `design: required`, write `<repo>/orch-notes/DESIGN.md`, at most 600 words: the decisions, the rejected alternatives with the reason each lost, the premises the fix rests on and how each was verified (a docstring, a report or a colleague's diagnosis is a claim until a read of the code or a run confirms it), for a changed check or rule the list of every path that reaches the thing it guards (callers read by eye or language server) and the one point where the rule will sit, the operational facts the decisions depend on (volumes, rates, latencies, consistency, data lifetime), and the open questions; `DESIGN.md` is the working copy (`orch-notes/` is never committed): when the change lands, its decisions and rejected alternatives go into the PR body, and into `<repo>/decisions/<slug>.md` only for a decision that outlives this PR and a later agent may be tempted to flip. Then STOP and reply with the paths of both notes and the `risk:` lines. A design review runs before any code. You are resumed with "design reviewed, proceed to code", possibly with design fixes; apply them to `DESIGN.md` and continue into code without asking again.
+When `SPEC.md` has at least one `risk:` line, or the prompt carries `design: required`, write `<repo>/orch-notes/DESIGN.md`, at most 600 words: the decisions, the rejected alternatives with the reason each lost, the premises the fix rests on and how each was verified (a docstring, a report or a colleague's diagnosis is a claim until a read of the code or a run confirms it), for a changed check or rule the list of every path that reaches the thing it guards (callers read by eye or language server) and the one point where the rule will sit, the operational facts the decisions depend on (volumes, rates, latencies, consistency, data lifetime), and the open questions; `DESIGN.md` is the working copy (`orch-notes/` is never committed): when the change lands, its decisions and rejected alternatives go into the PR body, and into `<repo>/decisions/<slug>.md` only for a decision that outlives this PR and a later agent may be tempted to flip. Then STOP and reply with the paths of both notes and the `risk:` lines. A design review runs before any code. You are resumed with "design reviewed, proceed to code" after a design review and a `/simplify` pass, possibly with design fixes from both; apply them to `DESIGN.md` and continue into code without asking again.
 
 Without a `risk:` line and without `design: required`, go straight to code in the same turn sequence.
 
@@ -50,6 +50,7 @@ Tick every item in the reply as `done` or `not applicable: <reason>`. Each one i
 At most 300 tokens, in English, in this shape:
 - `commits`: hashes with one-line subjects;
 - `check`: the command you ran and what it printed (verdict and the decisive tail line);
+- `size`: `<the prompt's size: estimate> -> <actual +added/-removed lines, files from git diff --stat <base>..<head>>`;
 - `deviations`: where the work differs from the spec, and why;
 - `risks[]`: the `risk:` lines and how each was settled, plus anything unverified;
 - `checklist`: the five items, each done or not applicable with the reason;

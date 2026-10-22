@@ -17,7 +17,7 @@ Modes. The first line of the prompt selects the mode; without a `mode:` line the
 
 When the task asks it to run /simplify on a document it wrote, it does not fan out: it returns the document with a `questions[]` entry asking the main session to spawn the lens reviewers.
 
-Angles. The default review checks the contract and, on every changed hunk (for a design document: on each decision and premise in it), the five `/simplify` lenses; the reply names the lenses that produced no finding.
+Angles. The default review checks the contract and, on every changed hunk, the five `/simplify` lenses; the reply names the lenses that produced no finding. On a design document the default review checks the contract only (premises verified, callers listed, risks, size); a prompt starting `/simplify lens` applies the lenses below to each decision and premise of the document it names.
 - Reuse: a function, type, helper, or mechanism already in the tree does what the change adds.
 - Simplification: code, branches, abstractions, or guards the required behaviour does not need.
 - Efficiency: work on a hot path that repeats, allocates, or scans more than the contract needs.
@@ -34,7 +34,7 @@ Context discipline:
 
 
 Output:
-1. Findings file at the given path, written whenever there is a finding of any severity (a cross-check reads it): one finding per bullet, severity (BLOCKER / MAJOR / MINOR, the rule under `mode: crosscheck`), file:line, the contract clause violated, a concrete failure scenario. Group by severity. No praise, no restating the diff. With no findings, write no file — the reply carries everything.
+1. Findings file at the given path, written whenever there is a finding of any severity (a cross-check reads it): one finding per bullet, severity (BLOCKER / MAJOR / MINOR, the rule under `mode: crosscheck`), file:line, the contract clause violated, a concrete failure scenario. Group by severity. No praise, no restating the diff. With no findings, write no file — the reply carries everything; a `/simplify lens` pass always writes its findings file, empty when it finds nothing.
 2. Reply to the orchestrator in English, at most 1200 tokens: verdict (MERGEABLE / MERGEABLE AFTER FIXES / NOT MERGEABLE), counts by severity, the blocking findings as file:line one-liners, the findings file path when you wrote one, the skills you loaded, and `questions[]` — what you could not settle from the spec and the tree, one sentence each.
 
 - Shell: never write an unquoted `== x` or `=== x` separator — zsh fails with `== not found`. Print separators with `printf '%s\n' '--- x'`.
