@@ -54,7 +54,7 @@ listed twice (bare and `orch:`), and the gates treat both alike.
 - `.claude-plugin/plugin.json` — manifest; `hooks/hooks.json` is auto-discovered.
 - `skills/orchestrate/SKILL.md` — the flow.
 - `agents/` — `builder` (spec, code, check, fix rounds), `reviewer` (`mode: review`,
-  `crosscheck`, `recheck`; spawned on Fable), `Explore` (code location), `prod-probe`
+  `crosscheck`, `recheck`; spawned on Fable), `orch:scout` (code location), `prod-probe`
   (read-only evidence), `watcher` (waits on a rollout or CI run).
 - `hooks/` — each file's docstring owns its exact rule; `hooks.json` wires them.
   - `agent-type-gate.sh` — spawn rights.

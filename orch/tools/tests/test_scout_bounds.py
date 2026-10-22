@@ -17,7 +17,7 @@ class DecideTest(unittest.TestCase):
         self.assertIsNone(decide(True, None, "Grep", {"pattern": "x", "head_limit": 5}))
 
     def test_smaller_explicit_read_limit_is_preserved(self):
-        self.assertIsNone(decide(False, "Explore", "Read", {"file_path": "/a", "limit": 50}))
+        self.assertIsNone(decide(False, "scout", "Read", {"file_path": "/a", "limit": 50}))
 
     def test_missing_grep_limit_gets_the_clamp(self):
         self.assertEqual(
@@ -27,13 +27,13 @@ class DecideTest(unittest.TestCase):
 
     def test_missing_read_limit_gets_the_clamp(self):
         self.assertEqual(
-            decide(False, "Explore", "Read", {"file_path": "/a"}),
+            decide(False, "scout", "Read", {"file_path": "/a"}),
             {"file_path": "/a", "limit": 150},
         )
 
     def test_oversized_read_limit_is_clamped_keeping_other_fields(self):
         self.assertEqual(
-            decide(False, "Explore", "Read", {"file_path": "/a", "offset": 900, "limit": 2000}),
+            decide(False, "scout", "Read", {"file_path": "/a", "offset": 900, "limit": 2000}),
             {"file_path": "/a", "offset": 900, "limit": 150},
         )
 
@@ -44,7 +44,7 @@ class DecideTest(unittest.TestCase):
         self.assertIsNone(decide(False, None, "Grep", {"pattern": "x"}))
 
     def test_other_tools_are_untouched(self):
-        self.assertIsNone(decide(True, "Explore", "Bash", {"command": "rg -n x"}))
+        self.assertIsNone(decide(True, "scout", "Bash", {"command": "rg -n x"}))
 
     def test_unparseable_limit_falls_back_to_the_cap(self):
         self.assertEqual(

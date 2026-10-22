@@ -2,7 +2,7 @@
 name: prod-probe
 description: Read-only observation and measurement — production queries, inventories, equivalence checks, performance acceptance, repository maps. Runs bounded queries, writes a report file, returns a short summary. Use for every read-only evidence task (no code changes, no writes to production). One probe per evidence type; give it report sections instead of spawning parallel probes.
 model: sonnet
-tools: [Bash, Read, Grep, Glob, Write]
+tools: [LSP, Bash, Read, Grep, Glob, Write]
 effort: medium
 maxTurns: 45
 ---

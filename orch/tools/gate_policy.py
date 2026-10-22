@@ -518,7 +518,7 @@ _BUDGET_DENY = (
     "Main-session hands-on budget spent for this window ({calls} calls at {ctx}k "
     "context). Combine the remaining reads into ONE call -- issue the tool calls in "
     "parallel in a single message, or run one composite shell command -- or hand the "
-    "reading to an `Explore` or `prod-probe` subagent that carries a cheap context and "
+    "reading to an `orch:scout` or `prod-probe` subagent that carries a cheap context and "
     "reports back a summary. Validation and delivery commands (git status, git diff "
     "--stat, gh pr checks without --watch, gh pr create/merge/view, git push/fetch/pull, "
     "git worktree, scout, wait-for, usage-audit, reading handoff/report markdown) "
@@ -618,7 +618,7 @@ DEFAULT_PARAMS = {
     "cost_ceiling_usd": {"default": 6, "builder": 25},
     # Types absent from both work_agent_types and call_caps are uncapped.
     "call_caps": {
-        "Explore": {"soft": 12, "hard": 18},
+        "scout": {"soft": 12, "hard": 18},
         "prod-probe": {"soft": 25, "hard": 40},
     },
     # A `sleep` shorter than this paces requests; this long or longer is a poll.
@@ -650,7 +650,7 @@ DEFAULT_PARAMS = {
             "allow": [
                 "builder",
                 "reviewer",
-                "Explore",
+                "scout",
                 "prod-probe",
                 "watcher",
                 "claude-code-guide",
@@ -660,13 +660,17 @@ DEFAULT_PARAMS = {
                     "`Plan` is the harness's generic architect and skips the plan"
                     " contract (spec note, premises, lenses). Write the plan in the"
                     " main session with the `superpowers-writing-plans-psilon`"
-                    " skill; spawn `Explore` for code facts and `orch:reviewer`"
+                    " skill; spawn `orch:scout` for code facts and `orch:reviewer`"
                     " for the /simplify lenses."
+                ),
+                "Explore": (
+                    "`Explore` is the harness's generic explorer without the"
+                    " bounded 8-question brief; spawn `orch:scout` for code facts."
                 ),
             },
         },
-        "builder": ["Explore"],
-        "reviewer": ["Explore"],
+        "builder": ["scout"],
+        "reviewer": ["scout"],
         "default": [],
     },
     # The model of an agent comes from its definition. Listed exceptions only,
@@ -1933,7 +1937,7 @@ _BRIEF_LINES = {
 _BRIEF_REASON = (
     "Refused by brief-gate: a `{requested}` prompt needs the line(s) {missing} "
     "(each at the start of a line). `files:` = file:line pointers from one "
-    "`Explore` run; `check:` = the run on the real path that proves the work; "
+    "`orch:scout` run; `check:` = the run on the real path that proves the work; "
     "`access:` = the route to every system the probe reads. A "
     "delegate that must discover these burns its context before the deliverable "
     "(retro 2026-10-12: 30+ builders and 4 probes died that way). Add the lines, "

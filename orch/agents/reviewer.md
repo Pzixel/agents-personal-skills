@@ -3,7 +3,7 @@ name: reviewer
 description: Independent adversarial review of a branch, diff, or design document against the repository contract. Read-only on the repo; writes findings to a file and returns a verdict with file:line references. Use instead of general-purpose for every review delegation.
 model: opus
 effort: high
-tools: [Agent, Skill, Bash, Read, Grep, Glob, Write]
+tools: [Agent, Skill, LSP, Bash, Read, Grep, Glob, Write]
 maxTurns: 150
 ---
 
@@ -39,4 +39,4 @@ Output:
 
 - Shell: never write an unquoted `== x` or `=== x` separator — zsh fails with `== not found`. Print separators with `printf '%s\n' '--- x'`.
 - Waiting: a subagent never ends a turn in order to wait. The harness kills background Bash tasks with exit 144 at its own events (a typed user message, a compaction) and a killed task reports nothing; a subagent that ends its turn to wait for a task notification is never resumed, because ending the turn delivers its reply to the caller. So every command runs in the foreground, and a hook refuses `run_in_background` for subagents. A foreground command that reaches its Bash timeout (default 2 minutes) is moved to the background and its output is lost, so every command that may run longer (test suites, transcript greps, builds) is issued with `timeout: 600000` and finishes under it. Work longer than one call is a script that keeps a checkpoint on disk (cursor, counter, partial output) and runs in slices of at most ~570 s, one slice per Bash call, all calls in the same turn, each slice resuming from the checkpoint and the last one reporting. Wait for external state with `~/.claude/tools/wait-for --every 30 --max 570 -- <condition>` in the foreground (exit 0 when the condition holds, 124 on timeout), repeated in the same turn; a hook refuses a `--max` over 570 or one that outlives the call's timeout. The condition must exit 0 on the terminal state of the external operation, success or failure alike (a failed CI run is terminal, not a reason to keep waiting). A short `sleep` pacing requests is fine; a longer `sleep`, or an `until`/`while` loop around one, is polling and a hook refuses it. A final reply that says it is waiting, or leaves a background task of yours unaccounted for, is returned to you once by a SubagentStop hook.
-- Reads: a read before a judgement and a single probe (one search, one history lookup) you do yourself; a survey of four or more reads you already know you need goes as ONE batch to `Explore`. Read a whole file in one Read, not in slices; read a report by its first 40 lines; put every read you already know you need into one turn.
+- Reads: a read before a judgement and a single probe (one search, one history lookup) you do yourself; a survey of four or more reads you already know you need goes as ONE batch to `orch:scout`. Read a whole file in one Read, not in slices; read a report by its first 40 lines; put every read you already know you need into one turn.

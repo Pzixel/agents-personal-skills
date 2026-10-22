@@ -54,7 +54,7 @@ a suite run from the recorded `costUsd` means.
   and runs the flow: for a feature or a bug fix, `orch:builder`, then two `orch:reviewer`
   spawns on Fable (`mode: review`), then a cross-check (`mode: crosscheck`), all spawned by
   the main session, and the declared `check:` passes; an investigation goes to one
-  `orch:Explore` or `orch:prod-probe` and reports without fixing; `general-purpose` is never
+  `orch:scout` or `orch:prod-probe` and reports without fixing; `general-purpose` is never
   spawned.
 - **Tiers B and C — private (`evals/private/`, ignored).** Checkpoint replays cut from
   real session histories (B) and replays of merged changes on a private clone (C). They exist

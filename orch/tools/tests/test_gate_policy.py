@@ -238,18 +238,18 @@ class AgentBudgetDecisionTest(unittest.TestCase):
 
     def test_call_capped_agent_is_reminded_at_its_soft_cap(self):
         self.assertEqual(
-            gate_policy.agent_budget_decision(9000, 0.1, 12, "Explore")["decision"],
+            gate_policy.agent_budget_decision(9000, 0.1, 12, "scout")["decision"],
             "remind",
         )
 
     def test_call_capped_agent_is_stopped_at_its_hard_cap(self):
         self.assertEqual(
-            gate_policy.agent_budget_decision(9000, 0.1, 18, "Explore")["decision"], "stop"
+            gate_policy.agent_budget_decision(9000, 0.1, 18, "scout")["decision"], "stop"
         )
 
     def test_call_capped_agent_below_its_soft_cap_is_allowed(self):
         self.assertEqual(
-            gate_policy.agent_budget_decision(9000, 0.1, 11, "Explore")["decision"],
+            gate_policy.agent_budget_decision(9000, 0.1, 11, "scout")["decision"],
             "allow",
         )
 
@@ -490,7 +490,7 @@ class SpawnDecisionTest(unittest.TestCase):
     def test_main_session_may_spawn_the_flow_types(self):
         params = json.load(open(PARAMS_FILE))
         for p in (None, params):
-            for requested in ("builder", "reviewer", "Explore", "prod-probe", "watcher", "claude-code-guide"):
+            for requested in ("builder", "reviewer", "scout", "prod-probe", "watcher", "claude-code-guide"):
                 with self.subTest(params="file" if p else "defaults", requested=requested):
                     self.assertEqual(
                         gate_policy.spawn_decision("", requested, p)["decision"], "allow"
@@ -502,8 +502,16 @@ class SpawnDecisionTest(unittest.TestCase):
             with self.subTest(params="file" if p else "defaults"):
                 decision = gate_policy.spawn_decision("", "Plan", p)
                 self.assertEqual(decision["decision"], "deny")
-                for replacement in ("superpowers-writing-plans-psilon", "`Explore`", "`orch:reviewer`"):
+                for replacement in ("superpowers-writing-plans-psilon", "`orch:scout`", "`orch:reviewer`"):
                     self.assertIn(replacement, decision["reason"])
+
+    def test_the_builtin_explore_is_refused_with_the_orch_scout_replacement(self):
+        params = json.load(open(PARAMS_FILE))
+        for p in (None, params):
+            with self.subTest(params="file" if p else "defaults"):
+                decision = gate_policy.spawn_decision("", "Explore", p)
+                self.assertEqual(decision["decision"], "deny")
+                self.assertIn("`orch:scout`", decision["reason"])
 
     def test_both_default_copies_grant_main_the_same_rights(self):
         params = json.load(open(PARAMS_FILE))
@@ -522,22 +530,22 @@ class SpawnDecisionTest(unittest.TestCase):
         for p in (None, params):
             with self.subTest(params="file" if p else "defaults"):
                 self.assertEqual(
-                    gate_policy.spawn_decision("builder", "Explore", p)["decision"],
+                    gate_policy.spawn_decision("builder", "scout", p)["decision"],
                     "allow",
                 )
                 for requested in ("builder", "reviewer", "prod-probe", "Plan"):
                     decision = gate_policy.spawn_decision("builder", requested, p)
                     self.assertEqual(decision["decision"], "deny")
-                    self.assertIn("may spawn only `Explore`", decision["reason"])
+                    self.assertIn("may spawn only `scout`", decision["reason"])
 
     def test_reviewer_may_spawn_a_search_agent(self):
         self.assertEqual(
-            gate_policy.spawn_decision("reviewer", "Explore")["decision"], "allow"
+            gate_policy.spawn_decision("reviewer", "scout")["decision"], "allow"
         )
 
     def test_a_type_without_rights_may_spawn_nothing(self):
         self.assertEqual(
-            gate_policy.spawn_decision("watcher", "Explore")["decision"], "deny"
+            gate_policy.spawn_decision("watcher", "scout")["decision"], "deny"
         )
 
     def test_params_can_grant_a_type_not_granted_by_default(self):
@@ -550,12 +558,12 @@ class SpawnDecisionTest(unittest.TestCase):
     def test_params_can_withdraw_a_type_granted_by_default(self):
         params = {"spawn_rights": {"reviewer": ["prod-probe"], "default": []}}
         self.assertEqual(
-            gate_policy.spawn_decision("reviewer", "Explore", params)["decision"],
+            gate_policy.spawn_decision("reviewer", "scout", params)["decision"],
             "deny",
         )
 
 
-_SONNET_EXPLORE = {"model_override_rights": {"builder": {"Explore": ["sonnet"]}}}
+_SONNET_SCOUT = {"model_override_rights": {"builder": {"scout": ["sonnet"]}}}
 
 
 class ModelOverrideDecisionTest(unittest.TestCase):
@@ -567,20 +575,20 @@ class ModelOverrideDecisionTest(unittest.TestCase):
 
     def test_a_call_without_a_model_takes_it_from_the_definition(self):
         self.assertEqual(
-            gate_policy.model_override_decision("builder", "Explore", None)["decision"],
+            gate_policy.model_override_decision("builder", "scout", None)["decision"],
             "allow",
         )
 
     def test_a_spawner_may_not_raise_the_model_of_the_type_it_spawns(self):
         self.assertEqual(
-            gate_policy.model_override_decision("builder", "Explore", "opus")["decision"],
+            gate_policy.model_override_decision("builder", "scout", "opus")["decision"],
             "deny",
         )
 
     def test_a_listed_triple_is_allowed(self):
         self.assertEqual(
             gate_policy.model_override_decision(
-                "builder", "Explore", "sonnet", _SONNET_EXPLORE
+                "builder", "scout", "sonnet", _SONNET_SCOUT
             )["decision"],
             "allow",
         )
@@ -588,7 +596,7 @@ class ModelOverrideDecisionTest(unittest.TestCase):
     def test_a_right_for_one_requested_type_does_not_cover_another(self):
         self.assertEqual(
             gate_policy.model_override_decision(
-                "builder", "prod-probe", "sonnet", _SONNET_EXPLORE
+                "builder", "prod-probe", "sonnet", _SONNET_SCOUT
             )["decision"],
             "deny",
         )
@@ -596,7 +604,7 @@ class ModelOverrideDecisionTest(unittest.TestCase):
     def test_a_right_for_one_model_does_not_cover_another(self):
         self.assertEqual(
             gate_policy.model_override_decision(
-                "builder", "Explore", "opus", _SONNET_EXPLORE
+                "builder", "scout", "opus", _SONNET_SCOUT
             )["decision"],
             "deny",
         )
@@ -608,7 +616,7 @@ class PluginPrefixedTypeTest(unittest.TestCase):
 
     def test_prefixed_builder_keeps_the_builder_spawn_rights(self):
         self.assertEqual(
-            gate_policy.spawn_decision("orch:builder", "orch:Explore")["decision"], "allow"
+            gate_policy.spawn_decision("orch:builder", "orch:scout")["decision"], "allow"
         )
         self.assertEqual(
             gate_policy.spawn_decision("orch:builder", "orch:reviewer")["decision"],
@@ -633,7 +641,7 @@ class PluginPrefixedTypeTest(unittest.TestCase):
     def test_prefixed_pair_keeps_its_model_override_right(self):
         self.assertEqual(
             gate_policy.model_override_decision(
-                "orch:builder", "orch:Explore", "sonnet", _SONNET_EXPLORE
+                "orch:builder", "orch:scout", "sonnet", _SONNET_SCOUT
             )["decision"],
             "allow",
         )
@@ -955,7 +963,7 @@ class BriefDecisionTest(unittest.TestCase):
         self.assertEqual(gate_policy.brief_decision("prod-probe", "Measure x")["decision"], "deny")
 
     def test_other_types_are_not_gated(self):
-        self.assertEqual(gate_policy.brief_decision("Explore", "where is x")["decision"], "allow")
+        self.assertEqual(gate_policy.brief_decision("scout", "where is x")["decision"], "allow")
 
 
 class RedactSecretsTest(unittest.TestCase):

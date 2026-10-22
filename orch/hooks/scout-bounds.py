@@ -3,13 +3,13 @@
 
 Active when CLAUDE_SCOUT=1 is in the environment (scout.py sets it for its
 agentic finder stage) or when the hook payload says the calling agent is
-`Explore`. Clamps Grep head_limit to 40 and Read limit to 150 by rewriting the
+`orch:scout`. Clamps Grep head_limit to 40 and Read limit to 150 by rewriting the
 tool input; a smaller value the agent chose itself is left alone. Anything
 else, and any error at all, exits 0 silently: the hook must never block a tool
 call.
 
 Measured 2026-09-18 on 58 held-out code-search questions: the clamp took Opus
-Explore from $0.0627 to $0.0329 per question and accepted-wrong from 9 to 6.
+scout from $0.0627 to $0.0329 per question and accepted-wrong from 9 to 6.
 """
 import json
 import os
@@ -25,7 +25,7 @@ import gate_policy  # noqa: E402
 
 GREP_HEAD_LIMIT = 40
 READ_LIMIT = 150
-SCOUT_AGENT = "Explore"
+SCOUT_AGENT = "scout"
 FIELDS = {"Grep": ("head_limit", GREP_HEAD_LIMIT), "Read": ("limit", READ_LIMIT)}
 
 

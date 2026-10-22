@@ -187,7 +187,7 @@
         ]
       },
       {
-        "matcher": "^(orch:)?(builder|reviewer|prod-probe|watcher|Explore)$",
+        "matcher": "^(orch:)?(builder|reviewer|prod-probe|watcher|scout)$",
         "hooks": [
           {
             "type": "command",
