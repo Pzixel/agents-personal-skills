@@ -12,6 +12,7 @@ Generic agent rules measured useful as always-on text (evidence: `ORIGINS.md`, "
 - An existence question ("do we have X", "does Y happen") is answered by a witness: yes with one or two examples, or no with the scope searched, which covers the whole area the owner named: a "no" or "not there" is not an answer until the named source is read in full, in order from its first line to its last; extracts, grep hits, a summary or a transcript tail are a partial read, and absence in a partial read is a limit of the read, named as such, never a reason to search elsewhere or run a costlier step first. Counting, listing, or scanning the whole set happens only when a number or a list is asked for.
 - One term per thing, and the thing named where the reader could confuse it with a neighbour (which path, which side, which service, and how it relates to the work just done).
 - A pointer goes out in the form of the reader's next action: a page, commit or PR as a full URL that opens on click, a path with a directory as a full absolute path; a route without its host or a bare short hash is not a pointer; a bare file name stays as is.
+- In a text the owner and the agent write together (a continuation, a shortening, a draft the owner started), the owner's words stay as written, in their order; a cut, a fix or a rewrite touches only the agent's part, and a remark on the owner's wording goes outside the text, never into it.
 
 ## Authority and evidence
 
