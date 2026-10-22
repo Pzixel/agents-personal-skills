@@ -18,8 +18,11 @@ codex="$HOME/.agents"
 codex_rules="${CODEX_HOME:-$HOME/.codex}/AGENTS.md"
 claude="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 
-common=$(cd "$root" && echo superpowers-*-psilon dragonfly-scripting test-audit pareto-design-selection retro)
-for s in $common; do
+# Claude Code loads only the planning superpowers skill: the other four had 0 loads
+# there while orch covers their jobs (ORIGINS.md); Codex gets all five.
+shared="superpowers-writing-plans-psilon dragonfly-scripting test-audit pareto-design-selection retro"
+codex_only="superpowers-dispatching-parallel-agents-psilon superpowers-receiving-code-review-psilon superpowers-requesting-code-review-psilon superpowers-verification-before-completion-psilon"
+for s in $shared $codex_only; do
   [ -d "$root/$s" ] || { echo "Missing skill directory: $root/$s" >&2; exit 1; }
 done
 
@@ -27,10 +30,11 @@ done
 plan() {
   for t in $targets; do
     if [ "$t" = codex ]; then
-      for s in $common codex-simplify; do echo "$codex/skills/$s $s"; done
+      for s in $shared $codex_only codex-simplify; do echo "$codex/skills/$s $s"; done
     else
-      for s in $common orch; do echo "$claude/skills/$s $s"; done
-      for d in agents hooks tools; do
+      for s in $shared orch; do echo "$claude/skills/$s $s"; done
+      # orch agents reach Claude Code through the orch plugin as `orch:<name>`.
+      for d in hooks tools; do
         for e in $(cd "$root/orch/$d" && echo *); do [ "$e" = __pycache__ ] || echo "$claude/$d/$e orch/$d/$e"; done
       done
     fi
@@ -63,10 +67,21 @@ case " $targets " in
     fi ;;
 esac
 
+# The path a destination resolves to: its realpath, a link's own target when
+# dangling, or (a new file) the resolved parent plus the name.
+real_path() {
+  if [ -e "$1" ]; then realpath "$1"
+  elif [ -L "$1" ]; then
+    lt=$(readlink "$1")
+    case $lt in /*) echo "$lt" ;; *) echo "$(dirname "$1")/$lt" ;; esac
+  else mkdir -p "$(dirname "$1")"; echo "$(realpath "$(dirname "$1")")/$(basename "$1")"
+  fi
+}
+
 # Check every destination before changing anything.
 plan | while read -r dest src; do
   if [ -e "$dest" ] || [ -L "$dest" ]; then
-    [ "$(realpath "$dest" 2>/dev/null)" = "$root/$src" ] && continue
+    [ "$(real_path "$dest")" = "$root/$src" ] && continue
     echo "Conflicting destination: $dest" >&2
     if [ -L "$dest" ]; then
       echo "It links to $(readlink "$dest"); if that is an old checkout of this repository, remove the links into it first." >&2
@@ -75,17 +90,25 @@ plan | while read -r dest src; do
   fi
 done
 
-# Dangling links into this checkout are retired skills, agents, hooks or tools.
-# A directory that is itself a link (legacy whole-directory install) is the checkout; skip it.
+# Links into this checkout that the plan no longer names (retired or moved
+# skills, agents, hooks, tools; the legacy whole-directory agents link) are removed.
+planned=$(plan | cut -d' ' -f1)
+unplanned() {
+  case $(real_path "$1") in "$root"/*) ;; *) return 1 ;; esac
+  ! printf '%s\n' "$planned" | grep -qxF "$1"
+}
 for t in $targets; do
   if [ "$t" = codex ]; then dirs="$codex/skills"; else dirs="$claude/skills $claude/agents $claude/hooks $claude/tools"; fi
   for dir in $dirs; do
-    [ -d "$dir" ] && [ ! -L "$dir" ] || continue
+    if [ -L "$dir" ]; then
+      # A whole-directory link is the legacy install; only agents is retired.
+      if [ "$dir" = "$claude/agents" ] && unplanned "$dir"; then rm "$dir"; echo "removed $dir"; fi
+      continue
+    fi
+    [ -d "$dir" ] || continue
     for l in "$dir"/*; do
-      [ -L "$l" ] && [ ! -e "$l" ] || continue
-      case $(readlink "$l") in
-        "$root"/*) rm "$l"; echo "removed $l" ;;
-      esac
+      [ -L "$l" ] && unplanned "$l" || continue
+      rm "$l"; echo "removed $l"
     done
   done
 done
@@ -102,14 +125,6 @@ done
 tmp=""
 trap '[ -z "$tmp" ] || rm -f "$tmp"' EXIT
 
-real_path() {
-  if [ -e "$1" ]; then realpath "$1"
-  elif [ -L "$1" ]; then
-    lt=$(readlink "$1")
-    case $lt in /*) echo "$lt" ;; *) echo "$(dirname "$1")/$lt" ;; esac
-  else mkdir -p "$(dirname "$1")"; echo "$(realpath "$(dirname "$1")")/$(basename "$1")"
-  fi
-}
 
 # Start $tmp next to $1, carrying $1's mode when it exists (new file: 600).
 start_tmp() {
@@ -197,3 +212,15 @@ EOF
     finish_tmp "$real" "updated always-on block in $real"
   fi
 done
+
+# A skill or agent name visible from two sources (an old link, a plugin
+# install) is reported by the orch duplicate check; any line fails the run.
+case " $targets " in
+  *" claude "*)
+    dups=$(CLAUDE_CONFIG_DIR="$claude" python3 "$root/orch/tools/dup-skills")
+    if [ -n "$dups" ]; then
+      echo "$dups" >&2
+      echo "Remove one copy of each name above and rerun." >&2
+      exit 1
+    fi ;;
+esac

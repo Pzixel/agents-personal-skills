@@ -39,23 +39,23 @@ Technical questions are answered inside the flow.
 ## Install (skills-dir plugin)
 
 On macOS 13 or later, run `./install.sh claude` at the repository root ([README.md](../README.md#install-for-one-user)).
-It links this directory as `~/.claude/skills/orch` and each entry of `orch/{agents,hooks,tools}`
-into `~/.claude/{agents,hooks,tools}`, next to the user's own files.
+It links this directory as `~/.claude/skills/orch` and each entry of `orch/{hooks,tools}`
+into `~/.claude/{hooks,tools}`, next to the user's own files, so
+`~/.claude/tools/wait-for` and `~/.claude/hooks/handoff.sh` resolve. Agents are not linked:
+the plugin lists each once, as `orch:<name>`, and spawns use that name.
 
 Claude Code loads it as `orch@skills-dir` on the next session. Check with
 `claude plugin details orch` and `claude plugin validate <repo>`. A second account
 is installed with `CLAUDE_CONFIG_DIR=~/.claude-accounts/<name> ./install.sh claude`.
-Because those entries are linked,
-`~/.claude/tools/wait-for` and `~/.claude/hooks/handoff.sh` resolve; every agent is therefore
-listed twice (bare and `orch:`), and the gates treat both alike.
 
 ## Files
 
 - `.claude-plugin/plugin.json` — manifest; `hooks/hooks.json` is auto-discovered.
 - `skills/orchestrate/SKILL.md` — the flow.
-- `agents/` — `builder` (spec, code, check, fix rounds), `reviewer` (`mode: review`,
-  `crosscheck`, `recheck`; spawned on Fable), `orch:scout` (code location), `prod-probe`
-  (read-only evidence), `watcher` (waits on a rollout or CI run).
+- `agents/` — spawned as `orch:<name>`: `orch:builder` (spec, code, check, fix rounds),
+  `orch:reviewer` (`mode: review`, `crosscheck`, `recheck`; spawned on Fable), `orch:scout`
+  (code location; named so it does not collide with the built-in `Explore`), `orch:prod-probe`
+  (read-only evidence), `orch:watcher` (waits on a rollout or CI run).
 - `hooks/` — each file's docstring owns its exact rule; `hooks.json` wires them.
   - `agent-type-gate.sh` — spawn rights.
   - `agent-turn-budget.sh`/`.py`, `handoff.sh`, `handoff-only.py` — per-agent context and cost budget, handoff at the hard stop.
@@ -73,6 +73,8 @@ listed twice (bare and `orch:`), and the gates treat both alike.
   - `task-type-checklist.py` — per-task checklist injection.
   - `worktree-dirty-gate.py`, `worktree-reaper.py` — worktree hygiene.
   - `session-tools-link.py` — `~/.claude/{tools,hooks}` links in a fresh HOME (eval runs).
+  - `dup-skills-hook.py` — one context line when a skill or agent name is visible from two
+    sources (`tools/dup_policy.py`; CLI `tools/dup-skills`), silent otherwise.
   - `memory-routing.py` — memory routing reminder; not wired in `hooks.json`.
 - `tools/` — `gate_policy.py` (pure gate decisions), `orchestrate-params.json` (thresholds,
   spawn rights, build settings), `check-run`, `wait-for`, `rm-own` (removes an agent's own

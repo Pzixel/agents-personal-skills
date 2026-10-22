@@ -93,6 +93,8 @@ Verdict handling, 2026-10-14: "Fix confirmed Critical issues at once and Importa
 
 Replay eval 2026-10-14, 8 moments, rubric totals 0-32: NONE 26, OLD 27, a lens rewrite 28 that lost on one case; kept unchanged.
 
+Claude Code installs dropped, decided 2026-10-23 for `superpowers-{dispatching-parallel-agents,receiving-code-review,requesting-code-review,verification-before-completion}-psilon`: 0 Skill loads in about 8000 Claude Code transcripts since 2026-10-12, while Codex read them 49-298 times across 167 sessions in 10 days. Their jobs in Claude Code run through `orch` (the orchestrate flow, the reviewer and builder agents, the checks-before-done hook) and reply-lint, so `install.sh` links them for Codex only; `superpowers-writing-plans-psilon` (15 Claude Code loads) stays in both.
+
 ### `dragonfly-scripting`
 
 Repository-authored Dragonfly v1.34.0 Lua/EVALSHA skill grounded in a local docker lab and cited sources (`dragonfly-scripting-workbench/`). Shrunk by deletion 2026-10-14; workbench eval 3 (design a new batched operation), replayed twice per arm, met 11 of 11 expected items with the old and the shrunk body. Execution-model prose moved to `references/regime-and-design.md`.
@@ -144,6 +146,8 @@ Plan `/simplify` fan-out, decided 2026-10-20: the main session re-tasked a runni
 `Plan` refusal names the replacement, decided 2026-10-20: plan mode nudges the main session to spawn the built-in `Plan` architect, and the generic spawn refusal listed only the allowed types. `spawn_rights.main` now uses the `{"allow": ..., "deny": {type: reason}}` form; the `Plan` reason says it skips the plan contract (spec note, premises, lenses) and points at `superpowers-writing-plans-psilon`, `Explore` for code facts and `orch:reviewer` for the /simplify lenses. The Python default and `orchestrate-params.json` were made identical (the default lacked `claude-code-guide`), with a test pinning them equal. Verified by piping PreToolUse payloads through `orch/hooks/agent-type-gate.sh` with `HOME` on an empty dir so the worktree tools load: main to `Plan` got the new reason, main to `builder` and `claude-code-guide` passed, `builder` to `Plan` kept the generic refusal.
 
 Monitor waiting note, decided 2026-10-21: the main session armed a Monitor on every progress line of a job that gated itself (ten wake-ups in three minutes, no action on any) and started no independent goal item, with both waiting rules in its loaded always-on text. `monitor-wait-note.py` adds the waiting protocol as PreToolUse context on every Monitor call; it never blocks. Text harness on the episode packet (round 2): 0/3 → 3/3, controls (waits, cheap reading) held 3/3; fresh-session check: the note arrives with the call, and two of three synthetic runs that first armed a progress monitor stopped it and re-armed on the terminal event. Decision: `decisions/monitor-call-carries-the-waiting-protocol.md`.
+
+Agent names, decided 2026-10-23: agents reach Claude Code only through the plugin as `orch:<name>` (the user-level `agents/` links listed every agent twice), the code-search agent is `scout` because the built-in `Explore` collides ([decisions/orch-search-agent-named-scout-not-explore.md](decisions/orch-search-agent-named-scout-not-explore.md)), and `dup-skills` reports any skill or agent name visible from two sources at session start and in `install.sh`. `LSP` joined the tools of builder, scout, reviewer and prod-probe after a subagent listing it called `documentSymbol` directly on a Rust crate (measured 2026-10-23).
 
 ### `codex-simplify`
 
