@@ -1709,12 +1709,13 @@ class DestructiveWorkingDirectoryTest(unittest.TestCase):
         import time
         tool = os.path.join(os.path.dirname(os.path.realpath(gate_policy.__file__)), "kill-own")
         # a detached job of this session reparents to PID 1 without a terminal
+        # (it lives until this test stops it: the finally block kills it)
         # and carries the session marker in its environment: a leftover; its
         # argument CLAUDE_PID=1 names a live process and must not count
         env = dict(os.environ, CLAUDE_PID=str(os.getpid()))
         tag = "kill-own-test-" + str(os.getpid())
         out = subprocess.run([sys.executable, "-c", "import subprocess,sys;print(subprocess.Popen("
-                              "[sys.executable,'-c','import time;time.sleep(30)','CLAUDE_PID=1','" + tag + "'],"
+                              "[sys.executable,'-c','import time;time.sleep(3600)','CLAUDE_PID=1','" + tag + "'],"
                               "stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).pid)"],
                              capture_output=True, text=True, start_new_session=True, env=env,
                              cwd=tempfile.gettempdir()).stdout.strip()

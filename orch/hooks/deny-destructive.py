@@ -66,7 +66,10 @@ def main():
         path = str(tool_input.get("file_path") or tool_input.get("notebook_path") or "")
         result = gate_policy.approval_path_decision(path, os.path.expanduser("~"), params)
         if result:
-            respond(result["decision"], result["reason"])
+            reason = result["reason"]
+            if result["decision"] == "deny":
+                reason += gate_policy._NO_WORKAROUND
+            respond(result["decision"], reason)
         return
     command = str((payload.get("tool_input") or {}).get("command") or "")
     agent_type = str(payload.get("agent_type") or "")
