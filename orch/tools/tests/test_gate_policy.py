@@ -1890,6 +1890,24 @@ class FalsePositiveRulesTest(unittest.TestCase):
             with self.subTest(cmd=cmd):
                 self.assertEqual(_destructive(cmd)["decision"] == "allow", allowed)
 
+    def test_sql_client_shell_escapes_are_classed_as_shell(self):
+        for cmd, decision in [
+            ("psql -c '\\! rm -rf ~/x'", "deny"),
+            ("psql -c '\\!rm -rf ~/x'", "deny"),
+            ("psql -c 'select 1 \\g |rm -rf ~/x'", "deny"),
+            ("psql -c 'select 1 \\gx|rm -rf ~/x'", "deny"),
+            ("psql -c '\\o | rm -rf ~/x'", "deny"),
+            ("psql <<EOF\nselect 1;\n\\! rm -rf ~/x\nEOF", "deny"),
+            ("psql -c '\\! rm -rf $D'", "deny"),
+            ("psql -c 'BEGIN READ ONLY; select 1; \\i /tmp/q.sql'", "ask"),
+            ("mysql -e 'system rm -rf ~/x'", "deny"),
+            ("mysql -e 'select 1; \\! rm -rf ~/x'", "deny"),
+            ("sqlite3 db.sqlite '.shell rm -rf ~/x'", "deny"),
+            ("psql -c 'BEGIN READ ONLY; select 1; '", "allow"),
+        ]:
+            with self.subTest(cmd=cmd):
+                self.assertEqual(_destructive(cmd)["decision"], decision)
+
     def test_read_only_file_with_a_side_effect_call_is_asked(self):
         decision = gate_policy.destructive_decision(
             "psql -f /tmp/q.sql", "", None, None, sql_file_texts={"/tmp/q.sql": "SELECT pg_reload_conf();"})

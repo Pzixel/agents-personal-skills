@@ -2616,10 +2616,46 @@ def _read_only_marker(program, args, file_texts):
     return not _PG_READ_ONLY_BREAK_RE.search(text) and not _SQL_SIDE_EFFECT_RE.search(text)
 
 
-def _client_sql_hits(program, args, file_texts):
+_SQL_SHELL_ESCAPE_RE = {
+    "psql": re.compile(r"\\!([^\n]*)|\\(?:o|out|gx|g|w|write)\s*\|([^\n]*)"),
+    "mysql": re.compile(r"\\!([^\n]*)|(?:^|;)\s*system\s+([^\n;]*)", re.M | re.I),
+    "sqlite3": re.compile(r"^\s*\.(?:shell|system)\b([^\n]*)", re.M),
+}
+_PSQL_INCLUDE_RE = re.compile(r"\\(?:include_relative|include|ir|i)(?![A-Za-z_])")
+
+
+def _sql_shell_hits(program, args, file_texts, shell):
+    """Hits of the shell commands a SQL client runs on our machine (psql
+    ``\\!`` and ``| cmd`` outputs, mysql ``system``, sqlite3 ``.shell``),
+    each classed by ``shell`` as a ``sh -c`` text; psql ``\\i`` reads SQL
+    from a file whose statements are not visible."""
+    regex = _SQL_SHELL_ESCAPE_RE.get(program)
+    if regex is None:
+        return []
+    texts = [t for t in _sql_texts(args, file_texts) if t is not None]
+    if program == "sqlite3":
+        texts += [a for a in args if not a.startswith("-")]
+    hits = []
+    for text in texts:
+        if program == "psql" and _PSQL_INCLUDE_RE.search(text):
+            hits.append(("approval", "SQL from a file: its statements are not visible"))
+        for m in regex.finditer(text):
+            command = next(g for g in m.groups() if g is not None).strip()
+            if re.search(r"[$`]", command):
+                hits.append(("privileged", program + " runs a shell command built from a variable or substitution: run the command directly"))
+            else:
+                hits += shell(command)
+    return hits
+
+
+def _client_sql_hits(program, args, file_texts, shell):
     """Hits of one SQL client run. ``clickhouse local`` without a --path has
     no server and no stored data: it is flagged only when a table function
-    reaches outside it."""
+    reaches outside it. ``shell`` classes a command text the client hands to
+    a local shell."""
+    escapes = _sql_shell_hits(program, args, file_texts, shell)
+    if escapes:
+        return escapes
     if _read_only_marker(program, args, file_texts):
         return []
     if program == "clickhouse-local" or program == "clickhouse" and args[:1] == ["local"]:
@@ -2975,7 +3011,9 @@ def _classify_tokens(tokens, cfg, ctx):
     if program in cfg["sql_clients"]:
         keys = [_sql_key(p, ctx) for p in _sql_file_args(args)]
         cfg["sql_paths"].extend(k for k in keys if k is not None)
-        return _client_sql_hits(program, args, [None if k is None else cfg["sql_files"].get(k) for k in keys])
+        return _client_sql_hits(
+            program, args, [None if k is None else cfg["sql_files"].get(k) for k in keys],
+            lambda text: _classify_text(text, cfg, ctx["depth"] + 1, ctx["dir"], None, ctx.get("cd_seen", False)))
     if program in ("echo", "printf"):
         target = _redirect_target(args)
         key = target and _sql_key(target, ctx)
@@ -3256,7 +3294,8 @@ def _heredoc_hits(line, body, cfg, depth, dir_):
         if _INLINE_INTERPRETER_RE.match(program) and _inline_code_hits(program, body):
             return _inline_code_hits(program, body)
         if program in cfg["sql_clients"]:
-            return _client_sql_hits(program, args, [None] * len(_sql_file_args(args)) + [body])
+            return _client_sql_hits(program, args, [None] * len(_sql_file_args(args)) + [body],
+                                    lambda text: _classify_text(text, cfg, depth + 1, dir_))
     return []
 
 
