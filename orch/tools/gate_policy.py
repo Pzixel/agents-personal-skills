@@ -2641,12 +2641,8 @@ def _sql_shell_hits(program, args, file_texts, shell):
             hits.append(("approval", "SQL from a file: its statements are not visible"))
         for m in regex.finditer(text):
             command = next(g for g in m.groups() if g is not None).strip()
-            head = os.path.basename(command.split()[0]) if command.split() else ""
             if re.search(r"[$`]", command):
                 hits.append(("privileged", program + " runs a shell command built from a variable or substitution: run the command directly"))
-            elif m.group(0).lstrip().startswith("\\") and m.group(0)[1] != "!" and (
-                    head in _INNER_SHELLS or _INLINE_INTERPRETER_RE.match(head)):
-                hits.append(("privileged", program + " pipes query output into " + head + ": the rows run as code"))
             else:
                 hits += shell(command)
     return hits
