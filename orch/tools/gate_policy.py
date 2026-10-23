@@ -732,6 +732,16 @@ DEFAULT_PARAMS = {
         "repeat_count": 3,
         "compact_stale_rows": 200,
     },
+    # Headroom gate (headroom_decision): memory a process started by kubectl
+    # exec adds against the container's free memory. Assumed values; see the
+    # _doc in orchestrate-params.json and ORIGINS.md.
+    "headroom": {
+        "jvm_overhead_bytes": 201326592,
+        "process_floor_bytes": 33554432,
+        "near_miss_factor": 2,
+        "read_timeout_seconds": 3.5,
+        "jvm_launchers": ["java", "kafka-*.sh", "zookeeper-*.sh"],
+    },
     "destructive": {
         "ours_paths": ["/tmp/", "tmp/", ".worktrees/", "~/.claude/tmp/", "~/Library/Caches/"],
         "ours_labels": ["orch.session"],
@@ -2060,6 +2070,7 @@ _INNER_SUBST_RE = re.compile(r"`([^`]*)`|\$\(([^()]*)\)")
 _KUBECTL_VALUE_FLAGS = frozenset({
     "-n", "-s", "-v", "--v", "--as", "--as-group", "--token", "--request-timeout",
     "--namespace", "--context", "--kubeconfig", "--cluster", "--user", "--server",
+    "-c", "--container", "--pod-running-timeout",
 })
 _KUBECTL_READS = frozenset({
     "get", "describe", "logs", "top", "explain", "api-resources", "api-versions",
@@ -2442,6 +2453,8 @@ def _kubectl_class(args, cfg, ctx):
     if any(a.startswith("--dry-run") and a != "--dry-run=none" for a in rest):
         return []
     if verb == "exec":
+        cfg.setdefault("exec_targets", []).append(_exec_target(
+            args[:end], words[1:2], args[end + 1:] if end < len(args) else words[2:], ctx.get("stdin_body")))
         return _classify_inner(args[end + 1:], cfg, ctx) if end < len(args) else []
     if verb in _KUBECTL_READS:
         return []
@@ -3131,6 +3144,8 @@ def _bind(tokens, ctx, before, after):
 def _walk(script, cfg, ctx):
     hits, function = [], None
     for tokens, before, after in _segments_meta(script):
+        if "|" not in before:
+            ctx["stdin_body"] = None  # a heredoc reaches the next command only through a pipe
         _scope(before, ctx)
         _chain_step(ctx, before)
         for i, word in enumerate(tokens):
@@ -3170,6 +3185,7 @@ def _walk(script, cfg, ctx):
         if any(t.startswith("<<") and not t.startswith("<<<") for t in tokens):
             # The next heredoc body in order is what a `> file` redirect here writes.
             body = ctx["heredoc_bodies"].pop(0) if ctx.get("heredoc_bodies") else None
+            ctx["stdin_body"] = body
             target = _redirect_target(tokens)
             key = target and body is not None and _sql_key(_substitute(target, ctx["vars"]), ctx)
             if key:
@@ -3430,7 +3446,8 @@ def _destructive_decision(
                 "with the line: APPROVE " + marker[1] + "\nthen run the same command again"
             )}
     else:
-        result = _command_decision(command or "", cfg, os.path.realpath(cwd) if cwd else "")
+        result = dict(_command_decision(command or "", cfg, os.path.realpath(cwd) if cwd else ""),
+                      exec_targets=cfg.get("exec_targets", []))
     if (
         result["decision"] == "ask"
         and permission_mode == "bypassPermissions"
@@ -3702,3 +3719,194 @@ def _loop_deny_text(key, since, long_rows, acks, triggers, agent_type, p):
     if agent_type:
         text += " Carry the reason into your reply's deviations."
     return text
+
+
+# --- Headroom gate --------------------------------------------------------------
+# Pure policy behind the headroom check in hooks/deny-destructive.py: before a
+# process starts inside a pod (kubectl exec), the memory it adds is compared
+# with the container's limit minus its working set. The facts are read by
+# tools/headroom_read.py.
+
+_QUANTITY_RE = re.compile(r"^(\d+(?:\.\d+)?)([KMGTE]i?|[kmgte])?$")
+_QUANTITY_UNITS = {
+    "": 1, "k": 1000, "K": 1000, "M": 1000 ** 2, "G": 1000 ** 3, "T": 1000 ** 4,
+    "Ki": 1024, "Mi": 1024 ** 2, "Gi": 1024 ** 3, "Ti": 1024 ** 4, "m": 0.001,
+}
+_XMX_RE = re.compile(r"-Xmx(\d+)([kKmMgG]?)\b")
+_JVM_ENV_RE = re.compile(r"(?:^|[\s'\"])(?:[A-Za-z_]*_HEAP_OPTS|JAVA_TOOL_OPTIONS|JVM_OPTS|_JAVA_OPTIONS)=")
+
+
+def kube_quantity(text):
+    """Bytes of a Kubernetes memory quantity (``1Gi``, ``896Mi``, ``1G``), None when unparsable."""
+    match = _QUANTITY_RE.match((text or "").strip())
+    if not match or (match.group(2) or "") not in _QUANTITY_UNITS:
+        return None
+    return int(float(match.group(1)) * _QUANTITY_UNITS[match.group(2) or ""])
+
+
+def _exec_target(kube_args, pod_words, inner, stdin_body=None):
+    pod = pod_words[0] if pod_words else ""
+    return {
+        "context": _flag_value(kube_args, "--context"),
+        "kubeconfig": _flag_value(kube_args, "--kubeconfig"),
+        "namespace": _flag_value(kube_args, "-n") or _flag_value(kube_args, "--namespace"),
+        "pod": pod[4:] if pod.startswith("pod/") else pod,
+        "container": _flag_value(kube_args, "-c") or _flag_value(kube_args, "--container"),
+        "inner": list(inner),
+        "stdin": stdin_body,
+    }
+
+
+def kubectl_exec_targets(command, params=None):
+    """Every ``kubectl exec`` the destructive walk finds in a Bash command
+    (wrappers, same-command functions and ``sh -c`` strings resolved): dicts
+    {context, kubeconfig, namespace, pod, container, inner}."""
+    cfg = _decision_cfg(params, {})
+    _classify_text(command or "", cfg, 0, "")
+    return cfg.get("exec_targets", [])
+
+
+def _exec_runs(segments, stdin_body, inherited="", depth=0):
+    """(program basename, heap text) per program the exec'd command runs. A
+    shell is followed into its ``-c`` script or the heredoc fed to it; heap
+    text is the env assignments before the program (those of enclosing
+    shells included) plus, for ``java``, its arguments. Quoted text passed as
+    an argument to another program is never read."""
+    runs = []
+    for tokens in segments:
+        program, args, _ = _command_head(tokens)
+        assigned = [t for t in tokens if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", t)]
+        if not program or program == "export":
+            # A bare assignment or an export sets the env of the later segments.
+            inherited = " ".join([inherited] + assigned)
+            continue
+        prefix = tokens[:len(tokens) - len(args) - 1]
+        env = " ".join([inherited] + [t for t in prefix if t in assigned])
+        if program in _SHELLS and depth < 3:
+            flag = next((a for a in args if re.match(r"^-[a-z]*c[a-z]*$", a)), None)
+            script = args[args.index(flag) + 1] if flag and args.index(flag) + 1 < len(args) else None
+            if script is None and not flag:
+                script = stdin_body
+            if script:
+                runs.extend(_exec_runs(_shell_segments(script), None, env, depth + 1))
+                continue
+        runs.append((program, env + (" " + " ".join(args) if program == "java" else "")))
+    return runs
+
+
+def headroom_adds(inner, params=None, stdin_body=None):
+    """(bytes the exec'd process adds, what it is) or (None, why) when unknown.
+    A JVM (a program matching jvm_launchers, or one started with a heap env
+    assignment) adds its heap cap plus jvm_overhead_bytes; a JVM with no heap
+    cap in the command inherits whatever the container's env sets, so its
+    size is unknown. Any other process adds process_floor_bytes."""
+    cfg = _merged_params(params)["headroom"]
+    heaps = []
+    for program, text in _exec_runs([list(inner)], stdin_body):
+        if not (any(fnmatch.fnmatch(program, pat) for pat in cfg["jvm_launchers"]) or _JVM_ENV_RE.search(" " + text)):
+            continue
+        found = _XMX_RE.findall(text)
+        if not found:
+            return None, "a JVM (%s) with no heap cap (-Xmx) in the command" % program
+        number, unit = found[-1]
+        heaps.append(int(number) * {"": 1, "k": 1024, "m": 1024 ** 2, "g": 1024 ** 3}[unit.lower()])
+    if not heaps:
+        return int(cfg["process_floor_bytes"]), "a process (floor)"
+    heap = max(heaps)
+    return heap + int(cfg["jvm_overhead_bytes"]), "a JVM, heap %s plus overhead %s" % (
+        _mib(heap), _mib(int(cfg["jvm_overhead_bytes"])))
+
+
+def _mib(n):
+    return "%dMi" % round(n / 1024 ** 2)
+
+
+_HEADROOM_ROUTES = (
+    "Run it outside the pod: a throwaway client pod with its own memory limit "
+    "(kubectl run --rm with resources), or a local client over a port-forward. "
+    "If you have sized the process and it fits, add a line "
+    "`# HEADROOM: limit <L> use <U> adds <A>` stating the container's limit, its working set and what the process adds."
+)
+
+
+def headroom_decision(target, adds, facts, params=None):
+    """Decision for one exec target. ``adds`` is the pair from headroom_adds;
+    ``facts`` is {limit, use, container, error} from the reads (None when the
+    reads were skipped). Returns {decision: allow|deny, context, reason}:
+    context is set only on unknown headroom and on a near miss."""
+    cfg = _merged_params(params)["headroom"]
+    name = "%s/%s" % (target["pod"], (facts or {}).get("container") or target.get("container") or "?")
+    size, what = adds
+    if size is None:
+        return {"decision": "deny", "context": None, "target": name, "adds": None, "reason": (
+            "headroom-gate: exec into %s starts %s; its memory is unknown (a JVM takes the heap the "
+            "container's env sets, possibly the server's own). State the heap (-Xmx) in the command, or run "
+            "outside the pod. %s" % (name, what, _HEADROOM_ROUTES))}
+    if not facts or facts.get("error"):
+        return {"decision": "allow", "reason": None, "context": "headroom unknown (%s): %s" % (
+            (facts or {}).get("error") or "not read", name)}
+    if facts.get("limit") is None:
+        return {"decision": "allow", "reason": None,
+                "context": "headroom unknown (no memory limit on %s)" % name}
+    free = facts["limit"] - facts["use"]
+    numbers = "limit %s, working set %s, free %s; %s adds ~%s" % (
+        _mib(facts["limit"]), _mib(facts["use"]), _mib(free), what, _mib(size))
+    if free < size:
+        return {"decision": "deny", "context": None, "target": name, "limit": facts["limit"],
+                "use": facts["use"], "adds": size, "reason": (
+            "headroom-gate: exec into %s would exceed its memory limit and get the container OOM-killed: %s. %s"
+            % (name, numbers, _HEADROOM_ROUTES))}
+    if free < float(cfg["near_miss_factor"]) * size:
+        return {"decision": "allow", "reason": None, "context": "headroom near miss on %s: %s" % (name, numbers)}
+    return {"decision": "allow", "reason": None, "context": None}
+
+
+def headroom_params(params=None):
+    return _merged_params(params)["headroom"]
+
+
+def headroom_acknowledged(command, params=None):
+    return override_marker(command, "HEADROOM", params) is not None
+
+
+def headroom_unreadable_pod(target):
+    """Facts for a target the reads cannot resolve (``deploy/x``, a missing
+    name), else None: the one owner of that rule."""
+    if not target["pod"] or "/" in target["pod"]:
+        return {"error": "exec %s not resolved to a pod" % (target["pod"] or "target")}
+    return None
+
+
+def headroom_error(exc):
+    """The fail-open answer when the headroom check itself breaks."""
+    return {"decision": "allow", "reason": None,
+            "context": "headroom unknown (headroom check error: %s)" % type(exc).__name__}
+
+
+def headroom_facts(target, pod_json, top_text):
+    """{limit, use, container, error} from ``kubectl get pod -o json`` text and
+    ``kubectl top pod --containers --no-headers`` text (either None when unread)."""
+    unreadable = headroom_unreadable_pod(target)
+    if unreadable:
+        return unreadable
+    try:
+        pod = json.loads(pod_json)
+        spec, meta = pod["spec"], pod.get("metadata") or {}
+    except (TypeError, ValueError, KeyError):
+        return {"error": "pod spec unreadable"}
+    containers = spec.get("containers") or []
+    name = target.get("container") or (meta.get("annotations") or {}).get(
+        "kubectl.kubernetes.io/default-container") or (containers[0]["name"] if containers else "")
+    match = [c for c in containers if c.get("name") == name]
+    if not match:
+        return {"error": "container %s not in pod" % name, "container": name}
+    limit = kube_quantity(((match[0].get("resources") or {}).get("limits") or {}).get("memory"))
+    if limit is None:
+        return {"limit": None, "use": None, "container": name, "error": None}
+    for line in (top_text or "").splitlines():
+        cols = line.split()
+        if len(cols) >= 4 and cols[1] == name:
+            use = kube_quantity(cols[3])
+            if use is not None:
+                return {"limit": limit, "use": use, "container": name, "error": None}
+    return {"error": "working set unreadable (metrics-server)", "container": name}

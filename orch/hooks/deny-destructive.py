@@ -11,6 +11,8 @@ not logged) to ~/.claude/destructive-log.jsonl and prints the response. It fails
 closed: any error is a deny. The agents' kubeconfig is cluster-admin today, so
 the `impossible` class is enforced only here until RBAC is tightened; an
 impossible step runs only from an owner-approved plan (APPROVE <hash>).
+When the destructive decision allows, the headroom check (tools/headroom_read.py)
+runs in the same process for every `kubectl exec`; it fails open.
 File tools are checked only for a path under the approvals dir. An approved
 plan run consumes its approval file (written by plan-approval.py) before the
 allow is printed; when another PreToolUse hook then denies the same call,
@@ -26,12 +28,25 @@ import sys
 LOG_PATH = os.path.expanduser("~/.claude/destructive-log.jsonl")
 
 
-def respond(decision, reason):
-    print(json.dumps({"hookSpecificOutput": {
-        "hookEventName": "PreToolUse",
-        "permissionDecision": decision,
-        "permissionDecisionReason": reason,
-    }}))
+def respond(decision, reason, context=None):
+    out = {"hookEventName": "PreToolUse"}
+    if decision:
+        out.update(permissionDecision=decision, permissionDecisionReason=reason)
+    if context:
+        out["additionalContext"] = context
+    print(json.dumps({"hookSpecificOutput": out}))
+
+
+def headroom(command, params, targets):
+    """The headroom check (tools/headroom_read.py) over the exec targets the
+    destructive walk found; it fails open: a broken read or parse never
+    blocks a Bash call, unlike the destructive class."""
+    try:
+        import headroom_read
+        return headroom_read.headroom_check(command, params, targets)
+    except Exception as exc:
+        import gate_policy
+        return gate_policy.headroom_error(exc)
 
 
 def read_plan(path):
@@ -93,23 +108,36 @@ def main():
     )
     if approved and result["decision"] == "allow":
         os.remove(approval)
-    if result["class"] == "none":
-        return
-    if gate_policy.session_id_ok(session):
+    targets = result.get("exec_targets")
+    room = headroom(command, params, targets) if targets and result["decision"] == "allow" else None
+
+    def log(row):
+        if not gate_policy.session_id_ok(session):
+            return
         try:
             with open(LOG_PATH, "a") as fh:
-                fh.write(json.dumps({
+                fh.write(json.dumps(dict({
                     "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                     "session_id": session,
                     "agent_type": agent_type,
-                    "class": result["class"],
-                    "decision": result["decision"],
                     "command": command[:200],
-                    "plan_hash": plan_hash,
-                }) + "\n")
+                }, **row)) + "\n")
         except OSError:
             pass
-    respond(result["decision"], result["reason"])
+
+    if room and room["decision"] == "deny":
+        log({"class": "headroom", "decision": "deny", "reason": room["reason"][:300],
+             "target": room.get("target"), "limit": room.get("limit"), "use": room.get("use"),
+             "adds": room.get("adds")})
+        respond("deny", room["reason"] + gate_policy._NO_WORKAROUND)
+        return
+    context = room and room["context"]
+    if result["class"] == "none":
+        if context:
+            respond(None, None, context)
+        return
+    log({"class": result["class"], "decision": result["decision"], "plan_hash": plan_hash})
+    respond(result["decision"], result["reason"], context)
 
 
 if __name__ == "__main__":
