@@ -10,11 +10,7 @@ The hook never blocks the prompt.
 """
 import json
 import os
-import re
 import sys
-
-SESSION_RE = re.compile(r"^[A-Za-z0-9_-]+$")
-
 
 def main():
     payload = json.load(sys.stdin)
@@ -24,7 +20,7 @@ def main():
     import gate_policy
 
     hashes = gate_policy.approved_hashes(str(payload.get("prompt") or ""))
-    if not hashes or not SESSION_RE.match(session):
+    if not hashes or not gate_policy.session_id_ok(session):
         return
     root = gate_policy.approvals_root(gate_policy.load_params(), os.path.expanduser("~"))
     folder = os.path.join(root, session)

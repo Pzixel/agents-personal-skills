@@ -1,6 +1,7 @@
 """deny-destructive fails closed; task-type-checklist fires the incident checklist on live failures."""
 
 import json
+import os
 import shutil
 import tempfile
 import pathlib
@@ -20,10 +21,12 @@ def incident(prompt):
     return "Incident checklist" in run("task-type-checklist.py", {"prompt": prompt}).stdout
 
 
-def destructive_decision(hooks_dir, stdin):
-    out = subprocess.run(
-        ["python3", str(hooks_dir / "deny-destructive.py")], input=stdin, capture_output=True, text=True
-    )
+def destructive_decision(hooks_dir, stdin, home=None):
+    with tempfile.TemporaryDirectory() as tmp:
+        out = subprocess.run(
+            ["python3", str(hooks_dir / "deny-destructive.py")], input=stdin, capture_output=True, text=True,
+            env=dict(os.environ, HOME=home or tmp),
+        )
     return out.returncode, json.loads(out.stdout)["hookSpecificOutput"]["permissionDecision"]
 
 
@@ -41,6 +44,16 @@ class DenyDestructiveFailsClosed(unittest.TestCase):
             )
             payload = json.dumps({"tool_input": {"command": "rm tmp/x"}})
             self.assertEqual(destructive_decision(root / "hooks", payload), (0, "deny"))
+
+
+class DenyDestructiveLog(unittest.TestCase):
+    def test_only_a_claude_code_session_is_logged(self):
+        for session, logged in [("0b9c2f5e-1d2a-4c3b-9e8f-7a6b5c4d3e2f", True), ("probe", False), ("", False)]:
+            with self.subTest(session=session), tempfile.TemporaryDirectory() as home:
+                os.makedirs(os.path.join(home, ".claude"))
+                payload = json.dumps({"session_id": session, "tool_input": {"command": "rm -rf /etc/x"}})
+                self.assertEqual(destructive_decision(HOOKS, payload, home), (0, "deny"))
+                self.assertEqual(os.path.exists(os.path.join(home, ".claude", "destructive-log.jsonl")), logged)
 
 
 class IncidentChecklist(unittest.TestCase):

@@ -6,7 +6,8 @@ The decision is gate_policy.destructive_decision; the class table lives in
 tools/orchestrate-params.json under `destructive` (its `_doc` says what each
 class means). This file only reads stdin, reads the plan file a
 DESTRUCTIVE_PLAN marker names, calls the decision, logs every classed
-decision to ~/.claude/destructive-log.jsonl and prints the response. It fails
+decision of a Claude Code session (UUID session id; hand-piped payloads are
+not logged) to ~/.claude/destructive-log.jsonl and prints the response. It fails
 closed: any error is a deny. The agents' kubeconfig is cluster-admin today, so
 the `impossible` class is enforced only here until RBAC is tightened; an
 impossible step runs only from an owner-approved plan (APPROVE <hash>).
@@ -20,7 +21,6 @@ import datetime
 import hashlib
 import json
 import os
-import re
 import sys
 
 LOG_PATH = os.path.expanduser("~/.claude/destructive-log.jsonl")
@@ -74,7 +74,7 @@ def main():
     plan_text, plan_hash = read_plan(marker[0]) if marker else (None, None)
     session = str(payload.get("session_id") or "")
     approval = None
-    if marker and re.match(r"^[A-Za-z0-9_-]+$", session):
+    if marker and gate_policy.session_id_ok(session):
         root = gate_policy.approvals_root(params, os.path.expanduser("~"))
         approval = os.path.join(root, session, marker[1])
     approved = bool(approval) and os.path.isfile(approval)
@@ -92,19 +92,20 @@ def main():
         os.remove(approval)
     if result["class"] == "none":
         return
-    try:
-        with open(LOG_PATH, "a") as fh:
-            fh.write(json.dumps({
-                "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                "session_id": payload.get("session_id") or "",
-                "agent_type": agent_type,
-                "class": result["class"],
-                "decision": result["decision"],
-                "command": command[:200],
-                "plan_hash": plan_hash,
-            }) + "\n")
-    except OSError:
-        pass
+    if gate_policy.session_id_ok(session):
+        try:
+            with open(LOG_PATH, "a") as fh:
+                fh.write(json.dumps({
+                    "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                    "session_id": session,
+                    "agent_type": agent_type,
+                    "class": result["class"],
+                    "decision": result["decision"],
+                    "command": command[:200],
+                    "plan_hash": plan_hash,
+                }) + "\n")
+        except OSError:
+            pass
     respond(result["decision"], result["reason"])
 
 

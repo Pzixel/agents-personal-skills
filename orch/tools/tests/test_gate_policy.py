@@ -667,8 +667,6 @@ class PluginPrefixedTypeTest(unittest.TestCase):
         )
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 _MERGE_FIELDS = (
@@ -1197,7 +1195,7 @@ class DestructiveDecisionTest(unittest.TestCase):
         for cmd in (
             "sudo ls", "apt-get install x", "brew uninstall x", "kill -9 1", "pkill -f x",
             "killall x", "chmod +x /etc/x", "chmod 600 ~/.ssh/config", "chown me tmp/x",
-            "chown me /tmp/q.sh", "eval ls",
+            "chown me /tmp/q.sh", "eval \"$CMD\"",
         ):
             with self.subTest(cmd=cmd):
                 self.assertEqual(_destructive(cmd)["class"], "privileged")
@@ -1844,6 +1842,59 @@ class PlanApprovalTest(unittest.TestCase):
         self.assertIsNone(gate_policy.approval_path_decision("/home/u/.claude/approvals-x", "/home/u"))
 
 
+class FalsePositiveRulesTest(unittest.TestCase):
+    """Reads and own-job signals pass; the nearest write or foreign target stays refused."""
+
+    def test_table(self):
+        for cmd, allowed in [
+            ("sleep 30 & P=$!; kill $P", True),
+            ("sleep 30 & kill $!", True),
+            ("kill %1", True),
+            ("kill -0 4242", True),
+            ("kill -9 4242", False),
+            ("P=4242; kill $P", False),
+            ("sleep 30 & kill -- -$!", False),
+            ("pkill -f worker", False),
+            ('eval "rm -rf /tmp/scratch-x"', True),
+            ('eval "rm -rf ~/Documents/x"', False),
+            ('eval "$CMD"', False),
+            ('clickhouse-client --readonly=1 -q "SELECT count() FROM orders"', True),
+            ('clickhouse-client --readonly 1 --host db.example -q "DROP TABLE orders"', True),
+            ('clickhouse-client -q "SET readonly=1; SELECT 1"', True),
+            ('clickhouse-client --readonly=2 -q "DROP TABLE orders"', False),
+            ('clickhouse-client -q "DROP TABLE orders SETTINGS readonly=1"', False),
+            ("clickhouse-client --readonly=1 <<EOF\nDROP TABLE orders\nEOF", True),
+            ("clickhouse-client <<EOF\nDROP TABLE orders\nEOF", False),
+            ('psql -c "BEGIN READ ONLY; DELETE FROM orders WHERE id = 1"', True),
+            ('psql -c "START TRANSACTION READ ONLY; SELECT 1"', True),
+            ('psql -c "BEGIN READ ONLY; COMMIT; DELETE FROM orders WHERE id = 1"', False),
+            ('psql -c "BEGIN READ ONLY; SET transaction_read_only = off; DELETE FROM orders WHERE id = 1"', False),
+            ('psql -c "BEGIN READ ONLY; RESET ALL; DELETE FROM orders WHERE id = 1"', False),
+            ('psql -1 -c "BEGIN READ ONLY; DELETE FROM orders WHERE id = 1"', False),
+            ('psql -c "BEGIN READ ONLY; \\set x 1; DELETE FROM orders WHERE id = 1"', False),
+            ('psql -c "BEGIN READ ONLY; SELECT dblink_exec(1)"', False),
+            ('psql -c "SELECT pg_terminate_backend(4242)"', False),
+            ('psql -c "DELETE FROM orders WHERE id = 1" -c "BEGIN READ ONLY;"', False),
+            ('clickhouse local -q "SELECT 1; DROP TABLE t"', True),
+            ("clickhouse local -q \"SELECT * FROM url('http://example.com/x')\"", False),
+            ('clickhouse local --path /var/lib/clickhouse -q "DROP TABLE t"', False),
+            ('docker -H tcp://db.example:2375 exec c psql -c "DROP TABLE orders"', False),
+            ('docker --context remote compose -f a.yml exec db psql -c "DROP TABLE orders"', False),
+            ("python3 -c 'import psycopg; c.execute(\"BEGIN READ ONLY; DELETE FROM orders\")'", False),
+        ]:
+            with self.subTest(cmd=cmd):
+                self.assertEqual(_destructive(cmd)["decision"] == "allow", allowed)
+
+    def test_read_only_file_with_a_side_effect_call_is_asked(self):
+        decision = gate_policy.destructive_decision(
+            "psql -f /tmp/q.sql", "", None, None, sql_file_texts={"/tmp/q.sql": "SELECT pg_reload_conf();"})
+        self.assertEqual(decision["decision"], "ask")
+
+    def test_sql_refusal_names_both_read_markers(self):
+        reason = _destructive('psql -c "DELETE FROM orders WHERE id = 1"')["reason"]
+        self.assertTrue("--readonly=1" in reason and "BEGIN READ ONLY" in reason, reason)
+
+
 class PlanApprovalHookTest(unittest.TestCase):
     def test_owner_prompt_creates_the_approval_file(self):
         import subprocess
@@ -1852,10 +1903,10 @@ class PlanApprovalHookTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as home:
             subprocess.run(
                 [sys.executable, hook], check=True, env=dict(os.environ, HOME=home),
-                input=json.dumps({"session_id": "s1", "prompt": "ok\napprove " + "C" * 64 + "\n"}),
+                input=json.dumps({"session_id": "0b9c2f5e-1d2a-4c3b-9e8f-7a6b5c4d3e2f", "prompt": "ok\napprove " + "C" * 64 + "\n"}),
                 universal_newlines=True, stdout=subprocess.DEVNULL,
             )
-            self.assertTrue(os.path.isfile(os.path.join(home, ".claude", "approvals", "s1", "c" * 64)))
+            self.assertTrue(os.path.isfile(os.path.join(home, ".claude", "approvals", "0b9c2f5e-1d2a-4c3b-9e8f-7a6b5c4d3e2f", "c" * 64)))
 
 
 class ApprovalSpellingAndParseTest(unittest.TestCase):
@@ -1887,3 +1938,6 @@ class ApprovalSpellingAndParseTest(unittest.TestCase):
             with self.subTest(prompt=prompt):
                 self.assertEqual(gate_policy.approved_hashes(prompt), expected)
 
+
+if __name__ == "__main__":
+    unittest.main()

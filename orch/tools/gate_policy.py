@@ -723,7 +723,7 @@ DEFAULT_PARAMS = {
     "destructive": {
         "ours_paths": ["/tmp/", "tmp/", ".worktrees/", "~/.claude/tmp/", "~/Library/Caches/"],
         "ours_labels": ["orch.session"],
-        "sql_clients": ["psql", "mysql", "sqlite3", "clickhouse-client", "clickhouse", "mongosh"],
+        "sql_clients": ["psql", "mysql", "sqlite3", "clickhouse-client", "clickhouse", "clickhouse-local", "mongosh"],
         "plan_max_lines": 40,
         "plan_max_bytes": 4000,
         "command_max_bytes": 65536,
@@ -2070,6 +2070,39 @@ _SQL_DELETE_RE = re.compile(r"\bDELETE\s+FROM\b([^;]*)", re.I)
 _SQL_WRITE_RE = re.compile(
     r"\bUPDATE\s+\S+\s+SET\b|\.(?:delete|update)(?:One|Many)\(|\.remove\(", re.I
 )
+# Server-side effects a SELECT can carry: terminate or cancel sessions, reload
+# config, drop slots, switch WAL, promote, write server files, reach another
+# database, run a program.
+_SQL_SIDE_EFFECT_RE = re.compile(
+    r"\b(?:pg_terminate_backend|pg_cancel_backend|pg_reload_conf|pg_drop_replication_slot"
+    r"|pg_switch_wal|pg_promote|pg_rotate_logfile|pg_file_write|lo_export|dblink\w*)\s*\("
+    r"|\bCOPY\b[^;]*\bPROGRAM\b",
+    re.I,
+)
+# Table functions through which clickhouse local reaches outside its own data.
+_SQL_REMOTE_RE = re.compile(
+    r"\b(?:remote|remoteSecure|cluster|clusterAllReplicas|url|urlCluster|s3|s3Cluster|gcs|azureBlobStorage"
+    r"|hdfs|mysql|postgresql|mongodb|redis|sqlite|jdbc|odbc|file|executable)\s*\(",
+    re.I,
+)
+_SQL_TEXT_FLAGS = frozenset({"-c", "--command", "-q", "--query", "-e", "--execute"})
+_PG_READ_ONLY_START_RE = re.compile(
+    r"^\s*(?:BEGIN(?:\s+(?:TRANSACTION|WORK))?|START\s+TRANSACTION)\s+READ\s+ONLY\s*;", re.I
+)
+# What ends or rewrites the read-only transaction (measured on PostgreSQL 16:
+# SET transaction_read_only=off under psql -1, or COMMIT, let later writes through).
+_PG_READ_ONLY_BREAK_RE = re.compile(
+    r"\b(?:COMMIT|END|ROLLBACK|ABORT|PREPARE\s+TRANSACTION|SET\s+(?:LOCAL\s+|SESSION\s+)?TRANSACTION"
+    r"|SET\s+SESSION\s+CHARACTERISTICS|transaction_read_only|default_transaction_read_only|RESET\s+ALL)\b"
+    r"|\\[A-Za-z!]",
+    re.I,
+)
+_CH_READONLY_SET_RE = re.compile(r"^\s*SET\s+readonly\s*=\s*1\s*(?:;|$)", re.I)
+_SQL_READ_HINT = (
+    " (a read passes unasked as clickhouse-client --readonly=1, or as psql SQL that starts with"
+    " BEGIN READ ONLY; and has no COMMIT, END, ROLLBACK, ABORT, SET TRANSACTION, transaction_read_only,"
+    " RESET ALL or backslash command, run without -1)"
+)
 _SQL_FILE_FLAGS = frozenset({"-f", "--file", "--queries-file", "<"})
 # SET changes only the session it runs in.
 _SQL_READ_WORDS = frozenset({"SELECT", "WITH", "SHOW", "EXPLAIN", "DESCRIBE", "DESC", "SET", "(SELECT"})
@@ -2094,6 +2127,15 @@ def _inline_code_hits(program, code):
     return hits
 _XARGS_VALUE_FLAGS = frozenset({"-I", "-n", "-P", "-L", "-s", "-d", "-E", "-a"})
 _SSH_VALUE_FLAGS = frozenset({"-p", "-i", "-l", "-o", "-F", "-J", "-b", "-c", "-D", "-L", "-R", "-W"})
+# docker options before the subcommand that take a value (docker -H tcp://x exec ...).
+_DOCKER_GLOBAL_VALUE_FLAGS = frozenset({
+    "-H", "--host", "--context", "-c", "--config", "-l", "--log-level",
+    "--tlscacert", "--tlscert", "--tlskey",
+})
+_COMPOSE_VALUE_FLAGS = frozenset({
+    "-f", "--file", "-p", "--project-name", "--project-directory", "--env-file", "--profile",
+    "--ansi", "--progress", "--parallel",
+})
 _DOCKER_VALUE_FLAGS = frozenset({"-u", "--user", "-e", "--env", "-w", "--workdir", "--env-file"})
 
 
@@ -2510,16 +2552,18 @@ def _sql_hits(args, file_texts=()):
     """``file_texts``: text of each file the client reads, None when unknown."""
     text = " ".join(args)
     if _SQL_NO_UNDO_RE.search(text):
-        return [("impossible", "SQL DROP/TRUNCATE/ALTER ... DROP has no undo")]
+        return [("impossible", "SQL DROP/TRUNCATE/ALTER ... DROP has no undo" + _SQL_READ_HINT)]
     for m in _SQL_DELETE_RE.finditer(text):
         if not re.search(r"\bWHERE\b", m.group(1), re.I):
-            return [("impossible", "SQL DELETE without WHERE has no undo")]
+            return [("impossible", "SQL DELETE without WHERE has no undo" + _SQL_READ_HINT)]
     if _SQL_DELETE_RE.search(text) or _SQL_WRITE_RE.search(text):
-        return [("approval", "SQL write to a database")]
+        return [("approval", "SQL write to a database" + _SQL_READ_HINT)]
+    if _SQL_SIDE_EFFECT_RE.search(text):
+        return [("approval", "SQL calls a server-side effect (session kill, config reload, dblink, COPY PROGRAM)")]
     hits = []
     for body in file_texts:
         if body is None:
-            hits.append(("approval", "SQL from a file: its statements are not visible"))
+            hits.append(("approval", "SQL from a file: its statements are not visible" + _SQL_READ_HINT))
         else:
             hits.extend(_sql_hits([body]) or _sql_read_only_hits(body))
     return hits
@@ -2533,6 +2577,60 @@ def _sql_read_only_hits(text):
         if word and word not in _SQL_READ_WORDS:
             return [("approval", "SQL file runs " + word + ", not only reads")]
     return []
+
+
+def _sql_texts(args, file_texts):
+    """The SQL a client runs in argv order: query strings and the bodies of
+    the files it reads (``file_texts`` in ``_sql_file_args`` order, None when
+    not visible); bodies with no file argument (stdin) come last."""
+    files, texts = iter(file_texts), []
+    for i, a in enumerate(args):
+        if a in _SQL_TEXT_FLAGS and i + 1 < len(args):
+            texts.append(args[i + 1])
+        elif a.startswith(("--command=", "--query=", "--execute=")):
+            texts.append(a.split("=", 1)[1])
+        elif _sql_file_args(args[i:i + 2]) and (a in _SQL_FILE_FLAGS or a.startswith(("<", "--file=", "--queries-file="))):
+            texts.append(next(files, None))
+    return texts + list(files)
+
+
+def _read_only_marker(program, args, file_texts):
+    """True when the server itself keeps the run read-only: clickhouse-client
+    with readonly=1 (flag, or the first statement), enforced by whichever
+    server answers; or psql whose visible SQL opens a READ ONLY transaction
+    that nothing in it can end or switch."""
+    texts = _sql_texts(args, file_texts)
+    if program.startswith("clickhouse"):
+        if "--readonly=1" in args or any(
+            a == "--readonly" and args[i + 1:i + 2] == ["1"] for i, a in enumerate(args)
+        ):
+            return True
+        return bool(texts) and None not in texts and bool(_CH_READONLY_SET_RE.match(texts[0]))
+    if program != "psql" or not texts or None in texts:
+        return False
+    if any(a in ("-1", "--single-transaction") for a in args):
+        return False
+    text = re.sub(r"--[^\n]*|/\*.*?\*/", " ", "\n".join(texts), flags=re.S)
+    if not _PG_READ_ONLY_START_RE.match(text):
+        return False
+    return not _PG_READ_ONLY_BREAK_RE.search(text) and not _SQL_SIDE_EFFECT_RE.search(text)
+
+
+def _client_sql_hits(program, args, file_texts):
+    """Hits of one SQL client run. ``clickhouse local`` without a --path has
+    no server and no stored data: it is flagged only when a table function
+    reaches outside it."""
+    if _read_only_marker(program, args, file_texts):
+        return []
+    if program == "clickhouse-local" or program == "clickhouse" and args[:1] == ["local"]:
+        if not any(a == "--path" or a.startswith("--path=") for a in args):
+            texts = [" ".join(args)] + list(file_texts)
+            if None in texts:
+                return [("approval", "SQL from a file: its statements are not visible")]
+            if any(_SQL_REMOTE_RE.search(t) for t in texts):
+                return [("approval", "clickhouse local reaches a server or a file through a table function")]
+            return []
+    return _sql_hits(args, file_texts)
 
 
 def _after_options(args, value_flags):
@@ -2749,6 +2847,26 @@ def own_kill_refusals(pids, rows, launchd, caller, uid, platform, cwds, git_dirs
     return {p: refusal(p) for p in pids}
 
 
+def _kill_own_job(args):
+    """True when kill only probes (signal 0) or signals a job of this very
+    command: a %N job spec, $! or a name bound to it. A process group
+    (a negative pid) never passes."""
+    probe, operands, i = False, [], 0
+    if args[:1] == ["-0"] or args[:2] in (["-s", "0"], ["-n", "0"]):
+        probe, i = True, 1 if args[:1] == ["-0"] else 2
+    elif args[:1] in (["-s"], ["-n"]):
+        i = 2
+    elif args[:1] and args[0].startswith("-") and args[0] != "--":
+        i = 1
+    if args[i:i + 1] == ["--"]:
+        i += 1
+    operands = args[i:]
+    return bool(operands) and all(
+        re.match(r"^%(?:\d+|[%+-])?$", op) or op == "$!" or probe and re.match(r"^[1-9]\d*$", op)
+        for op in operands
+    )
+
+
 def _runs_computed_command(text):
     """True when a command head in shell ``text`` is a variable or the output
     of a substitution (what ``eval`` does), so the command is not visible."""
@@ -2785,6 +2903,8 @@ def _classify_tokens(tokens, cfg, ctx):
         return []  # prints aliases
     if program in ("sudo", "doas", "alias", "apt", "apt-get") or program == "brew" and args[:1] == ["uninstall"]:
         return [("privileged", "privileged package or system command")]
+    if program == "kill" and not via_xargs and _kill_own_job(args):
+        return []
     if program in ("kill", "pkill", "killall"):
         return [("privileged", "kill: stop a job with its own tool or let it finish; stop your own leftover processes with ~/.claude/tools/kill-own <pid>... (~/.claude/tools/kill-own --list finds them)")]
     if program == "chmod":
@@ -2795,7 +2915,10 @@ def _classify_tokens(tokens, cfg, ctx):
     if program == "chown":
         return [("privileged", "chown: file owners are not changed by agents")]
     if program == "eval":
-        return [("privileged", "eval wrapper: run the command directly")]
+        text = " ".join(raw_args)
+        if _runs_computed_command(text):
+            return [("privileged", "eval runs a command named by a variable or substitution: run the command directly")]
+        return _classify_text(text, cfg, ctx["depth"] + 1, ctx["dir"], None, ctx["cd_seen"])
     shell_flag = next((a for a in args if re.match(r"^-[a-z]*c[a-z]*$", a)), None)
     if program in _SHELLS and shell_flag:
         i = args.index(shell_flag) + 1
@@ -2830,7 +2953,9 @@ def _classify_tokens(tokens, cfg, ctx):
     if program == "kubectl":
         return _kubectl_class(args, cfg, ctx)
     if program == "docker":
-        rest = args[1:] if args[:1] == ["compose"] else args
+        rest = args[_after_options(args, _DOCKER_GLOBAL_VALUE_FLAGS):]
+        if rest[:1] == ["compose"]:
+            rest = rest[1:][_after_options(rest[1:], _COMPOSE_VALUE_FLAGS):]
         if rest[:1] == ["exec"]:
             i = _after_options(rest[1:], _DOCKER_VALUE_FLAGS)
             return _classify_inner(rest[1:][i + 1:], cfg, ctx)
@@ -2850,7 +2975,7 @@ def _classify_tokens(tokens, cfg, ctx):
     if program in cfg["sql_clients"]:
         keys = [_sql_key(p, ctx) for p in _sql_file_args(args)]
         cfg["sql_paths"].extend(k for k in keys if k is not None)
-        return _sql_hits(args, [None if k is None else cfg["sql_files"].get(k) for k in keys])
+        return _client_sql_hits(program, args, [None if k is None else cfg["sql_files"].get(k) for k in keys])
     if program in ("echo", "printf"):
         target = _redirect_target(args)
         key = target and _sql_key(target, ctx)
@@ -2969,7 +3094,7 @@ def _bind(tokens, ctx, before, after):
     bind = standalone and _unconditional(ctx, before, after)
     for name, plus, value in assigns:
         value = _substitute(value, ctx["vars"])
-        if bind and not plus and not any(ch in value for ch in "$`"):
+        if bind and not plus and (value == "$!" or not any(ch in value for ch in "$`")):
             ctx["vars"][name] = value
         else:
             ctx["vars"].pop(name, None)
@@ -3131,7 +3256,7 @@ def _heredoc_hits(line, body, cfg, depth, dir_):
         if _INLINE_INTERPRETER_RE.match(program) and _inline_code_hits(program, body):
             return _inline_code_hits(program, body)
         if program in cfg["sql_clients"]:
-            return _sql_hits([body])
+            return _client_sql_hits(program, args, [None] * len(_sql_file_args(args)) + [body])
     return []
 
 
@@ -3222,6 +3347,15 @@ def approval_path_decision(file_path, home, params=None):
     if target == root or target.startswith(root + os.sep):
         return dict(_APPROVALS_DENY)
     return None
+
+
+_SESSION_ID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+
+
+def session_id_ok(session_id):
+    """True for a Claude Code session id (a UUID); a hand-piped hook payload
+    carries another shape and neither logs nor reads or writes approvals."""
+    return bool(_SESSION_ID_RE.match(session_id or ""))
 
 
 def destructive_decision(
