@@ -168,10 +168,11 @@
     "max_bytes": 8000
   },
   "loop_cost": {
-    "_doc": "loop-cost-gate hook (gate_policy.loop_cost_decision): minutes waited on Bash commands that ran at least long_command_min_seconds, journaled per repository (~/.claude/loop-cost/<sha1 of the repository root>.jsonl, all worktrees and agents pooled). A launch of an identity that already ran long is denied when the long rows after the latest acknowledgement of any key sum to cumulative_budget_seconds, or the key ran long repeat_count times after its own latest acknowledgement. Answer: a line `# LOOP_COST: <reason>` naming the incremental form or why none exists; it is journaled as an acknowledgement. Values set from no prior default; backtest in ORIGINS.md.",
+    "_doc": "loop-cost-gate hook (gate_policy.loop_cost_decision): minutes waited on Bash commands that ran at least long_command_min_seconds, journaled per repository (~/.claude/loop-cost/<sha1 of the repository root>.jsonl, all worktrees and agents pooled). A launch of an identity that already ran long is denied when (a) all long rows of the repository (waits included) after the latest acknowledgement of any key sum to cumulative_budget_seconds and the key ran long cumulative_own_runs times after its own latest acknowledgement, or (b) the key ran long repeat_count times after its own latest acknowledgement. Identity: basenames of the programs run, with comments, wrappers (rtk, env, time, nohup, timeout, nice, caffeinate, sudo, xargs, stdbuf, check-run/wait-for/secretctl --), interpreters and their flags removed. Answer: a line `# LOOP_COST: <reason>` naming the incremental form or why none exists; it is journaled as an acknowledgement. Values set from no prior default; backtest in ORIGINS.md.",
     "long_command_min_seconds": 120,
     "window_seconds": 21600,
     "cumulative_budget_seconds": 1800,
+    "cumulative_own_runs": 2,
     "repeat_count": 3,
     "compact_stale_rows": 200
   },

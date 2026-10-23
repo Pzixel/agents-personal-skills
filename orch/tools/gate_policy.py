@@ -728,6 +728,7 @@ DEFAULT_PARAMS = {
         "long_command_min_seconds": 120,
         "window_seconds": 21600,
         "cumulative_budget_seconds": 1800,
+        "cumulative_own_runs": 2,
         "repeat_count": 3,
         "compact_stale_rows": 200,
     },
@@ -3477,7 +3478,13 @@ _LOOP_SKIP_HEADS = frozenset({
     "rm", "mkdir", "touch", "ln", "test", "[", "date", "sleep", "kill", "wait",
     "pgrep", "ps", "paste",
 })
-_LOOP_PROGRAM = re.compile(r"^[A-Za-z0-9_.+-]*[A-Za-z][A-Za-z0-9_.+-]*$")
+# Wrappers that run the next command unchanged: dropped with their options and
+# a duration or count argument (`timeout 600`, `nice -n 5`, `sudo -u x`).
+_LOOP_RUNNERS = frozenset({"timeout", "gtimeout", "nice", "caffeinate", "sudo", "xargs", "env", "stdbuf"})
+_LOOP_RUNNER_VALUE_OPTIONS = frozenset({"-n", "-u", "-g", "-s", "-k", "-I", "-P", "-L", "-d", "-w"})
+_LOOP_RUNNER_ARG = re.compile(r"^[0-9.]+[smhd]?$")
+_LOOP_PROGRAM = re.compile(r"^[A-Za-z0-9_.][A-Za-z0-9_.+-]*$")
+_LOOP_LETTER = re.compile(r"[A-Za-z]")
 _LOOP_INNER = re.compile(r"""\b(?:ba|z|k)?sh\s+-l?c\s+('([^']*)'|"((?:[^"\\]|\\.)*)")""")
 _LOOP_CD_TARGET = re.compile(r"""^\s*cd\s+("[^"]+"|'[^']+'|[^\s;|&]+)\s*(?:&&|;|\n)""")
 
@@ -3490,19 +3497,54 @@ def loop_cost_cd_target(command):
     return match.group(1).strip("\"'")
 
 
+def _strip_comments(script):
+    """``script`` without its shell comments: a ``#`` that starts a word outside
+    quotes, up to the end of its line (a ``# LOOP_COST:`` reason is prose)."""
+    out, quote, i, n = [], None, 0, len(script)
+    while i < n:
+        ch = script[i]
+        if quote is None and ch == "#" and (i == 0 or script[i - 1] in " \t\n;&|()"):
+            while i < n and script[i] != "\n":
+                i += 1
+            continue
+        if ch == "\\" and quote != "'":
+            out.append(script[i:i + 2])
+            i += 2
+            continue
+        if ch in ("'", '"') and quote in (None, ch):
+            quote = None if quote else ch
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
+
+def _loop_unwrap_runners(tokens):
+    for _ in range(4):
+        while tokens and _ENV_ASSIGN.match(tokens[0]):
+            tokens = tokens[1:]
+        if not tokens or os.path.basename(tokens[0]) not in _LOOP_RUNNERS:
+            return _unwrap(tokens)
+        tokens = tokens[1:]
+        while tokens and (tokens[0].startswith("-") or _ENV_ASSIGN.match(tokens[0])
+                          or _LOOP_RUNNER_ARG.match(tokens[0])):
+            tokens = tokens[2:] if tokens[0] in _LOOP_RUNNER_VALUE_OPTIONS else tokens[1:]
+        tokens = _unwrap(tokens)
+    return tokens
+
+
 def _loop_heads(command, depth=0):
     heads = set()
-    script, _ = _split_heredocs(command)
+    script = _strip_comments(_split_heredocs(command)[0])
     for seg in _segments(_strip_quotes(script)):
-        if seg.lstrip().startswith("#"):
+        if seg.split()[0] in ("for", "select"):
             continue
-        tokens = _tokens_after_keywords(seg)
+        tokens = _loop_unwrap_runners(_tokens_after_keywords(seg))
         if tokens and os.path.basename(tokens[0]) in _LOOP_PREFIX_TOOLS and "--" in tokens:
-            tokens = _unwrap(tokens[tokens.index("--") + 1:])
+            tokens = _loop_unwrap_runners(_unwrap(tokens[tokens.index("--") + 1:]))
         prog = _program(tokens)
         if not prog or prog in _LOOP_SKIP_HEADS or prog in _NEUTRAL_TOOLS:
             continue
-        if _LOOP_PROGRAM.match(prog):
+        if _LOOP_PROGRAM.match(prog) and _LOOP_LETTER.search(prog):
             heads.add(prog)
     if depth < 2:
         for match in _LOOP_INNER.finditer(script):
@@ -3576,34 +3618,48 @@ def _minutes(ms):
     return "%.0f" % (ms / 60000.0)
 
 
+def loop_cost_reads_journal(command, params=None):
+    """Whether a PreToolUse decision on ``command`` depends on the journal: an
+    acknowledgement is written to it, a wait or a keyless command never is
+    refused."""
+    if override_marker(command, "LOOP_COST", params):
+        return True
+    return bool(command_identity(command)) and classify_command(command, params) != WAIT_FOR
+
+
 def loop_cost_decision(rows, command, now, agent_type="", params=None):
     """Decide one Bash launch against the repository's loop-cost journal.
 
     ``rows`` are the journal rows, ``now`` epoch seconds. A wait, and a
     command whose identity never ran long in the window, pass. For an identity
-    that did, count its long rows after its latest acknowledgement: deny when
-    they sum to ``cumulative_budget_seconds`` (trigger a) or number
-    ``repeat_count`` (trigger b). A ``# LOOP_COST: <reason>`` line returns
+    that did, deny when (a) all long rows of the repository (waits included)
+    after the latest acknowledgement of any key sum to
+    ``cumulative_budget_seconds`` and the key ran long ``cumulative_own_runs``
+    times after its own latest acknowledgement, or (b) the key ran long
+    ``repeat_count`` times after it. A ``# LOOP_COST: <reason>`` line returns
     ``override`` with the reason and the key; the caller journals it as an
-    acknowledgement row, which restarts both counts for that key."""
+    acknowledgement row, which restarts the pooled sum and that key's count."""
     reason = override_marker(command, "LOOP_COST", params)
     key = command_identity(command)
     if reason:
         return {"decision": "override", "reason": reason, "key": key}
-    if not key or classify_command(command, params) == WAIT_FOR:
+    if not loop_cost_reads_journal(command, params):
         return {"decision": "allow"}
     p = _merged_params(params)["loop_cost"]
     live = sorted(loop_cost_live(rows, now, params), key=_loop_ts)
     long_rows = [r for r in live if not r.get("ack")]
     acks = [r for r in live if r.get("ack")]
+    last_any_ack = max((_loop_ts(r) for r in acks), default=float("-inf"))
     last_ack = max((_loop_ts(r) for r in acks if r.get("key") == key), default=float("-inf"))
     since = [r for r in long_rows if r.get("key") == key and _loop_ts(r) > last_ack]
-    total_ms = sum(int(r.get("duration_ms") or 0) for r in since)
+    pooled_ms = sum(int(r.get("duration_ms") or 0) for r in long_rows if _loop_ts(r) > last_any_ack)
     budget_ms = float(p["cumulative_budget_seconds"]) * 1000
     triggers = []
-    if total_ms >= budget_ms:
-        triggers.append("%s min waited on %s reached the budget of %s min" % (
-            _minutes(total_ms), key, _minutes(budget_ms)))
+    if pooled_ms >= budget_ms and len(since) >= int(p["cumulative_own_runs"]):
+        triggers.append(
+            "%s min waited on long commands here since the last acknowledgement reached "
+            "the budget of %s min, and %s ran long %d times" % (
+                _minutes(pooled_ms), _minutes(budget_ms), key, len(since)))
     if len(since) >= int(p["repeat_count"]):
         triggers.append("%s ran long %d times" % (key, len(since)))
     if not triggers:

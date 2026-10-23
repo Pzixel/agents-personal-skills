@@ -96,17 +96,18 @@ def main():
 
     params = gate_policy.load_params()
     now = time.time()
-    path = journal_path(gate_policy, command, cwd)
 
     if event in ("PostToolUse", "PostToolUseFailure"):
         row = gate_policy.loop_cost_row(command, payload.get("duration_ms"), agent_type, now, params)
         if row:
+            path = journal_path(gate_policy, command, cwd)
             append_row(path, row)
             compact(gate_policy, path, now, params)
         return
-    if event != "PreToolUse":
+    if event != "PreToolUse" or not gate_policy.loop_cost_reads_journal(command, params):
         return
 
+    path = journal_path(gate_policy, command, cwd)
     decision = gate_policy.loop_cost_decision(read_rows(path), command, now, agent_type, params)
     if decision["decision"] == "override":
         append_row(path, {
