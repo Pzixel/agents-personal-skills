@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""kill-own [<pid>... | --list]
+"""kill-own [<pid>... | -f <pattern> | --list]
 
 Stops an agent's own leftover local processes (orphaned dev servers, debug
 binaries, port-forwards). The tool only gathers facts (ps, launchctl) and
@@ -7,7 +7,9 @@ sends signals; gate_policy.own_kill_refusals decides. Every PID is checked
 before any signal is sent; one refusal kills nothing and exits 2 with one
 line per refused PID; otherwise each PID gets SIGTERM (never SIGKILL).
 Without arguments, or with --list, prints the eligible processes
-(pid, ppid, elapsed, cwd, command).
+(pid, ppid, elapsed, cwd, command). With -f, the PIDs are the processes
+whose full command matches <pattern> as ``pgrep -f`` reads it, minus this
+tool and its ancestors; no match exits 2.
 """
 
 import os
@@ -114,6 +116,22 @@ def main(argv):
             _, ppid, _, etime, _, args = rows[pid]
             print("\t".join((pid, ppid, etime, where.get(pid, "-"), args)))
         return 0
+    if argv[0] == "-f":
+        if len(argv) != 2:
+            print("kill-own: usage: kill-own -f <pattern>", file=sys.stderr)
+            return 2
+        out = subprocess.run(["pgrep", "-f", argv[1]], capture_output=True, text=True)
+        if out.returncode > 1:
+            print("kill-own: pgrep failed: " + out.stderr.strip(), file=sys.stderr)
+            return 2
+        mine, p = set(), str(os.getpid())
+        while p in rows and p not in mine:
+            mine.add(p)
+            p = rows[p][1]
+        pattern, argv = argv[1], [p for p in out.stdout.split() if p not in mine]
+        if not argv:
+            print("kill-own: no process matches " + pattern, file=sys.stderr)
+            return 2
     refusals = [why for why in gate_policy.own_kill_refusals(argv, *facts).values() if why]
     if refusals:
         for r in refusals:

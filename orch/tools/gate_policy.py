@@ -2906,7 +2906,7 @@ def _classify_tokens(tokens, cfg, ctx):
     if program == "kill" and not via_xargs and _kill_own_job(args):
         return []
     if program in ("kill", "pkill", "killall"):
-        return [("privileged", "kill: stop a job with its own tool or let it finish; stop your own leftover processes with ~/.claude/tools/kill-own <pid>... (~/.claude/tools/kill-own --list finds them)")]
+        return [("privileged", "kill: stop a job with its own tool or let it finish; stop your own leftover processes with ~/.claude/tools/kill-own -f '<pattern>' or ~/.claude/tools/kill-own <pid>... (~/.claude/tools/kill-own --list finds them)")]
     if program == "chmod":
         operands = _path_args(args)[1:]
         if operands and all(_ours(p, cfg, ctx) for p in operands):

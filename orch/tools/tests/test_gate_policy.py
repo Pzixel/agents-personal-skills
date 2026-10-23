@@ -1713,8 +1713,9 @@ class DestructiveWorkingDirectoryTest(unittest.TestCase):
         # and carries the session marker in its environment: a leftover; its
         # argument CLAUDE_PID=1 names a live process and must not count
         env = dict(os.environ, CLAUDE_PID=str(os.getpid()))
+        tag = "kill-own-test-" + str(os.getpid())
         out = subprocess.run([sys.executable, "-c", "import subprocess,sys;print(subprocess.Popen("
-                              "[sys.executable,'-c','import time;time.sleep(30)','CLAUDE_PID=1'],"
+                              "[sys.executable,'-c','import time;time.sleep(30)','CLAUDE_PID=1','" + tag + "'],"
                               "stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).pid)"],
                              capture_output=True, text=True, start_new_session=True, env=env,
                              cwd=tempfile.gettempdir()).stdout.strip()
@@ -1747,7 +1748,11 @@ class DestructiveWorkingDirectoryTest(unittest.TestCase):
             unmarked = subprocess.run([sys.executable, tool, hidden], capture_output=True, text=True, env=env)
             self.assertEqual(unmarked.returncode, 2)
             self.assertIn("no agent session marker", unmarked.stderr)
-            stopped = subprocess.run([sys.executable, tool, out], env=env)
+            missing = subprocess.run([sys.executable, tool, "-f", tag + "-none"], capture_output=True,
+                                     text=True, env=env)
+            self.assertEqual((missing.returncode, missing.stdout), (2, ""))
+            # the pattern also sits in this tool's own argv: its ancestors are not targets
+            stopped = subprocess.run([sys.executable, tool, "-f", tag], env=env)
             self.assertEqual(stopped.returncode, 0)
             for _ in range(50):
                 if not alive():
