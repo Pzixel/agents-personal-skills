@@ -10,6 +10,7 @@ a complete decision dict.
 """
 
 import fnmatch
+import datetime
 import json
 import os
 import re
@@ -719,6 +720,16 @@ DEFAULT_PARAMS = {
         "db_host_flags": ["--host", "-h", "-b", "--broker-list"],
         "http_clients": ["curl", "wget", "http", "https", "httpie"],
         "local_hosts": ["localhost", "127.0.0.1", "::1", "host.docker.internal"],
+    },
+    # Loop-cost gate (loop_cost_decision): minutes waited on long Bash
+    # commands per repository. Set from no prior default; the backtest
+    # numbers are in ORIGINS.md.
+    "loop_cost": {
+        "long_command_min_seconds": 120,
+        "window_seconds": 21600,
+        "cumulative_budget_seconds": 1800,
+        "repeat_count": 3,
+        "compact_stale_rows": 200,
     },
     "destructive": {
         "ours_paths": ["/tmp/", "tmp/", ".worktrees/", "~/.claude/tmp/", "~/Library/Caches/"],
@@ -3450,3 +3461,182 @@ def _command_decision(command, cfg, cwd):
                    " give the owner its path and ask for the line APPROVE <sha256>, then run it from the main"
                    " session as bash <plan>  # DESTRUCTIVE_PLAN sha256=<hex>")
     return {"decision": _DECISION[cls], "class": cls, "reason": reason}
+
+
+# --- Loop-cost gate -----------------------------------------------------------
+# Pure policy behind hooks/loop-cost-gate.py. The journal is one JSONL file per
+# repository; rows are dicts {ts (ISO UTC), duration_ms, agent_type, key} for
+# a long command, plus {ack, command} on an acknowledgement row (duration 0).
+
+_LOOP_PREFIX_TOOLS = ("check-run", "wait-for", "secretctl")
+# Heads that never carry a command's wait: navigation, shell builtins and the
+# small file and text tools that edit or inspect around the real run.
+_LOOP_SKIP_HEADS = frozenset({
+    "cd", "pushd", "popd", "export", "source", ".", "set", "unset", "true", "false",
+    "echo", "printf", "grep", "rg", "tee", "cat", "sed", "awk", "ls", "mv", "cp",
+    "rm", "mkdir", "touch", "ln", "test", "[", "date", "sleep", "kill", "wait",
+    "pgrep", "ps", "paste",
+})
+_LOOP_PROGRAM = re.compile(r"^[A-Za-z0-9_.+-]*[A-Za-z][A-Za-z0-9_.+-]*$")
+_LOOP_INNER = re.compile(r"""\b(?:ba|z|k)?sh\s+-l?c\s+('([^']*)'|"((?:[^"\\]|\\.)*)")""")
+_LOOP_CD_TARGET = re.compile(r"""^\s*cd\s+("[^"]+"|'[^']+'|[^\s;|&]+)\s*(?:&&|;|\n)""")
+
+
+def loop_cost_cd_target(command):
+    """The directory of a leading ``cd <path> &&`` (quotes removed), else None."""
+    match = _LOOP_CD_TARGET.match(command or "")
+    if not match:
+        return None
+    return match.group(1).strip("\"'")
+
+
+def _loop_heads(command, depth=0):
+    heads = set()
+    script, _ = _split_heredocs(command)
+    for seg in _segments(_strip_quotes(script)):
+        if seg.lstrip().startswith("#"):
+            continue
+        tokens = _tokens_after_keywords(seg)
+        if tokens and os.path.basename(tokens[0]) in _LOOP_PREFIX_TOOLS and "--" in tokens:
+            tokens = _unwrap(tokens[tokens.index("--") + 1:])
+        prog = _program(tokens)
+        if not prog or prog in _LOOP_SKIP_HEADS or prog in _NEUTRAL_TOOLS:
+            continue
+        if _LOOP_PROGRAM.match(prog):
+            heads.add(prog)
+    if depth < 2:
+        for match in _LOOP_INNER.finditer(script):
+            heads |= _loop_heads(match.group(2) if match.group(2) is not None else match.group(3), depth + 1)
+    return heads
+
+
+def command_identity(command):
+    """Identity of a command for the loop-cost gate: the basenames of the
+    programs it runs once wrappers (``cd``, assignments, ``env``, ``time``,
+    ``check-run --``, ``wait-for ... --``, interpreters with their flags, ``sh
+    -c``), pipe filters and redirects are removed, sorted and joined by ``+``.
+    An interpreter contributes the script it runs (``python3 -m x`` -> ``x``)."""
+    return "+".join(sorted(_loop_heads(command or "")))
+
+
+def _loop_ts(row):
+    try:
+        return datetime.datetime.fromisoformat(str(row.get("ts", "")).replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def loop_cost_live(rows, now, params=None):
+    """The journal rows inside the window ending at ``now`` (epoch seconds)."""
+    window = float(_merged_params(params)["loop_cost"]["window_seconds"])
+    out = []
+    for row in rows:
+        ts = _loop_ts(row)
+        if ts is not None and now - window <= ts <= now + 60:
+            out.append(row)
+    return out
+
+
+def loop_cost_row(command, duration_ms, agent_type, now, params=None):
+    """The journal row for one finished Bash command, or None when it ran
+    shorter than ``long_command_min_seconds``. A wait (``wait-for``) is
+    journaled with an empty key: its minutes count, it never forms a key."""
+    p = _merged_params(params)["loop_cost"]
+    if duration_ms is None or duration_ms < float(p["long_command_min_seconds"]) * 1000:
+        return None
+    key = "" if classify_command(command, params) == WAIT_FOR else command_identity(command)
+    return {
+        "ts": loop_cost_iso(now),
+        "duration_ms": int(duration_ms),
+        "agent_type": agent_type or "main",
+        "key": key,
+    }
+
+
+def loop_cost_iso(now):
+    return datetime.datetime.fromtimestamp(now, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+_LOOP_DENY_HEAD = (
+    "Loop-cost gate: {key} ran long {runs} times for {total} min in this "
+    "repository since its last acknowledgement; all long commands here took "
+    "{window} min in the last {hours} h.\n"
+    "Long commands by identity in the window (top 5 by total minutes):\n"
+)
+_LOOP_DENY_TAIL = (
+    "Trigger: {trigger}.\n"
+    "Before the next run, name the incremental form (resume from a saved point, "
+    "the affected target only, one full run as the gate before merge) or why "
+    "none exists, as a line `# LOOP_COST: <reason>` in the command; the reason "
+    "is logged."
+)
+
+
+def _minutes(ms):
+    return "%.0f" % (ms / 60000.0)
+
+
+def loop_cost_decision(rows, command, now, agent_type="", params=None):
+    """Decide one Bash launch against the repository's loop-cost journal.
+
+    ``rows`` are the journal rows, ``now`` epoch seconds. A wait, and a
+    command whose identity never ran long in the window, pass. For an identity
+    that did, count its long rows after its latest acknowledgement: deny when
+    they sum to ``cumulative_budget_seconds`` (trigger a) or number
+    ``repeat_count`` (trigger b). A ``# LOOP_COST: <reason>`` line returns
+    ``override`` with the reason and the key; the caller journals it as an
+    acknowledgement row, which restarts both counts for that key."""
+    reason = override_marker(command, "LOOP_COST", params)
+    key = command_identity(command)
+    if reason:
+        return {"decision": "override", "reason": reason, "key": key}
+    if not key or classify_command(command, params) == WAIT_FOR:
+        return {"decision": "allow"}
+    p = _merged_params(params)["loop_cost"]
+    live = sorted(loop_cost_live(rows, now, params), key=_loop_ts)
+    long_rows = [r for r in live if not r.get("ack")]
+    acks = [r for r in live if r.get("ack")]
+    last_ack = max((_loop_ts(r) for r in acks if r.get("key") == key), default=float("-inf"))
+    since = [r for r in long_rows if r.get("key") == key and _loop_ts(r) > last_ack]
+    total_ms = sum(int(r.get("duration_ms") or 0) for r in since)
+    budget_ms = float(p["cumulative_budget_seconds"]) * 1000
+    triggers = []
+    if total_ms >= budget_ms:
+        triggers.append("%s min waited on %s reached the budget of %s min" % (
+            _minutes(total_ms), key, _minutes(budget_ms)))
+    if len(since) >= int(p["repeat_count"]):
+        triggers.append("%s ran long %d times" % (key, len(since)))
+    if not triggers:
+        return {"decision": "allow"}
+    return {"decision": "deny", "reason": _loop_deny_text(
+        key, since, long_rows, acks, triggers, agent_type, p)}
+
+
+def _loop_deny_text(key, since, long_rows, acks, triggers, agent_type, p):
+    folded = {}
+    for row in long_rows:
+        entry = folded.setdefault(row.get("key") or "(waits)", [0, 0, set()])
+        entry[0] += 1
+        entry[1] += int(row.get("duration_ms") or 0)
+        entry[2].add(row.get("agent_type") or "main")
+    lines = [
+        "  %s: %d runs, avg %s min, total %s min, run by %s" % (
+            k, n, _minutes(ms / n), _minutes(ms), ", ".join(sorted(types)))
+        for k, (n, ms, types) in sorted(folded.items(), key=lambda kv: -kv[1][1])[:5]
+    ]
+    text = _LOOP_DENY_HEAD.format(
+        key=key, runs=len(since),
+        total=_minutes(sum(int(r.get("duration_ms") or 0) for r in since)),
+        window=_minutes(sum(int(r.get("duration_ms") or 0) for r in long_rows)),
+        hours="%g" % (float(p["window_seconds"]) / 3600),
+    ) + "\n".join(lines) + "\n"
+    if acks:
+        text += "Prior acknowledgements in the window:\n" + "\n".join(
+            '  "%s" (%s, %s)' % (a.get("ack"), a.get("key") or "-", a.get("ts")) for a in acks[-5:]
+        ) + "\n"
+    else:
+        text += "Prior acknowledgements in the window: none\n"
+    text += _LOOP_DENY_TAIL.format(trigger="; ".join(triggers))
+    if agent_type:
+        text += " Carry the reason into your reply's deviations."
+    return text
