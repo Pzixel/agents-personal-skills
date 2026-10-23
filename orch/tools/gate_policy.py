@@ -2780,7 +2780,9 @@ def own_kill_refusals(pids, rows, launchd, caller, uid, platform, cwds, git_dirs
     through no agent with a top process that is not a launchd job and whose
     working directory lies in a git work tree or a temp directory and whose
     subtree carries at least one session marker, every marker naming the
-    caller's session or a pid no process holds any more."""
+    caller's session or a pid no process holds any more; a subtree whose
+    environments ps hides entirely (platform binaries: sleep, tail, sh)
+    carries no evidence either way and passes on the rest."""
     if platform != "darwin":
         return {p: p + ": kill-own decides only on macOS" for p in pids}
     children = {}
@@ -2827,12 +2829,13 @@ def own_kill_refusals(pids, rows, launchd, caller, uid, platform, cwds, git_dirs
             top = p
         if top in launchd:
             return pid + ": its top process " + top + " is a launchd job"
-        found, todo = set(), [top]
+        found, readable, todo = set(), False, [top]
         while todo:
             p = todo.pop()
+            readable = readable or p in markers
             found |= markers.get(p, set())
             todo.extend(children.get(p, []))
-        if not found:
+        if not found and readable:
             return pid + ": its top process " + top + " has no agent session marker"
         for m in sorted(found):
             if m != session and m in rows:
@@ -3358,7 +3361,21 @@ def session_id_ok(session_id):
     return bool(_SESSION_ID_RE.match(session_id or ""))
 
 
-def destructive_decision(
+_NO_WORKAROUND = ("\nDo not work around this refusal (other spellings, wrappers, eval, variables,"
+                  " scripts): use the named tool or a plan.")
+
+
+def destructive_decision(*args, **kwargs):
+    """``_destructive_decision`` with every refusal ending in one line that
+    tells the agent not to work around it: the gate catches mistakes, not a
+    deliberate bypass."""
+    result = _destructive_decision(*args, **kwargs)
+    if result["decision"] == "deny":
+        result = dict(result, reason=result["reason"] + _NO_WORKAROUND)
+    return result
+
+
+def _destructive_decision(
     command, agent_type, plan_text, plan_hash, params=None, permission_mode="",
     sql_file_texts=None, approved=False, cwd=None,
 ):

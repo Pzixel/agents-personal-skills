@@ -1160,7 +1160,7 @@ class DestructiveDecisionTest(unittest.TestCase):
     def test_plan_with_tampered_hash_is_denied(self):
         result = _destructive(_PLAN_CMD, plan_text=_PLAN, plan_hash="b" * 64)
         self.assertEqual(
-            (result["decision"], result["reason"]),
+            (result["decision"], result["reason"].split("\n")[0]),
             ("deny", "plan hash mismatch: rewrite the marker after editing the plan"),
         )
 
@@ -1325,7 +1325,7 @@ class DestructiveDecisionTest(unittest.TestCase):
         result = _destructive(
             "bash tmp/plan.sh  # DESTRUCTIVE_PLAN sha256=" + _PLAN_HASH, "", _PLAN, _PLAN_HASH
         )
-        self.assertEqual((result["decision"], result["reason"]), ("deny", "plan path must be absolute"))
+        self.assertEqual((result["decision"], result["reason"].split("\n")[0]), ("deny", "plan path must be absolute"))
 
     def test_plan_running_another_file_is_denied(self):
         for line in ("source other.sh\n", ". other.sh\n", "exec bash evil.sh\n", "bash other.sh\n"):
@@ -1354,7 +1354,7 @@ class DestructiveDecisionTest(unittest.TestCase):
     def test_oversized_command_is_denied(self):
         cmd = "# " + "x" * 70000 + "\nrm -rf /"
         self.assertEqual(
-            _destructive(cmd)["reason"], "command too long for the destructive gate"
+            _destructive(cmd)["reason"].split("\n")[0], "command too long for the destructive gate"
         )
 
     def test_relative_rename_is_unclassed(self):
@@ -1617,13 +1617,12 @@ class DestructiveWorkingDirectoryTest(unittest.TestCase):
                 "53": "/private/tmp", "54": "/w/repo"}
         why = gate_policy.own_kill_refusals(list(rows) + ["x1", "99"], rows, {"40"}, "15", me, "darwin",
                                             cwds, {"/w/repo"}, {"/private/tmp"}, markers, "13")
-        self.assertEqual({p for p, r in why.items() if r is None}, {"16", "20", "21", "25", "26", "27"})
+        self.assertEqual({p for p, r in why.items() if r is None}, {"16", "20", "21", "25", "26", "27", "53"})
         expected = {"x1": "no such process", "99": "no such process", "43": "another user",
                     "13": "caller or its ancestor", "10": "caller or its ancestor",
                     "22": "terminal ttys009", "24": "agent session", "31": "live agent session 30",
                     "40": "launchd job", "41": "outside a git work tree", "44": "outside a git work tree",
-                    "42": "is unknown", "50": "no agent session marker",
-                    "53": "no agent session marker", "52": "belongs to live session 10",
+                    "42": "is unknown", "50": "no agent session marker", "52": "belongs to live session 10",
                     "51": "belongs to live session 10", "54": "belongs to live session 10"}
         for pid, reason in expected.items():
             with self.subTest(pid=pid):
@@ -1732,22 +1731,18 @@ class DestructiveWorkingDirectoryTest(unittest.TestCase):
                                    env=dict(env, CLAUDE_PID="1"))
             self.assertEqual((other.returncode, alive()), (2, True))
             self.assertIn("belongs to live session " + str(os.getpid()), other.stderr)
-            # a platform binary hides its environment: a marker in its argv
-            # naming a gone pid must not make it eligible
-            gone = next(str(n) for n in range(99999, 90000, -1)
-                        if subprocess.run(["ps", "-p", str(n)], capture_output=True).returncode)
+            # a platform binary hides its environment: an own detached
+            # leftover of it passes on the rest of the evidence
             hidden = subprocess.run([sys.executable, "-c", "import subprocess,sys;print(subprocess.Popen("
-                                     "['/bin/zsh','-c','sleep 10; true','CLAUDE_PID=" + gone + "'],"
+                                     "['/bin/zsh','-c','sleep 10; true'],"
                                      "stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).pid)"],
                                     capture_output=True, text=True, start_new_session=True, env=env,
                                     cwd=tempfile.gettempdir()).stdout.strip()
             time.sleep(0.3)
             relisted = subprocess.run([sys.executable, tool, "--list"], capture_output=True, text=True,
                                       env=env)
-            self.assertNotIn(hidden, [l.split("\t")[0] for l in relisted.stdout.splitlines()])
-            unmarked = subprocess.run([sys.executable, tool, hidden], capture_output=True, text=True, env=env)
-            self.assertEqual(unmarked.returncode, 2)
-            self.assertIn("no agent session marker", unmarked.stderr)
+            self.assertIn(hidden, [l.split("\t")[0] for l in relisted.stdout.splitlines()])
+            self.assertEqual(subprocess.run([sys.executable, tool, hidden], env=env).returncode, 0)
             missing = subprocess.run([sys.executable, tool, "-f", tag + "-none"], capture_output=True,
                                      text=True, env=env)
             self.assertEqual((missing.returncode, missing.stdout), (2, ""))
@@ -1890,10 +1885,21 @@ class FalsePositiveRulesTest(unittest.TestCase):
             with self.subTest(cmd=cmd):
                 self.assertEqual(_destructive(cmd)["decision"] == "allow", allowed)
 
+    def test_clickhouse_readonly_flag_covers_a_query_file(self):
+        decision = gate_policy.destructive_decision(
+            "clickhouse-client --readonly=1 -f /tmp/q.sql", "", None, None,
+            sql_file_texts={"/tmp/q.sql": "DR" + "OP TABLE orders"})
+        self.assertEqual(decision["decision"], "allow")
+
     def test_read_only_file_with_a_side_effect_call_is_asked(self):
         decision = gate_policy.destructive_decision(
             "psql -f /tmp/q.sql", "", None, None, sql_file_texts={"/tmp/q.sql": "SELECT pg_reload_conf();"})
         self.assertEqual(decision["decision"], "ask")
+
+    def test_every_refusal_says_not_to_work_around_it(self):
+        reason = _destructive("pkill -f worker")["reason"]
+        self.assertTrue(reason.endswith("use the named tool or a plan."), reason)
+        self.assertIn("kill-own -f", reason)
 
     def test_sql_refusal_names_both_read_markers(self):
         reason = _destructive('psql -c "DELETE FROM orders WHERE id = 1"')["reason"]
@@ -1912,6 +1918,18 @@ class PlanApprovalHookTest(unittest.TestCase):
                 universal_newlines=True, stdout=subprocess.DEVNULL,
             )
             self.assertTrue(os.path.isfile(os.path.join(home, ".claude", "approvals", "0b9c2f5e-1d2a-4c3b-9e8f-7a6b5c4d3e2f", "c" * 64)))
+
+    def test_non_uuid_session_creates_no_approval(self):
+        import subprocess
+        import tempfile
+        hook = os.path.join(os.path.dirname(__file__), "..", "..", "hooks", "plan-approval.py")
+        with tempfile.TemporaryDirectory() as home:
+            subprocess.run(
+                [sys.executable, hook], env=dict(os.environ, HOME=home),
+                input=json.dumps({"session_id": "../escape", "prompt": "approve " + "C" * 64 + "\n"}),
+                universal_newlines=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            self.assertFalse(os.path.exists(os.path.join(home, ".claude", "approvals")))
 
 
 class ApprovalSpellingAndParseTest(unittest.TestCase):

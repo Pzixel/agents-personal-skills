@@ -71,7 +71,9 @@ def session_markers():
     shows; every hit is kept, so a stray value can only add a refusal.
     ``ps -E`` appends the environment to the command with no delimiter, so the
     environment is the part after the plain command; a pid whose line does
-    not start with its plain command is left out as unreadable."""
+    not start with its plain command, or shows nothing after it (a platform
+    binary such as sleep, tail or sh: ps hides its environment), is left out
+    as unreadable."""
     def lines(extra):
         out = subprocess.run(["ps", "-A", "-ww"] + extra + ["-o", "pid=,command="],
                              capture_output=True, text=True, check=True).stdout
@@ -81,6 +83,8 @@ def session_markers():
     for pid, command in plain.items():
         if pid in full and full[pid].startswith(command):
             env = full[pid][len(command):]
+            if not env.strip():
+                continue
             found[pid] = set(re.findall(r"(?:^|\s)CLAUDE_PID=(\d+)(?=\s|$)", env))
     return found
 
