@@ -23,7 +23,7 @@ task: <task>
 workspace: <ws>
 files: <file:line pointers from the scout run>
 size: <expected diff in LOC and the subsystems touched>
-check: <the run on the real path that proves the work; never only unit tests>
+check: <the cheapest run that decides: logic as native tests; a third-party store through the one shared local container per store (a database per task, dropped at the end), never a container, image or volume per task; real behaviour on production after rollout as the last step; a container or image only to compare two adjacent variants, with its reason and its removal>
 Reply: commits, check, size, deviations, risks[], checklist, questions[].)
 ```
 2. Design review and simplify pass, when `risks[]` is non-empty or the prompt carried `design: required`; one round, both agents in one message on the same DESIGN.md revision. Load the `simplify` skill in the main session and run its lens pass on the design: a design is about 600 words (builder.md), so normally one lens agent applies all five lenses; at `plan_simplify.fan_out_min_words` words or more the fan-out of the plan rule applies (rule: superpowers-writing-plans-psilon/SKILL.md, decisions/plan-simplify-fan-out-by-plan-size.md); the reviewer checks the contract, not the lenses:

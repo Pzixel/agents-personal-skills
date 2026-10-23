@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """PreToolUse hook for Bash: a change lands on a shared branch only with the
-real-path check named in the command.
+real-path check (service start plus one unit through natively, against the shared local store container or a production read route, never a container per task)
+named in the command.
 
 `gh pr merge` and `git push` to master/main are refused unless the command
 carries `CHECK_RAN: <what ran on the real path, result>`, `PROD_POSITION:

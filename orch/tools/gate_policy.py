@@ -1563,7 +1563,8 @@ _MERGE_RE = re.compile(
 _MERGE_REASON = (
     "Refused by merge-gate: this command lands a change on a shared branch. Run "
     "the declared check on the real path first (service start plus one unit "
-    "through; on a numeric path the target before and after), then repeat the "
+    "through natively, against the shared local store container or a production "
+    "read route, never a container per task; on a numeric path the target before and after), then repeat the "
     "command with `CHECK_RAN: <what ran, result>` in it. Unit tests or a review "
     "alone do not count (retro 2026-10-12: 36 merges without a real-path check "
     "cost 57 h and one irreversible mass send)."
@@ -1963,7 +1964,12 @@ _BRIEF_LINES = {
 _BRIEF_REASON = (
     "Refused by brief-gate: a `{requested}` prompt needs the line(s) {missing} "
     "(each at the start of a line). `files:` = file:line pointers from one "
-    "`orch:scout` run; `check:` = the run on the real path that proves the work; "
+    "`orch:scout` run; `check:` = the cheapest run that decides: logic as native "
+    "tests; a third-party store through the one shared local container per store "
+    "(a database per task, dropped at the end), never a container, image or volume "
+    "per task; real behaviour on production after rollout as the last step; a "
+    "container or image only to compare two adjacent variants, with its reason and "
+    "its removal; "
     "`access:` = the route to every system the probe reads. A "
     "delegate that must discover these burns its context before the deliverable "
     "(retro 2026-10-12: 30+ builders and 4 probes died that way). Add the lines, "
