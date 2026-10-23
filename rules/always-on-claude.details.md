@@ -14,6 +14,7 @@ Classified by the orch hook `deny-destructive.py` (policy `gate_policy.destructi
 
 - `ours`: paths under `/tmp`, `tmp/`, `.worktrees/`; k8s objects with the `orch.session` label; live writes with a cheap mechanical undo on one named object (`kubectl scale`, `kubectl rollout restart|undo|pause|resume`; with `--all`, a selector, several objects or `-f`/`-k` they are `approval`). Runs without a prompt. Flux reconcile/suspend/resume is unclassed and runs.
 - `approval`: a live write whose undo is not mechanical (SQL writes, `kubectl apply/delete/patch`). Runs only from one plan script with `# scope / # undo / # count / # contradiction / # prod_position / # way_back` headers, run from the main session as `bash <abs path>  # DESTRUCTIVE_PLAN sha256=<hash>`, after the owner's approval of the plan: the permission prompt, or `APPROVE <hash>` where the session cannot prompt.
+- Reads pass unclassed when the server enforces them: `clickhouse-client --readonly=1`, or psql SQL that starts with `BEGIN READ ONLY;` and has no COMMIT, ROLLBACK, SET TRANSACTION, `transaction_read_only`, RESET ALL or backslash command (no `-1`). A job of the same command stops with `kill $!`, `kill %1` or a name bound to `$!`.
 - `impossible`: no undo (DROP/TRUNCATE, Secret replace, namespace/PVC delete, force push, rm outside ours). Refused as a bare command; it runs only from an approved plan that states what it does.
 
 ## Waits
