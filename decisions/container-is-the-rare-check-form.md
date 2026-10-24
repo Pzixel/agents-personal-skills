@@ -22,7 +22,7 @@ Measured over 5 weeks to 2026-10-23: 4468 docker calls in 67 sessions, 592 image
 
 ## Alternatives compared
 
-- PreToolUse gate on docker build/run with a `# DOCKER:` acknowledgement: held back. The drivers were rule text and one missing library; usage is measured again live before a refusal is added.
+- PreToolUse gate on docker build/run with a `# DOCKER:` acknowledgement: held back. The drivers were rule text and one missing library; usage is measured again live before a refusal is added. Measured 2026-10-24: two sessions started after the rule merged left no per-task container; the 138 anonymous volumes seen that day came from a dry-run script (`bash run.sh` with six `docker run` inside) written before the rule in a session on the old snapshot, a shape a Bash-command gate would not see. Still held back (retro-evals runs/docker-form/RESULT.md, «P3 decision»).
 - A dev ClickHouse in the cluster: a shared production-adjacent resource (CASE-48 class: an exec in a prod broker OOM-killed it).
 - Pure tests only, SQL verified on production: leaves no pre-merge SQL check.
 
