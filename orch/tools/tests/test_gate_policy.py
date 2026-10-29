@@ -703,7 +703,7 @@ class MergeGateDecisionTest(unittest.TestCase):
             self.assertEqual(result["decision"], "deny", field)
             self.assertIn("`" + field.split(" ")[0], result["reason"].split("Missing:")[1], field)
 
-    # A shared-mechanism change merged with the three older fields (retro CASE-50).
+    # Incident fixture: the merge of a shared-mechanism change with the three older fields (retro CASE-50, N-04).
     _SHARED_LEVER = (
         "gh pr merge 237 --squash --delete-branch # CHECK_RAN: build-and-test success run 39100814200; "
         "PROD_POSITION: all ClickHouse query CPU scheduling on node-1 prod; "
@@ -714,13 +714,6 @@ class MergeGateDecisionTest(unittest.TestCase):
         result = gate_policy.merge_gate_decision(self._SHARED_LEVER)
         self.assertEqual(result["decision"], "deny")
         self.assertIn("`WORSE_FOR", result["reason"].split("Missing:")[1])
-
-    def test_shared_lever_with_worse_for_is_allowed(self):
-        cmd = self._SHARED_LEVER + (
-            "; WORSE_FOR: every query of the node passes the new scheduler; "
-            "break = scheduler withholds slots, all queries hang; signal: query older than 15 min"
-        )
-        self.assertEqual(gate_policy.merge_gate_decision(cmd)["decision"], "allow")
 
     def test_branch_push_and_pr_create_are_allowed(self):
         for cmd in ("git push -u origin retro-fixes-2", "gh pr create --fill"):

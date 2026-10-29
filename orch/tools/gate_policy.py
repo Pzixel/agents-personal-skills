@@ -1576,8 +1576,8 @@ _MERGE_REASON = (
     "the declared check on the real path first (service start plus one unit "
     "through natively, against the shared local store container or a production "
     "read route, never a container per task; on a numeric path the target before and after), then repeat the "
-    "command with `CHECK_RAN: <what ran, result>` in it, and with `WORSE_FOR:` naming "
-    "who gets worse or can break for every consumer once it is built. Unit tests or a review "
+    "command with the fields below: a change lands only with the check, its "
+    "production position, the way back and who gets worse. Unit tests or a review "
     "alone do not count (retro 2026-10-12: 36 merges without a real-path check "
     "cost 57 h and one irreversible mass send)."
 )

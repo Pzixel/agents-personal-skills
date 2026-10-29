@@ -22,4 +22,4 @@ Owner, 2026-10-29: levers with harmful effects on the whole system were used to 
 
 ## Measured
 
-retro-evals runs/lever-level, k=3: CASE-50 0/3 -> 3/3, CASE-50B 1/3 -> 3/3 with the bullet. Controls CASE-41, 26, 5, 7 pending. The Measurement-bullet clause and the gate field are not measured.
+retro-evals runs/lever-level, k=3: CASE-50 0/3 -> 3/3, CASE-50B 1/3 -> 3/3 with the bullet. Controls held: CASE-41, CASE-26 and CASE-5 0/3 -> 3/3 (baselines re-graded), CASE-7 3/3 -> 3/3 with median reply 5447 -> 4733 chars; accepted by the pre-registered rule (retro-evals runs/lever-level/RESULT.md). The Measurement-bullet clause and the gate field are not measured.
