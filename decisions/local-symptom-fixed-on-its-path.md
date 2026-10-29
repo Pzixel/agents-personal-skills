@@ -2,7 +2,7 @@
 
 ## Decision
 
-A symptom on one path is fixed on that path (the statement's work, the rows it reads, a precomputed source, the burst's own cost). A lever on a mechanism every consumer of a shared store passes through (scheduling, priorities, concurrency limits, server configuration) is not a fix for a local symptom; the existing priority order of a shared system is a contract. Any change to a shared mechanism answers "suppose it is built: what new bottleneck appears, where does it break for every consumer, who gets worse", with consumers named, in the design and again in review.
+A symptom on one path is fixed on that path (the statement's work, the rows it reads, a precomputed source, the burst's own cost). A lever on a mechanism every consumer of a shared store passes through (scheduling, priorities, concurrency limits, server configuration) is not a fix for a local symptom. The order of a shared system follows the data: work that other consumers depend on (ingestion, recompute) goes before the readers of its output; a slow reader is made cheaper, not promoted; an order that puts readers over their producers is a defect to revert, whoever installed it. Any change to a shared mechanism answers "suppose it is built: what new bottleneck appears, where does it break for every consumer, who gets worse", with consumers named, in the design and again in review.
 
 Placement:
 - rules/always-on.md, Scope: the bullet (measured text, verbatim); the Measurement bullet's "one level up" is limited to the request or the task's own path.
@@ -19,6 +19,7 @@ Owner, 2026-10-29: levers with harmful effects on the whole system were used to 
 
 - First formulation "stall signal + way back + vendor maturity": rejected by the owner 2026-10-29. It mitigates a shared lever instead of asking whether a local symptom licenses one; #237 had a way back and still took the store down.
 - Rule text alone: the owner chose text plus a merge-gate field so the question is unavoidable at the merge.
+- "The existing priority order of a shared system is a contract" (first applied wording): rejected by the owner the same day. It freezes whatever is configured, including a wrong order just installed (after #237 the scheduler itself would have been "the contract"). "Set by the owner" was rejected too: the agent cannot know who the owner is or act when nobody is there. The order is derived from the data dependency instead, so it is decidable from one read and a wrong order is reverted without anyone's word.
 
 ## Measured
 
