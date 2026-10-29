@@ -5,8 +5,9 @@ named in the command.
 
 `gh pr merge` and `git push` to master/main are refused unless the command
 carries `CHECK_RAN: <what ran on the real path, result>`, `PROD_POSITION:
-<blast-radius dimension, production's number, source>` and `WAY_BACK: <undo,
-minutes>`, and `ALWAYS_ON:` when the pushed range changes an always-on
+<blast-radius dimension, production's number, source>`, `WAY_BACK: <undo,
+minutes>` and `WORSE_FOR: <who gets worse or can break for every consumer,
+the new bottleneck; or none, with the reason>`, and `ALWAYS_ON:` when the pushed range changes an always-on
 rules file. The tokens are the agent's own statements; the gate only makes
 them unavoidable at the moment of merging. Decision: gate_policy.merge_gate_decision. Any error exits 0.
 """

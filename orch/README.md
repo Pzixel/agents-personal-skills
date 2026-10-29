@@ -90,8 +90,9 @@ is installed with `CLAUDE_CONFIG_DIR=~/.claude-accounts/<name> ./install.sh clau
 Hooks enforce the gates; an agent obeys a refusal's message and never works around it.
 
 - Merge: a push or merge to a shared branch carries `CHECK_RAN: <what ran, result>`,
-  `PROD_POSITION: <blast-radius dimension, production's number, source>` and
-  `WAY_BACK: <undo, minutes>`, or `merge-gate` refuses it.
+  `PROD_POSITION: <blast-radius dimension, production's number, source>`,
+  `WAY_BACK: <undo, minutes>` and `WORSE_FOR: <who gets worse or can break for every
+  consumer, the new bottleneck; or none, with the reason>`, or `merge-gate` refuses it.
 - Final reply: the Stop hook `reply-lint` returns once a completion claim without its
   observation, a reply that leaves work waiting on the owner's choice, answer or approval
   in plain text (decide it if it is inside the agent's authority, otherwise ask through

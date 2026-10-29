@@ -33,14 +33,14 @@ Reply: commits, check, size, deviations, risks[], checklist, questions[].)
 2. Design review and simplify pass, when the prompt carried `design: required` or the step 1 reply carries a non-empty `risks[]` (a small task with risks is promoted to medium). Load the `simplify` skill in the main session and run its lens pass on the design: a design is capped at about 600 words (builder.md), so normally one lens agent applies all five lenses; at `plan_simplify.fan_out_min_words` words or more the fan-out of the plan rule applies (rule: superpowers-writing-plans-psilon/SKILL.md, decisions/plan-simplify-fan-out-by-plan-size.md). Shape by tier: small (also one sent back at 2a with `design: required`, which keeps its tier) runs the combined spawn below with `model: "opus"`; medium runs it on Fable; large runs the two Fable spawns further below, in one message on the same DESIGN.md revision, the reviewer checking the contract, not the lenses.
 ```
 Agent(subagent_type: "orch:reviewer", model: "fable", description: ..., prompt:
-/simplify lens pass (reuse, simplification, efficiency, altitude, premises) on <notes>/DESIGN.md (full path), on each decision and premise; also review it against the task: premises verified, callers listed, risks, size. Always write <notes>/DESIGN.simplify.md, an empty file when nothing is found, and <notes>/review-design.md for the contract findings.
+/simplify lens pass (reuse, simplification, efficiency, altitude, premises) on <notes>/DESIGN.md (full path), on each decision and premise; also review it against the task: premises verified, callers listed, risks, size; for a shared mechanism, "suppose it is built: what new bottleneck appears, where does it break for every consumer, who gets worse". Always write <notes>/DESIGN.simplify.md, an empty file when nothing is found, and <notes>/review-design.md for the contract findings.
 task: <task>)
 ```
 Large:
 ```
 Agent(subagent_type: "orch:reviewer", model: "fable", description: ..., prompt:
 mode: review
-Review <notes>/DESIGN.md against the task: premises verified, callers listed, risks, size. Findings file: <notes>/review-design.md.
+Review <notes>/DESIGN.md against the task: premises verified, callers listed, risks, size; for a shared mechanism, "suppose it is built: what new bottleneck appears, where does it break for every consumer, who gets worse". Findings file: <notes>/review-design.md.
 task: <task>)
 Agent(subagent_type: "orch:reviewer", model: "fable", description: ..., prompt:
 /simplify lens pass (reuse, simplification, efficiency, altitude, premises) on <notes>/DESIGN.md (full path), on each decision and premise. Always write <notes>/DESIGN.simplify.md, an empty file when nothing is found.

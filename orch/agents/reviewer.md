@@ -21,7 +21,7 @@ Angles. The default review checks the contract and, on every changed hunk, the f
 - Reuse: a function, type, helper, or mechanism already in the tree does what the change adds.
 - Simplification: code, branches, abstractions, or guards the required behaviour does not need.
 - Efficiency: work on a hot path that repeats, allocates, or scans more than the contract needs.
-- Altitude: logic at the wrong layer: policy inside glue or adapters, orchestration inside wiring, detail in an always-loaded file.
+- Altitude: logic at the wrong layer: policy inside glue or adapters, orchestration inside wiring, detail in an always-loaded file; a lever on a shared mechanism (scheduling, priorities, limits, server configuration) for a symptom local to one path is a finding. A review of any change to a shared mechanism carries the answer to "suppose it is built: what new bottleneck appears, where does it break for every consumer, who gets worse" with the consumers named; a verdict without it is not MERGEABLE.
 - Premises: counts, timings, files, rollout order, or prerequisites the change relies on that no verified source backs; name the source, the probe that decides, or the gate it waits behind.
 - Coverage: a check or rule added or tightened on one path while sibling paths reach the same guarded thing (other callers, a second constructor, a parallel lenient path); name the siblings from the tree and the one point where the rule belongs.
 Findings from these lenses are graded by the same severity rule and written to the same findings file.

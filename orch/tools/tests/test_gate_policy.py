@@ -673,6 +673,7 @@ _MERGE_FIELDS = (
     "CHECK_RAN: ring r10 on prod, 3635/s",
     "PROD_POSITION: mailboxes touched, prod 187k, example-db count",
     "WAY_BACK: revert PR, 10 min",
+    "WORSE_FOR: none, the change touches one tenant's own path",
 )
 _MERGE_FULL = "echo '" + "; ".join(_MERGE_FIELDS) + "'; gh pr merge 12 --squash"
 
@@ -701,6 +702,25 @@ class MergeGateDecisionTest(unittest.TestCase):
             result = gate_policy.merge_gate_decision(cmd)
             self.assertEqual(result["decision"], "deny", field)
             self.assertIn("`" + field.split(" ")[0], result["reason"].split("Missing:")[1], field)
+
+    # A shared-mechanism change merged with the three older fields (retro CASE-50).
+    _SHARED_LEVER = (
+        "gh pr merge 237 --squash --delete-branch # CHECK_RAN: build-and-test success run 39100814200; "
+        "PROD_POSITION: all ClickHouse query CPU scheduling on node-1 prod; "
+        "WAY_BACK: run gitops/infra/sql/workloads/rollback.sql via Job + revert PR, ~25 min"
+    )
+
+    def test_shared_lever_without_worse_for_is_denied_naming_it(self):
+        result = gate_policy.merge_gate_decision(self._SHARED_LEVER)
+        self.assertEqual(result["decision"], "deny")
+        self.assertIn("`WORSE_FOR", result["reason"].split("Missing:")[1])
+
+    def test_shared_lever_with_worse_for_is_allowed(self):
+        cmd = self._SHARED_LEVER + (
+            "; WORSE_FOR: every query of the node passes the new scheduler; "
+            "break = scheduler withholds slots, all queries hang; signal: query older than 15 min"
+        )
+        self.assertEqual(gate_policy.merge_gate_decision(cmd)["decision"], "allow")
 
     def test_branch_push_and_pr_create_are_allowed(self):
         for cmd in ("git push -u origin retro-fixes-2", "gh pr create --fill"):
@@ -736,7 +756,7 @@ class AlwaysOnFieldTest(unittest.TestCase):
     def test_all_missing_fields_are_named_in_one_refusal(self):
         result = gate_policy.merge_gate_decision("git push origin x:" + "master", self._RULES)
         reason = result["reason"].split("Missing:")[1]
-        for field in ("`CHECK_RAN", "`PROD_POSITION", "`WAY_BACK", "`ALWAYS_ON"):
+        for field in ("`CHECK_RAN", "`PROD_POSITION", "`WAY_BACK", "`WORSE_FOR", "`ALWAYS_ON"):
             self.assertIn(field, reason)
 
     def test_unknown_or_other_paths_need_no_field(self):

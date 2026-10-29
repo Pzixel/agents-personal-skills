@@ -10,6 +10,6 @@ Two exceptions:
 
 ## How changes land
 
-Pull requests are disabled on this repository. A change is built on a branch cut from the fresh tip of `origin/master` in a worktree under `.worktrees/<task>/`, reviewed through the `orch` flow when it touches code, and merged by a fast-forward push to `master`. The push command carries the `CHECK_RAN`, `PROD_POSITION`, and `WAY_BACK` lines the merge gate requires. The branch and its worktree are deleted in the same step. GitHub Actions runs on every push: the skill validator, shell syntax, `git diff --check`, the `orch` tool tests on Python 3.9 and 3.12, and a gitleaks scan of the full history.
+Pull requests are disabled on this repository. A change is built on a branch cut from the fresh tip of `origin/master` in a worktree under `.worktrees/<task>/`, reviewed through the `orch` flow when it touches code, and merged by a fast-forward push to `master`. The push command carries the `CHECK_RAN`, `PROD_POSITION`, `WAY_BACK`, and `WORSE_FOR` lines the merge gate requires. The branch and its worktree are deleted in the same step. GitHub Actions runs on every push: the skill validator, shell syntax, `git diff --check`, the `orch` tool tests on Python 3.9 and 3.12, and a gitleaks scan of the full history.
 
 Record upstream lineage and behaviour changes with their evidence in `ORIGINS.md`.

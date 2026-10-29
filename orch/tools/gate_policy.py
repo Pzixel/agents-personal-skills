@@ -1564,6 +1564,7 @@ def own_transcript_path(transcript, agent_id):
 CHECK_RAN_TOKEN = "CHECK_RAN:"
 PROD_POSITION_TOKEN = "PROD_POSITION:"
 WAY_BACK_TOKEN = "WAY_BACK:"
+WORSE_FOR_TOKEN = "WORSE_FOR:"
 _MERGE_RE = re.compile(
     r"\bgh\s+pr\s+merge\b"
     # git global options may stand between `git` and `push` (`git -C <dir> push`).
@@ -1575,7 +1576,8 @@ _MERGE_REASON = (
     "the declared check on the real path first (service start plus one unit "
     "through natively, against the shared local store container or a production "
     "read route, never a container per task; on a numeric path the target before and after), then repeat the "
-    "command with `CHECK_RAN: <what ran, result>` in it. Unit tests or a review "
+    "command with `CHECK_RAN: <what ran, result>` in it, and with `WORSE_FOR:` naming "
+    "who gets worse or can break for every consumer once it is built. Unit tests or a review "
     "alone do not count (retro 2026-10-12: 36 merges without a real-path check "
     "cost 57 h and one irreversible mass send)."
 )
@@ -1583,6 +1585,7 @@ _MERGE_FIELD_DOCS = (
     (CHECK_RAN_TOKEN, "`CHECK_RAN: <what ran, result>`"),
     (PROD_POSITION_TOKEN, "`PROD_POSITION: <dimension along which blast radius grows, production's number on it, source>`"),
     (WAY_BACK_TOKEN, "`WAY_BACK: <means of undo, minutes>`"),
+    (WORSE_FOR_TOKEN, "`WORSE_FOR: <who gets worse or can break for every consumer after this change, the new bottleneck; or none, with the reason>`"),
 )
 
 
@@ -1622,7 +1625,7 @@ def _always_on_satisfied(cmd, changed_paths):
 
 def merge_gate_decision(command, changed_paths=None):
     """Deny ``gh pr merge`` and pushes to master/main unless the command carries
-    ``CHECK_RAN:``, ``PROD_POSITION:`` and ``WAY_BACK:``, and ``ALWAYS_ON:``
+    ``CHECK_RAN:``, ``PROD_POSITION:``, ``WAY_BACK:`` and ``WORSE_FOR:``, and ``ALWAYS_ON:``
     when ``changed_paths`` touch an always-on rules file."""
     cmd = command or ""
     if not _MERGE_RE.search(cmd):
