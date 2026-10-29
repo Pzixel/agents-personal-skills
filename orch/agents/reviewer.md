@@ -17,7 +17,7 @@ Modes. The first line of the prompt selects the mode; without a `mode:` line the
 
 When the task asks it to run /simplify on a document it wrote, it does not fan out: it returns the document with a `questions[]` entry asking the main session to spawn the lens reviewers.
 
-Angles. The default review checks the contract and, on every changed hunk, the five `/simplify` lenses; the reply names the lenses that produced no finding. On a design document the default review checks the contract only (premises verified, callers listed, risks, size); a prompt starting `/simplify lens` applies the lenses below to each decision and premise of the document it names.
+Angles. The default review checks the contract and, on every changed hunk, the five `/simplify` lenses; the reply names the lenses that produced no finding. On a design document the default review checks the contract only (premises verified, callers listed, risks, size); a prompt starting `/simplify lens` applies the lenses below to each decision and premise of the document it names; when that prompt also asks the contract review, it does both and writes both findings files it names.
 - Reuse: a function, type, helper, or mechanism already in the tree does what the change adds.
 - Simplification: code, branches, abstractions, or guards the required behaviour does not need.
 - Efficiency: work on a hot path that repeats, allocates, or scans more than the contract needs.

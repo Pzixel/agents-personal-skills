@@ -6,7 +6,9 @@ Why: replay on four reviewed branches of two private Rust services at their orig
 
 Compared against:
 - Reviewer B on Opus: 22% of Fable spend, but Opus recall 7/16 is below both Fable reviewers; the two B-only BLOCKERs in the nine-task set would be at risk. Rejected.
-- Fable at effort medium: output tokens are only $276 of $2.7K Fable spend, so the saving is in turns (about 55-65% of the high-A cost); recall 7/16 vs 8/16 and 1/4 on the largest branch. Rejected.
+- Fable at effort medium: the earlier "$276 of $2.7K output" figure was an artifact: subagent transcripts before Claude Code 2.1.307 (2026-10-22) recorded placeholder output tokens; measured for the week 2026-10-22..28, Fable output is 15.6M tokens x $50/MTok = $780 of $1933 (40%), so effort is a real cost lever, but the recall numbers below stand; recall 7/16 vs 8/16 and 1/4 on the largest branch. Rejected.
 - Cross-check on Opus: 14/16 agreement; the two disagreements are the stale-revision-fence row of the dispatch-path rewrite (the current SPEC carries an owner override that the Fable table contradicts) and the explain-blockers row graded MINOR. Not a clean pass; decided by the shadow run (private eval notes, crosscheck-ab.tsv).
 
 Blind spots: four tasks, 16 rows; the replay reviewers read the current SPEC files, which had moved for the dispatch-path rewrite; "new" BLOCKER/MAJOR rows raised by the replay arms (Opus cross-check 9, Opus review 11, Fable medium 7) were not verified and may be real misses of the original flow. Full tables: private eval notes, replay/COMPARISON.md.
+
+Addendum (2026-10-29): the shadow Opus cross-check ran on 45 tasks (planned 5; log crosscheck-ab.tsv in the private eval notes). Fable and Opus tables agree on the BLOCKER/MAJOR set and grades in 13 of 45 (29%); 32 differ (severity regrades, rows only one side found). The cross-check stays Fable for medium and large tasks; the shadow step is removed from the orchestrate skill. Small tasks run the whole review on Opus (decisions/reviewer-model-by-task-size.md).
