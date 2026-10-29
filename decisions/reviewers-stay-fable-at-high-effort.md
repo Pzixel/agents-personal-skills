@@ -1,4 +1,4 @@
-# Review A/B stay on Fable at effort high; cross-check on Opus is undecided (shadow run)
+# Review A/B and the cross-check stay on Fable at effort high
 
 Decision (2026-10-22): the two independent reviewers of the orchestrate flow stay `model: "fable"` at the reviewer's default effort (high). Reviewer B is not replaced by Opus, and effort medium is not used. The cross-check step keeps Fable until the five-task shadow comparison in the orchestrate skill (step 4) is logged.
 
@@ -11,4 +11,4 @@ Compared against:
 
 Blind spots: four tasks, 16 rows; the replay reviewers read the current SPEC files, which had moved for the dispatch-path rewrite; "new" BLOCKER/MAJOR rows raised by the replay arms (Opus cross-check 9, Opus review 11, Fable medium 7) were not verified and may be real misses of the original flow. Full tables: private eval notes, replay/COMPARISON.md.
 
-Addendum (2026-10-29): the shadow Opus cross-check ran on 45 tasks (planned 5; log crosscheck-ab.tsv in the private eval notes). Fable and Opus tables agree on the BLOCKER/MAJOR set and grades in 13 of 45 (29%); 32 differ (severity regrades, rows only one side found). The cross-check stays Fable for medium and large tasks; the shadow step is removed from the orchestrate skill. Small tasks run the whole review on Opus (decisions/reviewer-model-by-task-size.md).
+Addendum (2026-10-29): the shadow Opus cross-check ran on 45 tasks (planned 5; log crosscheck-ab.tsv in the private eval notes). Fable and Opus tables agree on the BLOCKER/MAJOR set and grades in 13 of 45 (29%: 12 "rows that differ" cells starting with `0` plus one `rows differ: none`); 32 differ (severity regrades, rows only one side found). The cross-check stays Fable for medium and large tasks; the shadow step is removed from the orchestrate skill. Small tasks run the whole review on Opus (decisions/reviewer-model-by-task-size.md).
