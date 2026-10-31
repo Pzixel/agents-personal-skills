@@ -70,6 +70,10 @@ pre-registered and the comparison cost stated.
    choose the placement first (a gate or hook at the decision point, an
    on-demand file, an always-on line last) and measure it in stage 6;
    placement decided more often than wording.
+   Wording follows `reference.md` section 4a: questions with an answer
+   form for search rules, a property for boundary rules, an example
+   replaced by its property, and a drop read in the failing runs, never
+   reverted.
 5. **Grader validity.** Curated continuations do not predict grading on free
    runs and validate nothing. A grader is valid for a case only when it
    reproduces the user's labels on 3-6 free runs; offer the labelling
@@ -89,7 +93,10 @@ pre-registered and the comparison cost stated.
    A running session keeps its instruction snapshot, so its subagents
    measure the old rules: re-measure in fresh headless sessions. The live arms
    measure the placement. A live miss is a placement or wording fault; fix
-   once, re-run, record both.
+   once, re-run, record both. Transfer to unfamiliar tasks is claimed only on
+   the evidence section 6 names (a second instance of the class, the
+   weekly count of repeat-class cases); otherwise the report says
+   `transfer unmeasured`.
 
 ## Costs
 

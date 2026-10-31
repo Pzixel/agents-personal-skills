@@ -158,6 +158,34 @@ Pitfalls measured on earlier runs:
 - The text test measures the next message from a frozen packet, not whether
   the rule fires in a live session.
 
+### 4a. Wording an always-on change (measured 2026-10-31, retro-evals STAGE3 rows 39c-49)
+
+The owner's shape for a rule: holes the context fills, no reading forced by
+an example. Two forms, chosen by the rule's job:
+
+- A search rule (where the decision lives, who else passes through a lever,
+  what a check creates, who shares a resource) is numbered questions, each
+  with a mandatory answer form; the subject searches and the holes are
+  filled by its context. A question that names the facts is not enough when
+  the rule must strike something: add the question that makes the subject
+  name each gate, stop rule or step and write its replacement (bullet 16:
+  three questions 0/3, the fourth question 5/6).
+- A boundary or disclosure rule (when the owner's word counts, what is read
+  before "no", what counts as recorded) is a declarative property. The
+  question form weakens it (bullet 8 as questions: CASE-5 3/3 -> 0/3,
+  CASE-39 3/3 -> 1/3; the property wording 3/3 on four cases).
+
+An example in a rule is replaced by the property it stands for, never just
+removed. When a case drops after the edit, the text is not reverted and the
+example is not restored: read the failing runs, name what filled the hole,
+state that property, re-measure; one case at a time, one change per round.
+Holes found this way: "one level up" filled with a change to what the user
+receives; "numbers that prove the widening" filled with a forecast; "the
+lever's number" filled with a prototype the builder first deploys; "read in
+full" filled with a dump plus a search; "what the check creates" asked only
+of containers and losing the per-task database. The decision record:
+retro-evals `decisions/rewording-questions-vs-properties.md`.
+
 ## 5. Labelling packet (grader validation)
 
 `labelling/CASE-n.md`: a self-contained situation summary at the top; 3-6
@@ -174,6 +202,17 @@ write), a hook on the task class, an on-demand file named by a trigger
 sentence, an always-on line last. A change placed in a file the agent reads
 only on demand may never reach the decision point; measure the live arm.
 A change goes only into the form its winning comparison measured: a change that won as a gate, hook or trigger is never moved into always-on text (script and subagent placements are unmeasured); an always-on addition names its size in characters and the text it removes, or the reason the layer must grow; a change left in an on-demand file is reported with its read trigger unverified, together with the fresh-session check that verifies it.
+Generalisation evidence (what proves a change helps on tasks it was not
+written from): the comparison's controls are the only out-of-sample number
+inside one retro, and they only show no harm. The evidence that a rule
+generalises is prospective and comes from the store itself: a second
+instance of the class from another session (a packet that was not used to
+word the rule) at the pre-rule and current rules, and the weekly retro's
+count of new cases in an already-ruled class, read against the weeks
+before the rule, with the length control and the live false-fire rate of
+hooks as the "worse" side. A rule with no second instance and no week of
+sessions after it is marked `helped` on its case and `transfer unmeasured`
+in the report, never "generalises".
 Live check (stage 6, where placement is measured): rerun the target and
 controls with the subject recipe above with a rules file freshly composed from the real instruction files after the
 change was applied, or a plain fresh session where they load natively. Record wording iterations with each live result.
