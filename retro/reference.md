@@ -175,10 +175,17 @@ an example. Two forms, chosen by the rule's job:
   question form weakens it (bullet 8 as questions: CASE-5 3/3 -> 0/3,
   CASE-39 3/3 -> 1/3; the property wording 3/3 on four cases).
 
-An example in a rule is replaced by the property it stands for, never just
-removed. When a case drops after the edit, the text is not reverted and the
-example is not restored: read the failing runs, name what filled the hole,
-state that property, re-measure; one case at a time, one change per round.
+An example in a rule is never just removed: before the draft, `VARIANT.md`
+answers, for each example to be removed, two questions in a table. (1) With
+the example gone, what does a subject fill that hole with on the target
+case: name the concrete wrong filling (the earlier assignment taken as the
+owner's word; the run's duration named instead of the result). (2) Which
+property excludes that filling: write it as the sentence that replaces the
+example. A draft that only deletes the parentheses, or replaces them with a
+wider noun ("the quantity"), has not answered (1) and is not run. When a
+case still drops after the edit, the text is not reverted and the example
+is not restored: read the failing runs, name what filled the hole, answer
+(1) and (2) again, re-measure; one case at a time, one change per round.
 Holes found this way: "one level up" filled with a change to what the user
 receives; "numbers that prove the widening" filled with a forecast; "the
 lever's number" filled with a prototype the builder first deploys; "read in
