@@ -29,3 +29,5 @@ Measured over 5 weeks to 2026-10-23: 4468 docker calls in 67 sessions, 592 image
 ## Evidence
 
 Rule text comparison: CASE-49B 1/3 -> 3/3; controls CASE-26, CASE-5, CASE-7 held. Retro pointers: retro-evals cases/CASE-49, runs/docker-form (RESULT.md).
+
+Wording (2026-10-31): the bullet now asks three questions with an answer form; the lifetime question covers everything the check creates, including a database in the shared store (a draft that asked it only of containers lost that point: retro-evals runs/check-form-q/VARIANT.md). Current vs new equal on CASE-49 (5/6), CASE-49B, CASE-26. The property is unchanged.
