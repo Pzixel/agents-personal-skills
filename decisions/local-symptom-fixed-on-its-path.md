@@ -24,3 +24,5 @@ Owner, 2026-10-29: levers with harmful effects on the whole system were used to 
 ## Measured
 
 retro-evals runs/lever-level, k=3: CASE-50 0/3 -> 3/3, CASE-50B 1/3 -> 3/3 with the bullet. Controls held: CASE-41, CASE-26 and CASE-5 0/3 -> 3/3 (baselines re-graded), CASE-7 3/3 -> 3/3 with median reply 5447 -> 4733 chars; accepted by the pre-registered rule (retro-evals runs/lever-level/RESULT.md). The Measurement-bullet clause and the gate field are not measured.
+
+Wording (2026-10-31): the bullet now asks three questions with an answer form instead of listing the mechanisms and the case (retro-evals runs/lever-level-q/RESULT.md: current vs new 3/3 on CASE-50 and CASE-50B, controls held). The property is unchanged.
