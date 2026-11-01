@@ -22,6 +22,7 @@ import csv
 import datetime
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -104,6 +105,79 @@ def false_fire(o):
     return "--help" in o["command"] or set(o["key"].split("+")) <= MUX
 
 
+_INTERPRETERS = re.compile(r"^(python[0-9.]*|bash|sh|zsh|node|ruby|perl|Rscript)$")
+_SCRIPT_SUFFIX = re.compile(r"\.(py|sh|js|mjs|ts|rb|pl)$")
+_SYSTEM_DIRS = ("/usr/", "/bin/", "/sbin/", "/opt/homebrew/")
+_SERVICE_PROGRAMS = frozenset(
+    {"vite", "caddy", "nginx", "uvicorn", "gunicorn", "serve", "http-server", "redis-server"}
+)
+
+
+def _launch_kind(tokens):
+    """``script`` when the launched command runs a file (or inline code) the
+    session wrote, ``service`` for a long-lived server or tunnel, else ``other``."""
+    i = 0
+    while i < len(tokens) and (g._ENV_ASSIGN.match(tokens[i]) or tokens[i] in g._HEAD_PREFIXES
+                               or tokens[i] in g._DETACH_HEADS or tokens[i] in ("env", "rtk")):
+        i += 1
+    tokens = tokens[i:]
+    prog = g._program(tokens)
+    args = tokens[1:]
+    if not tokens:
+        return "other"
+    if prog in _SERVICE_PROGRAMS or prog == "tail" and any(a in ("-f", "-F") for a in args):
+        return "service"
+    if prog in ("npm", "pnpm", "yarn", "bun") and any(a in ("dev", "start", "serve", "preview") for a in args):
+        return "service"
+    if prog == "next" and args[:1] == ["dev"] or prog in ("cargo", "go") and args[:1] == ["run"]:
+        return "service"
+    if prog == "kubectl" and "port-forward" in args or prog == "ssh" and any(
+            a.startswith("-") and ("L" in a or "N" in a or "R" in a) for a in args):
+        return "service"
+    if prog in ("docker", "docker-compose", "podman") and "up" in args:
+        return "service"
+    if _INTERPRETERS.match(prog):
+        rest = [a for a in args if not a.startswith("-") or a == "-"]
+        if "-m" in args or "-c" in args or not rest:
+            return "other"
+        target = rest[0]
+        return "script" if target == "-" or "/" in target or _SCRIPT_SUFFIX.search(target) else "other"
+    first = tokens[0]
+    if prog in ("wait-for", "check-run") or first.startswith(_SYSTEM_DIRS):
+        return "other"
+    return "script" if "/" in first or _SCRIPT_SUFFIX.search(first) else "other"
+
+
+def _launched(script, background):
+    """Token lists of the commands that outlive the call."""
+    if background:
+        return [g._segment_head(seg) for seg in g._segments(script)]
+    out = []
+    pos = 0
+    for match in g._BACKGROUND_AMP.finditer(script):
+        before = g._segments(script[pos:match.start()])
+        if before:
+            out.append(before[-1].split())
+        pos = match.end()
+    for seg in g._segments(script):
+        tokens = seg.split()
+        heads = [t for t in tokens[:4] if t in g._DETACH_HEADS or t in ("tmux", "screen")]
+        if heads:
+            out.append(tokens)
+    return out
+
+
+def launch_class(command, background):
+    """``script``/``service``/``other`` for the backtest split (script wins)."""
+    script, _ = g._split_heredocs(command or "")
+    script = g._strip_quotes("\n".join(l for l in script.split("\n") if not l.lstrip().startswith("#")))
+    kinds = {_launch_kind(t) for t in _launched(script, background)}
+    for kind in ("script", "service"):
+        if kind in kinds:
+            return kind
+    return "other"
+
+
 def outcomes(calls_path, probe_ts=None):
     """Outcomes gate over every call of extract.py: fires per trigger class and
     per day, the 10 most recent fires, and the decision on the call at probe_ts."""
@@ -112,15 +186,23 @@ def outcomes(calls_path, probe_ts=None):
     for r in rows:
         d = g.outcomes_decision(r["command"], r.get("run_in_background"))
         if d["decision"] == "deny":
-            fires.append(dict(r, trigger=d["trigger"]))
+            fires.append(dict(r, trigger=d["trigger"], kind=launch_class(
+                r["command"], d["trigger"] == "background")))
         if probe_ts and r["start_utc"] == probe_ts:
             print("probe", probe_ts, d["decision"], d["trigger"])
     print("calls", len(rows), "fires", len(fires),
           "by trigger", dict(collections.Counter(f["trigger"] for f in fires)),
           "by agent", dict(collections.Counter("sub" if f["agent_type"] else "main" for f in fires)))
-    for day, n in sorted(collections.Counter(f["start_utc"][:10] for f in fires).items()):
-        print(day, n)
-    for f in fires[-10:]:
+    print("by launch class and trigger", sorted(collections.Counter(
+        (f["kind"], f["trigger"]) for f in fires).items()))
+    script = [f for f in fires if f["kind"] == "script"]
+    days = collections.Counter(f["start_utc"][:10] for f in fires)
+    script_days = collections.Counter(f["start_utc"][:10] for f in script)
+    print("day | all fires | class (a) script fires")
+    for day in sorted(days):
+        print(day, days[day], script_days[day])
+    print("10 most recent class (a) fires")
+    for f in script[-10:]:
         print(f["start_utc"], f["trigger"], f["command"][:120].replace("\n", " "))
 
 
