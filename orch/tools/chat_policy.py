@@ -1,7 +1,4 @@
-"""Pure policy for `chat`: resolve a query against session candidates and pick human text from records.
-
-Human text includes owner messages sent mid-turn (queued_command attachments with human origin).
-"""
+"""Pure policy for `chat`: resolve a query against session candidates; human text includes mid-turn owner messages."""
 
 import re
 from typing import List, NamedTuple, Tuple
