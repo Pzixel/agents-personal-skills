@@ -9,7 +9,8 @@ A name query is a case-insensitive fragment of any title the session ever had
 (renames keep old titles in the transcript). Exactly one match: `find` prints
 the transcript path alone on stdout and `id<TAB>latest title<TAB>project
 dir<TAB>mtime` on stderr. Zero or several matches: candidates go to stderr and the exit code is 1. Subagent transcripts
-are excluded. Transcripts live under $CLAUDE_CONFIG_DIR (default ~/.claude)/projects.
+are excluded. `humans` also prints owner messages sent mid-turn (queued_command attachments).
+Transcripts live under $CLAUDE_CONFIG_DIR (default ~/.claude)/projects.
 """
 
 import argparse
@@ -23,10 +24,9 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 
-from chat_policy import Session, match, parse_query  # noqa: E402
+from chat_policy import Session, human_text, match, parse_query  # noqa: E402
 
 MAX_CANDIDATES = 15
-NOISE_PREFIXES = ("<task-notification", "<system-reminder", "<local-command")
 TITLE_RE = r'"customTitle":"(?:[^"\\]|\\.)*"'
 
 
@@ -108,22 +108,6 @@ def records(path):
                 yield line_no, json.loads(line)
             except json.JSONDecodeError:
                 continue
-
-
-def human_text(record):
-    if record.get("type") != "user" or record.get("isSidechain"):
-        return None
-    content = record.get("message", {}).get("content")
-    if isinstance(content, list):
-        if any(isinstance(x, dict) and x.get("type") == "tool_result" for x in content):
-            return None
-        text = " ".join(x.get("text", "") for x in content if isinstance(x, dict))
-    else:
-        text = content or ""
-    text = text.strip()
-    if not text or text.startswith(NOISE_PREFIXES):
-        return None
-    return text
 
 
 def cmd_humans(args):

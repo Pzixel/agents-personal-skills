@@ -4,7 +4,7 @@ import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 
-from chat_policy import Session, match, parse_query  # noqa: E402
+from chat_policy import Session, human_text, match, parse_query  # noqa: E402
 
 A = Session("25caeb48-d171-43a4-87dd-256d48fa958b", "a", ("measure-api-latency", "delivery-fixes"), 2.0)
 B = Session("25ca0000-0000-4000-8000-000000000000", "b", ("Delivery-Review",), 3.0)
@@ -41,3 +41,22 @@ class ChatMatchTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def queued(prompt, origin):
+    return {"type": "attachment", "attachment": {"type": "queued_command", "prompt": prompt, "origin": {"kind": origin}}}
+
+
+class HumanTextTest(unittest.TestCase):
+    def test_mid_turn_owner_message_is_human_text(self):
+        self.assertEqual(human_text(queued("fix the ACL", "human")), "fix the ACL")
+        blocks = [{"type": "text", "text": "fix the ACL"}, {"type": "image", "source": {}}]
+        self.assertEqual(human_text(queued(blocks, "human")), "fix the ACL")
+
+    def test_queued_command_without_human_origin_is_dropped(self):
+        self.assertIsNone(human_text(queued("No overlap: I do not own #148", "peer")))
+        self.assertIsNone(human_text(queued("<task-notification> done", "task-notification")))
+
+    def test_sidechain_queued_command_is_dropped(self):
+        record = dict(queued("fix the ACL", "human"), isSidechain=True)
+        self.assertIsNone(human_text(record))

@@ -1,10 +1,16 @@
-"""Pure policy for `chat`: resolve a query against session candidates."""
+"""Pure policy for `chat`: resolve a query against session candidates and pick human text from records.
+
+Human text includes owner messages sent mid-turn (queued_command attachments with human origin).
+"""
 
 import re
 from typing import List, NamedTuple, Tuple
 
 UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I)
 ID_PREFIX_RE = re.compile(r"^[0-9a-f][0-9a-f-]{3,}$", re.I)
+
+
+NOISE_PREFIXES = ("<task-notification", "<system-reminder", "<local-command")
 
 
 class Session(NamedTuple):
@@ -40,3 +46,28 @@ def match(kind: str, value: str, sessions: List[Session]) -> List[Session]:
         needle = value.lower()
         hits = [s for s in sessions if any(needle in t.lower() for t in s.titles)]
     return sorted(hits, key=lambda s: s.mtime, reverse=True)
+
+
+def human_text(record):
+    """Owner text of a transcript record, or None: user messages and mid-turn queued_command attachments."""
+    if record.get("isSidechain"):
+        return None
+    if record.get("type") == "user":
+        content = record.get("message", {}).get("content")
+    elif record.get("type") == "attachment":
+        attachment = record.get("attachment") or {}
+        if attachment.get("type") != "queued_command" or (attachment.get("origin") or {}).get("kind") != "human":
+            return None
+        content = attachment.get("prompt")
+    else:
+        return None
+    if isinstance(content, list):
+        if any(isinstance(x, dict) and x.get("type") == "tool_result" for x in content):
+            return None
+        text = " ".join(x.get("text", "") for x in content if isinstance(x, dict))
+    else:
+        text = content or ""
+    text = text.strip()
+    if not text or text.startswith(NOISE_PREFIXES):
+        return None
+    return text
