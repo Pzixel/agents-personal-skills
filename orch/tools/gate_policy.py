@@ -404,48 +404,83 @@ def poll_decision(cmd, run_in_background, agent_type="", params=None, timeout_ms
     return decision
 
 
-# A process left running past the call: its result arrives later, in another
-# turn, so the run is only worth starting if its outcomes lead to different
-# steps (CASE-58: a fine-tune relaunched after it had already failed the gate).
+# An experiment left running past the call: a script the session wrote whose
+# result is read and judged later. It is only worth starting if its outcomes
+# lead to different steps (CASE-58: a fine-tune relaunched after it had already
+# failed the gate). Servers, tunnels and watchers are infrastructure, not runs.
 _DETACH_HEADS = frozenset({"nohup", "setsid", "disown"})
+_HEAD_PREFIXES = frozenset({"time", "exec", "command", "builtin", "!", "env", "rtk"})
 _JOB_ENDERS = frozenset({"kill", "pkill", "wait", "trap"})
-_HEAD_PREFIXES = frozenset({"time", "exec", "command", "builtin", "!"})
 _WAIT_PROGRAMS = frozenset(
     {"sleep", "wait-for", "tail", "grep", "test", "[", "[[", "true", "false", ":",
      "break", "echo", "pgrep", "date"}
 )
+_SCRIPT_INTERPRETERS = re.compile(r"^(python[0-9.]*|bash|sh|zsh|node)$")
+_SCRIPT_SUFFIX = re.compile(r"\.(py|sh|js|mjs|ts)$")
+_SERVICE_PROGRAMS = frozenset(
+    {"vite", "next", "npm", "npx", "pnpm", "yarn", "kubectl", "ssh", "docker", "docker-compose",
+     "tail", "caddy", "nginx", "uvicorn", "gunicorn", "serve"}
+)
+_NOT_SCRIPTS = frozenset({"wait-for", "check-run"})
+_SYSTEM_DIRS = ("/usr/", "/bin/", "/sbin/", "/opt/homebrew/")
 _OUTCOMES_RE = re.compile(r"^#\s*OUTCOMES:(.*)$")
 _BACKGROUND_AMP = re.compile(r"(?<![&><|])&(?![&>])")
+# `2>&1`, `&>f`, `<&3`: an ampersand inside a redirection is not a separator.
+_REDIRECT_AMP = re.compile(r"(?<=[<>])&|&(?=>)")
+_OUTCOMES_LINE = "# OUTCOMES: <outcome> -> <step>; <outcome> -> <step>"
 
 
 def _segment_head(segment):
+    """Tokens from the launched program on: env assignments, shell keywords,
+    nohup/setsid and plain wrappers removed."""
     tokens = segment.split()
     i = 0
-    while i < len(tokens) and (_ENV_ASSIGN.match(tokens[i]) or tokens[i] in _HEAD_PREFIXES
-                               or tokens[i].lower() in _SHELL_KEYWORDS - {"nohup"}):
+    while i < len(tokens) and (
+        _ENV_ASSIGN.match(tokens[i]) or tokens[i] in _HEAD_PREFIXES or tokens[i] in _DETACH_HEADS
+        or tokens[i].lower() in _SHELL_KEYWORDS
+    ):
         i += 1
     return tokens[i:]
 
 
-def _detaches(script):
-    """True when the quote-blanked script leaves a process running past the call.
-    A script that also stops or awaits its jobs (kill, pkill, wait, trap) gets
-    their result inside the call (a port-forward for one curl)."""
-    heads = [_program(_segment_head(seg)) for seg in _segments(script)]
-    if any(h in _JOB_ENDERS for h in heads):
+def _is_script_path(token):
+    return ("/" in token or bool(_SCRIPT_SUFFIX.search(token))) and not token.startswith(_SYSTEM_DIRS)
+
+
+def _runs_script(tokens):
+    """True when the launched command runs a script file: an interpreter (or
+    `uv run`) given a file path, or a direct path to a script."""
+    prog = _program(tokens)
+    if not tokens or prog in _SERVICE_PROGRAMS or prog in _NOT_SCRIPTS or "node_modules/" in tokens[0]:
         return False
-    if _BACKGROUND_AMP.search(script):
-        return True
+    if prog in ("tmux", "screen"):
+        return any(_runs_script(tokens[i:]) for i in range(1, len(tokens)) if not tokens[i].startswith("-"))
+    if prog == "uv" and tokens[1:2] == ["run"]:
+        tokens = tokens[1:]
+        prog = "uv"
+    if _SCRIPT_INTERPRETERS.match(prog) or prog == "uv":
+        args = [a for a in tokens[1:] if a != "run"]
+        if "-m" in args or "-c" in args:
+            return False
+        files = [a for a in args if not a.startswith("-") and not a.startswith(("<", ">"))]
+        return bool(files) and _is_script_path(files[0])
+    return _is_script_path(tokens[0])
+
+
+def _detached_launches(script):
+    """Token lists of the commands the script leaves running past the call."""
+    out = []
+    pos = 0
+    for match in _BACKGROUND_AMP.finditer(script):
+        before = _segments(script[pos:match.start()])
+        if before:
+            out.append(_segment_head(before[-1]))
+        pos = match.end()
     for segment in _segments(script):
-        tokens = _segment_head(segment)
-        prog = _program(tokens)
-        if prog in _DETACH_HEADS:
-            return True
-        if prog == "tmux" and any(t in ("new", "new-session") for t in tokens) and "-d" in tokens:
-            return True
-        if prog == "screen" and any(re.match(r"^-\w*d\w*m", t) for t in tokens[1:]):
-            return True
-    return False
+        raw = segment.split()
+        if any(t in _DETACH_HEADS for t in raw[:6]) or _program(_segment_head(segment)) in ("tmux", "screen"):
+            out.append(_segment_head(segment))
+    return out
 
 
 def _is_pure_wait(script):
@@ -478,26 +513,29 @@ def _outcome_steps(command):
     return []
 
 
-_OUTCOMES_LINE = "# OUTCOMES: <outcome> -> <step>; <outcome> -> <step>"
-
-
 def outcomes_decision(command, run_in_background, params=None):
-    """A background or detached run must name, in a `# OUTCOMES:` line, at
-    least ``outcomes_min_pairs`` outcomes leading to at least two different
-    steps. Detach is judged before the pure-wait exemption, which covers only
-    the background trigger; no override marker exempts."""
+    """A script run left going past the call (detached, or the whole call in
+    the background) must name, in a `# OUTCOMES:` line, at least
+    ``outcomes_min_pairs`` outcomes leading to at least two different steps.
+    Exempt: a background call that is only a wait, and a script that stops or
+    awaits its own jobs (kill, pkill, wait, trap). No override marker exempts."""
     script, _ = _split_heredocs(command or "")
     script = _strip_quotes("\n".join(l for l in script.split("\n") if not l.lstrip().startswith("#")))
-    if _detaches(script):
+    script = _REDIRECT_AMP.sub(" ", script)
+    segments = _segments(script)
+    if any(_program(_segment_head(seg)) in _JOB_ENDERS for seg in segments):
+        return {"decision": "allow", "reason": "", "trigger": ""}
+    if any(_runs_script(t) for t in _detached_launches(script)):
         trigger = "detach"
-    elif run_in_background and not _is_pure_wait(script):
+    elif run_in_background and not _is_pure_wait(script) and any(
+            _runs_script(_segment_head(seg)) for seg in segments):
         trigger = "background"
     else:
         return {"decision": "allow", "reason": "", "trigger": ""}
     steps = _outcome_steps(command)
     if len(steps) < int(_merged_params(params)["outcomes_min_pairs"]):
         reason = (
-            "This command starts a run whose result arrives after the call ({}). Name each "
+            "This command starts a script run whose result arrives after the call ({}). Name each "
             "outcome of the run and the step it leads to in a line `{}` (at least two outcomes). "
             "A run whose every outcome leads to the same step is not run: report the fact "
             "already in hand instead.".format(trigger, _OUTCOMES_LINE)
@@ -511,7 +549,6 @@ def outcomes_decision(command, run_in_background, params=None):
     else:
         return {"decision": "allow", "reason": "", "trigger": trigger}
     return {"decision": "deny", "reason": reason, "trigger": trigger}
-
 
 def _poll_rule(cmd, run_in_background, agent_type, params, timeout_ms):
     if run_in_background:
@@ -745,7 +782,7 @@ DEFAULT_PARAMS = {
     },
     # A `sleep` shorter than this paces requests; this long or longer is a poll.
     "poll_sleep_min_seconds": 5,
-    # A background or detached run names at least this many outcomes in `# OUTCOMES:`.
+    # A detached or background script run names at least this many outcomes in `# OUTCOMES:`.
     "outcomes_min_pairs": 2,
     # A subagent's foreground wait-for: --max at most this, and the Bash call's
     # timeout at least (--max + 30) s, never above bash_timeout_max_ms.

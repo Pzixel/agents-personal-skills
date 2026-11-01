@@ -42,6 +42,18 @@ class OutcomesTriggerTest(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(decide(command), "allow")
 
+    def test_detached_services_are_allowed_without_the_line(self):
+        for command in ("L=tmp/logs nohup kubectl port-forward svc/a 8080:80 > tmp/pf.log 2>&1 &",
+                        "node_modules/.bin/vite --port 5173 > tmp/vite.log 2>&1 &"):
+            with self.subTest(command=command):
+                self.assertEqual(decide(command), "allow")
+
+    def test_detached_scripts_are_refused_without_the_line(self):
+        for command in ("nohup python3 tmp/x.py > tmp/x.log 2>&1 &",
+                        "./scripts/run.sh > log 2>&1 &"):
+            with self.subTest(command=command):
+                self.assertEqual(decide(command), "deny")
+
     def test_background_call_without_the_line_is_refused(self):
         self.assertEqual(decide("python3 train.py", background=True), "deny")
 

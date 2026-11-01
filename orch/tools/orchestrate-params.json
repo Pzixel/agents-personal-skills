@@ -24,7 +24,7 @@
   },
   "poll_sleep_min_seconds": 5,
   "outcomes_min_pairs": 2,
-  "_comment_outcomes_min_pairs": "no-poll-gate: a run_in_background or detached (nohup, setsid, disown, tmux -d, screen -dm, a backgrounding &) command carries a line `# OUTCOMES: <outcome> -> <step>; ...` with at least this many outcomes and two different steps (CASE-58).",
+  "_comment_outcomes_min_pairs": "no-poll-gate: a script run (an interpreter given a file path, or a path to a script) launched detached (nohup, setsid, disown, tmux -d, screen -dm, a backgrounding &) or in run_in_background carries a line `# OUTCOMES: <outcome> -> <step>; ...` with at least this many outcomes and two different steps (CASE-58).",
   "_comment_poll_sleep_min_seconds": "no-poll-gate: a `sleep` shorter than this many seconds paces requests and is allowed anywhere; this long or longer is polling and is refused in the foreground.",
   "wait_for_max_seconds": 270,
   "bash_timeout_max_ms": 600000,
