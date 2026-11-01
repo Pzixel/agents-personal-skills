@@ -404,6 +404,109 @@ def poll_decision(cmd, run_in_background, agent_type="", params=None, timeout_ms
     return decision
 
 
+# A process left running past the call: its result arrives later, in another
+# turn, so the run is only worth starting if its outcomes lead to different
+# steps (CASE-58: a fine-tune relaunched after it had already failed the gate).
+_DETACH_HEADS = frozenset({"nohup", "setsid", "disown"})
+_HEAD_PREFIXES = frozenset({"time", "exec", "command", "builtin", "!"})
+_WAIT_PROGRAMS = frozenset(
+    {"sleep", "wait-for", "tail", "grep", "test", "[", "[[", "true", "false", ":",
+     "break", "echo", "pgrep", "date"}
+)
+_OUTCOMES_RE = re.compile(r"^#\s*OUTCOMES:(.*)$")
+_BACKGROUND_AMP = re.compile(r"(?<![&><|])&(?![&>])")
+
+
+def _segment_head(segment):
+    tokens = segment.split()
+    i = 0
+    while i < len(tokens) and (_ENV_ASSIGN.match(tokens[i]) or tokens[i] in _HEAD_PREFIXES
+                               or tokens[i].lower() in _SHELL_KEYWORDS - {"nohup"}):
+        i += 1
+    return tokens[i:]
+
+
+def _detaches(script):
+    """True when the quote-blanked script leaves a process running past the call."""
+    if _BACKGROUND_AMP.search(script):
+        return True
+    for segment in _segments(script):
+        tokens = _segment_head(segment)
+        prog = _program(tokens)
+        if prog in _DETACH_HEADS:
+            return True
+        if prog == "tmux" and any(t in ("new", "new-session") for t in tokens) and "-d" in tokens:
+            return True
+        if prog == "screen" and any(re.match(r"^-\w*d\w*m", t) for t in tokens[1:]):
+            return True
+    return False
+
+
+def _is_pure_wait(script):
+    programs = []
+    for segment in _segments(script):
+        tokens = _tokens_after_keywords(segment)
+        if not tokens:
+            continue
+        prog = _program(tokens)
+        if prog not in _WAIT_PROGRAMS:
+            return False
+        if prog == "tail" and not any(t in ("-f", "-F") for t in tokens[1:]):
+            prog = "tail-static"
+        programs.append(prog)
+    return any(p in ("sleep", "wait-for", "tail") for p in programs)
+
+
+def _outcome_steps(command):
+    """Steps of the `# OUTCOMES: o -> s; o -> s` line; pairs missing a side do not count."""
+    for line in (command or "").splitlines():
+        match = _OUTCOMES_RE.match(line.strip())
+        if not match:
+            continue
+        steps = []
+        for pair in match.group(1).split(";"):
+            outcome, arrow, step = pair.partition("->")
+            if arrow and outcome.strip() and step.strip():
+                steps.append(" ".join(step.lower().split()))
+        return steps
+    return []
+
+
+_OUTCOMES_LINE = "# OUTCOMES: <outcome> -> <step>; <outcome> -> <step>"
+
+
+def outcomes_decision(command, run_in_background, params=None):
+    """A background or detached run must name, in a `# OUTCOMES:` line, at
+    least ``outcomes_min_pairs`` outcomes leading to at least two different
+    steps. Detach is judged before the pure-wait exemption, which covers only
+    the background trigger; no override marker exempts."""
+    script, _ = _split_heredocs(command or "")
+    script = _strip_quotes("\n".join(l for l in script.split("\n") if not l.lstrip().startswith("#")))
+    if _detaches(script):
+        trigger = "detach"
+    elif run_in_background and not _is_pure_wait(script):
+        trigger = "background"
+    else:
+        return {"decision": "allow", "reason": "", "trigger": ""}
+    steps = _outcome_steps(command)
+    if len(steps) < int(_merged_params(params)["outcomes_min_pairs"]):
+        reason = (
+            "This command starts a run whose result arrives after the call ({}). Name each "
+            "outcome of the run and the step it leads to in a line `{}` (at least two outcomes). "
+            "A run whose every outcome leads to the same step is not run: report the fact "
+            "already in hand instead.".format(trigger, _OUTCOMES_LINE)
+        )
+    elif len(set(steps)) < 2:
+        reason = (
+            "Every outcome in the `# OUTCOMES:` line leads to the same step ({}). A run whose "
+            "every outcome leads to the same step is not run: take that step now, or report the "
+            "fact already in hand instead.".format(steps[0])
+        )
+    else:
+        return {"decision": "allow", "reason": "", "trigger": trigger}
+    return {"decision": "deny", "reason": reason, "trigger": trigger}
+
+
 def _poll_rule(cmd, run_in_background, agent_type, params, timeout_ms):
     if run_in_background:
         if agent_type:
@@ -636,6 +739,8 @@ DEFAULT_PARAMS = {
     },
     # A `sleep` shorter than this paces requests; this long or longer is a poll.
     "poll_sleep_min_seconds": 5,
+    # A background or detached run names at least this many outcomes in `# OUTCOMES:`.
+    "outcomes_min_pairs": 2,
     # A subagent's foreground wait-for: --max at most this, and the Bash call's
     # timeout at least (--max + 30) s, never above bash_timeout_max_ms.
     "wait_for_max_seconds": 570,

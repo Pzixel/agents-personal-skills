@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """PreToolUse hook (Bash matcher, main session and all agents): refuse
-foreground polling loops, and any run_in_background call from a subagent. All decision logic lives in tools/gate_policy.py;
+foreground polling loops, any run_in_background call from a subagent, and a
+background or detached run without a `# OUTCOMES:` line naming two different steps. All decision logic lives in tools/gate_policy.py;
 this file only moves fields. Escape hatch: a line `NO_POLL_OVERRIDE: <reason>` in the
 command. Fails open on absolutely any error -- a broken hook would block every
 live session."""
@@ -68,7 +69,8 @@ def main():
     )
     if decision.get("decision") == "override":
         log_override(payload, command, decision["reason"])
-        return
+    if decision.get("decision") != "deny":
+        decision = gate_policy.outcomes_decision(command, background, params)
     if decision.get("decision") != "deny":
         return
     sys.stdout.write(
