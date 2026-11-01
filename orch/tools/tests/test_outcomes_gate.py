@@ -36,6 +36,12 @@ class OutcomesTriggerTest(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(decide(command), "deny")
 
+    def test_detached_helper_stopped_in_the_same_call_is_allowed(self):
+        for command in ("kubectl port-forward svc/a 8080:80 & sleep 2; curl localhost:8080; kill $!",
+                        "./server & sleep 1; ./client; wait"):
+            with self.subTest(command=command):
+                self.assertEqual(decide(command), "allow")
+
     def test_background_call_without_the_line_is_refused(self):
         self.assertEqual(decide("python3 train.py", background=True), "deny")
 

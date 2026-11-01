@@ -1,6 +1,7 @@
 """Replay recorded Bash calls through the loop-cost gate.
 
 usage: python3 replay.py <loop.tsv> <control.jsonl> [variants]
+       python3 replay.py outcomes <calls.jsonl> [<start_utc of one call to probe>]
 
 loop.tsv: start_utc, duration_s, agent, agent_type, command (one looping
 session, all rows one repository). control.jsonl: rows of extract.py (every
@@ -103,7 +104,29 @@ def false_fire(o):
     return "--help" in o["command"] or set(o["key"].split("+")) <= MUX
 
 
+def outcomes(calls_path, probe_ts=None):
+    """Outcomes gate over every call of extract.py: fires per trigger class and
+    per day, the 10 most recent fires, and the decision on the call at probe_ts."""
+    rows = sorted((json.loads(l) for l in open(calls_path)), key=lambda r: r["start_utc"])
+    fires = []
+    for r in rows:
+        d = g.outcomes_decision(r["command"], r.get("run_in_background"))
+        if d["decision"] == "deny":
+            fires.append(dict(r, trigger=d["trigger"]))
+        if probe_ts and r["start_utc"] == probe_ts:
+            print("probe", probe_ts, d["decision"], d["trigger"])
+    print("calls", len(rows), "fires", len(fires),
+          "by trigger", dict(collections.Counter(f["trigger"] for f in fires)),
+          "by agent", dict(collections.Counter("sub" if f["agent_type"] else "main" for f in fires)))
+    for day, n in sorted(collections.Counter(f["start_utc"][:10] for f in fires).items()):
+        print(day, n)
+    for f in fires[-10:]:
+        print(f["start_utc"], f["trigger"], f["command"][:120].replace("\n", " "))
+
+
 def main():
+    if sys.argv[1] == "outcomes":
+        return outcomes(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else None)
     loop, control = load(sys.argv[1], sys.argv[2])
     modes = ("perkey", "pooled", "aprime") if sys.argv[3:] == ["variants"] else ("policy",)
     print("variant | control denials | on experiment scripts | false fires | max false/day"

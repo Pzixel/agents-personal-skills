@@ -408,6 +408,7 @@ def poll_decision(cmd, run_in_background, agent_type="", params=None, timeout_ms
 # turn, so the run is only worth starting if its outcomes lead to different
 # steps (CASE-58: a fine-tune relaunched after it had already failed the gate).
 _DETACH_HEADS = frozenset({"nohup", "setsid", "disown"})
+_JOB_ENDERS = frozenset({"kill", "pkill", "wait", "trap"})
 _HEAD_PREFIXES = frozenset({"time", "exec", "command", "builtin", "!"})
 _WAIT_PROGRAMS = frozenset(
     {"sleep", "wait-for", "tail", "grep", "test", "[", "[[", "true", "false", ":",
@@ -427,7 +428,12 @@ def _segment_head(segment):
 
 
 def _detaches(script):
-    """True when the quote-blanked script leaves a process running past the call."""
+    """True when the quote-blanked script leaves a process running past the call.
+    A script that also stops or awaits its jobs (kill, pkill, wait, trap) gets
+    their result inside the call (a port-forward for one curl)."""
+    heads = [_program(_segment_head(seg)) for seg in _segments(script)]
+    if any(h in _JOB_ENDERS for h in heads):
+        return False
     if _BACKGROUND_AMP.search(script):
         return True
     for segment in _segments(script):
