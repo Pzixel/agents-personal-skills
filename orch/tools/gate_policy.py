@@ -112,9 +112,14 @@ def agent_ref(type_name):
     return "orch:" + type_name if type_name in ORCH_AGENTS else type_name
 
 
-def _strip_quotes(cmd):
+_PLAIN_WORD = re.compile(r"^[^\s;&|()<>`\\'\"]*$")
+
+
+def _strip_quotes(cmd, keep_words=False):
     """Blank out single/double-quoted spans so their contents cannot be read as
-    shell structure (``grep -r "sleep" .`` must not look like a sleep call)."""
+    shell structure (``grep -r "sleep" .`` must not look like a sleep call).
+    With ``keep_words``, a span that is one plain word (`"$PID"`, `'s2_chain'`)
+    keeps its text, since it cannot change the structure."""
     out = []
     quote = None
     i = 0
@@ -127,7 +132,7 @@ def _strip_quotes(cmd):
                 i += 2
                 continue
             if ch in ("'", '"'):
-                quote = ch
+                quote, opened = ch, i + 1
                 out.append(" ")
                 i += 1
                 continue
@@ -139,6 +144,8 @@ def _strip_quotes(cmd):
             continue
         if ch == quote:
             quote = None
+            if keep_words and _PLAIN_WORD.match(cmd[opened:i]):
+                out[-1] = cmd[opened:i]
         i += 1
     return "".join(out)
 
@@ -404,13 +411,29 @@ def poll_decision(cmd, run_in_background, agent_type="", params=None, timeout_ms
     return decision
 
 
-# An experiment left running past the call: a script the session wrote whose
-# result is read and judged later. It is only worth starting if its outcomes
-# lead to different steps (CASE-58: a fine-tune relaunched after it had already
-# failed the gate). Servers, tunnels and watchers are infrastructure, not runs.
+# An experiment left running past the call: a script or binary of the session
+# whose result is read and judged later. It is only worth starting if its
+# outcomes lead to different steps (CASE-58: a fine-tune relaunched after it
+# had already failed the gate). Servers, tunnels and watchers are
+# infrastructure, not runs.
 _DETACH_HEADS = frozenset({"nohup", "setsid", "disown"})
-_HEAD_PREFIXES = frozenset({"time", "exec", "command", "builtin", "!", "env", "rtk"})
-_JOB_ENDERS = frozenset({"kill", "pkill", "wait", "trap"})
+# Programs that run the command given after their options, with the options
+# that take a separate value (`timeout` also takes its duration). `rtk`,
+# `poetry` and `uv` count only before their subcommand from _WRAPPERS.
+_LAUNCH_WRAPPERS = {
+    "nohup": (), "setsid": (), "disown": (), "caffeinate": ("-t", "-w"),
+    "timeout": ("-s", "--signal", "-k", "--kill-after"), "nice": ("-n", "--adjustment"),
+    "ionice": ("-c", "-n", "-p"), "sudo": ("-u", "-g", "-C", "-D", "-h", "-p", "-U", "-r", "-t"),
+    "stdbuf": ("-i", "-o", "-e"), "env": ("-u", "-C", "--unset", "--chdir"), "time": ("-f", "-o"),
+    "exec": ("-a",), "command": (), "builtin": (), "rtk": (),
+    "poetry": ("-C", "--directory", "-P", "--project"),
+    "uv": ("-p", "--python", "--with", "--with-requirements", "--with-editable", "--project",
+           "--directory", "--group", "--extra", "--env-file", "--index", "--package", "--from"),
+}
+_INTERPRETER_VALUE_OPTIONS = frozenset(
+    {"-W", "-X", "-o", "-O", "+o", "+O", "-r", "--require", "--import", "--loader"})
+_INLINE_CODE_OPTIONS = frozenset({"-m", "-c", "-e", "--eval"})
+_JOB_ENDERS = frozenset({"kill", "pkill", "killall", "wait"})
 _WAIT_PROGRAMS = frozenset(
     {"sleep", "wait-for", "tail", "grep", "test", "[", "[[", "true", "false", ":",
      "break", "echo", "pgrep", "date"}
@@ -424,23 +447,120 @@ _SERVICE_PROGRAMS = frozenset(
 _NOT_SCRIPTS = frozenset({"wait-for", "check-run"})
 _SYSTEM_DIRS = ("/usr/", "/bin/", "/sbin/", "/opt/homebrew/")
 _OUTCOMES_RE = re.compile(r"^#\s*OUTCOMES:(.*)$")
-_BACKGROUND_AMP = re.compile(r"(?<![&><|])&(?![&>])")
 # `2>&1`, `&>f`, `<&3`: an ampersand inside a redirection is not a separator.
 _REDIRECT_AMP = re.compile(r"(?<=[<>])&|&(?=>)")
+_REDIRECTION = re.compile(r"^\d*(>>|>\||>|<<<|<<|<)(.*)$")
+_COMMAND_OPS = ("&&", "||", "|&", ";;", "&", "|", ";", "\n", "(", ")")
+_OPENERS = frozenset({"while", "until", "for", "select", "if", "{"})
+_CLOSERS = frozenset({"done", "fi", "}"})
+_JOB_REF = re.compile(r"^\$(!|\{!\})$")
 _OUTCOMES_LINE = "# OUTCOMES: <outcome> -> <step>; <outcome> -> <step>"
 
 
-def _segment_head(segment):
-    """Tokens from the launched program on: env assignments, shell keywords,
-    nohup/setsid and plain wrappers removed."""
-    tokens = segment.split()
-    i = 0
-    while i < len(tokens) and (
-        _ENV_ASSIGN.match(tokens[i]) or tokens[i] in _HEAD_PREFIXES or tokens[i] in _DETACH_HEADS
-        or tokens[i].lower() in _SHELL_KEYWORDS
-    ):
-        i += 1
-    return tokens[i:]
+def _shell_tokens(script):
+    """(text, position, is_operator) of a quote-stripped script; `$(...)`,
+    `${...}`, `<(...)` and `>(...)` stay inside their word."""
+    out, i, n = [], 0, len(script)
+    while i < n:
+        if script[i] in " \t":
+            i += 1
+            continue
+        op = next((o for o in _COMMAND_OPS if script.startswith(o, i)), None)
+        if op:
+            out.append((op, i, True))
+            i += len(op)
+            continue
+        start, depth = i, 0
+        while i < n:
+            if script[i] in "$<>" and script[i + 1:i + 2] in ("(", "{"):
+                depth, i = depth + 1, i + 2
+            elif depth and script[i] in "({":
+                depth, i = depth + 1, i + 1
+            elif depth and script[i] in ")}":
+                depth, i = depth - 1, i + 1
+            elif not depth and script[i] in " \t\n;&|()":
+                break
+            else:
+                i += 1
+        out.append((script[start:i], start, False))
+    return out
+
+
+def _commands(script):
+    """Simple commands of a script: words, end position, ``bg`` (position of
+    the `&` that backgrounds the statement holding it, else None) and ``cond``
+    (the condition of a while/until loop). A compound command (loop, if,
+    subshell, brace group) belongs whole to the statement it stands in."""
+    commands, frames, words, cond = [], [([], [])], [], [False]
+
+    def close(position):
+        if words:
+            frames[-1][0].append(len(commands))
+            frames[-1][1].append(len(commands))
+            commands.append({"words": words[:], "end": position, "bg": None, "cond": cond[0]})
+            del words[:]
+        cond[0] = False
+
+    def pop():
+        if len(frames) > 1:
+            members = frames.pop()[1]
+            frames[-1][0].extend(members)
+            frames[-1][1].extend(members)
+
+    for text, pos, is_op in _shell_tokens(script):
+        if not is_op:
+            if words or text not in _OPENERS | _CLOSERS | {"do", "then", "else", "elif", "!"}:
+                words.append(text)
+            elif text in _CLOSERS:
+                pop()
+            elif text in _OPENERS:
+                frames.append(([], []))
+                cond[0] = text in ("while", "until")
+            continue
+        close(pos)
+        if text == "(":
+            frames.append(([], []))
+        elif text == ")":
+            pop()
+        elif text in (";", "\n", ";;", "&"):
+            if text == "&":
+                for idx in frames[-1][0]:
+                    if commands[idx]["bg"] is None:
+                        commands[idx]["bg"] = pos
+            del frames[-1][0][:]
+    close(len(script))
+    return commands
+
+
+def _launch_head(words):
+    """(tokens from the launched program on, detached): env assignments,
+    redirections, shell keywords and wrappers that run the command after them
+    (nohup, setsid, caffeinate, timeout, sudo, `rtk proxy`, `uv run` ...) removed."""
+    tokens, detached, i = list(words), False, 0
+    while i < len(tokens):
+        tok = tokens[i]
+        prog = os.path.basename(tok)
+        redirection = _REDIRECTION.match(tok)
+        if redirection:
+            i += 1 if redirection.group(2) else 2
+            continue
+        if _WRAPPERS.get(prog) and tokens[i + 1:i + 2] and tokens[i + 1] in _WRAPPERS[prog]:
+            i += 2
+        elif prog in _LAUNCH_WRAPPERS and not _WRAPPERS.get(prog):
+            detached = detached or prog in _DETACH_HEADS
+            i += 1
+        elif _ENV_ASSIGN.match(tok) or tok.lower() in _SHELL_KEYWORDS:
+            i += 1
+            continue
+        else:
+            break
+        values = _LAUNCH_WRAPPERS.get(prog, ())
+        while i < len(tokens) and (tokens[i].startswith("-") or _ENV_ASSIGN.match(tokens[i])):
+            i += 2 if tokens[i] in values else 1
+        if prog == "timeout":
+            i += 1
+    head = tokens[i:]
+    return head, detached or _program(head) in ("tmux", "screen")
 
 
 def _is_script_path(token):
@@ -448,54 +568,104 @@ def _is_script_path(token):
 
 
 def _runs_script(tokens):
-    """True when the launched command runs a script file: an interpreter (or
-    `uv run`) given a file path, or a direct path to a script."""
+    """True when the launched command runs a script or binary of the session:
+    an interpreter given a file path, or a path to the file itself."""
     prog = _program(tokens)
     if not tokens or prog in _SERVICE_PROGRAMS or prog in _NOT_SCRIPTS or "node_modules/" in tokens[0]:
         return False
     if prog in ("tmux", "screen"):
-        return any(_runs_script(tokens[i:]) for i in range(1, len(tokens)) if not tokens[i].startswith("-"))
-    if prog == "uv" and tokens[1:2] == ["run"]:
-        tokens = tokens[1:]
-        prog = "uv"
-    if _SCRIPT_INTERPRETERS.match(prog) or prog == "uv":
-        args = [a for a in tokens[1:] if a != "run"]
-        if "-m" in args or "-c" in args:
+        return any(_runs_script(_launch_head(tokens[i:])[0])
+                   for i in range(1, len(tokens)) if not tokens[i].startswith("-"))
+    if not _SCRIPT_INTERPRETERS.match(prog):
+        return _is_script_path(tokens[0])
+    i = 1
+    while i < len(tokens) and tokens[i].startswith(("-", "+")):
+        if tokens[i] in _INLINE_CODE_OPTIONS:
             return False
-        files = [a for a in args if not a.startswith("-") and not a.startswith(("<", ">"))]
-        return bool(files) and _is_script_path(files[0])
-    return _is_script_path(tokens[0])
+        i += 2 if tokens[i] in _INTERPRETER_VALUE_OPTIONS else 1
+    return i < len(tokens) and not _REDIRECTION.match(tokens[i]) and _is_script_path(tokens[i])
 
 
-def _detached_launches(script):
-    """Token lists of the commands the script leaves running past the call."""
-    out = []
-    pos = 0
-    for match in _BACKGROUND_AMP.finditer(script):
-        before = _segments(script[pos:match.start()])
-        if before:
-            out.append(_segment_head(before[-1]))
-        pos = match.end()
-    for segment in _segments(script):
-        raw = segment.split()
-        if any(t in _DETACH_HEADS for t in raw[:6]) or _program(_segment_head(segment)) in ("tmux", "screen"):
-            out.append(_segment_head(segment))
-    return out
-
-
-def _is_pure_wait(script):
+def _is_pure_wait(commands):
+    """Only waiting: wait programs, at least one of them a sleep, wait-for or
+    `tail -f`; a loop condition may be a script of the session (`until ./check.sh`)."""
     programs = []
-    for segment in _segments(script):
-        tokens = _tokens_after_keywords(segment)
-        if not tokens:
+    for command in commands:
+        head = _launch_head(command["words"])[0]
+        if not head or (command["cond"] and _runs_script(head)):
             continue
-        prog = _program(tokens)
+        prog = _program(head)
         if prog not in _WAIT_PROGRAMS:
             return False
-        if prog == "tail" and not any(t in ("-f", "-F") for t in tokens[1:]):
+        if prog == "tail" and not any(t in ("-f", "-F") for t in head[1:]):
             prog = "tail-static"
         programs.append(prog)
     return any(p in ("sleep", "wait-for", "tail") for p in programs)
+
+
+def _detached_launches(commands):
+    """[(launch position, command indices)] of the script or binary runs the
+    call leaves going: a statement backgrounded with `&` (every command of its
+    pipeline, subshell, brace group or loop), or one under nohup/setsid/tmux."""
+    statements = {}
+    for idx, command in enumerate(commands):
+        if command["bg"] is not None:
+            statements.setdefault(command["bg"], []).append(idx)
+        elif _launch_head(command["words"])[1]:
+            statements.setdefault(command["end"], []).append(idx)
+    return [
+        (pos, idxs) for pos, idxs in sorted(statements.items())
+        if not _is_pure_wait([commands[i] for i in idxs])
+        and any(_runs_script(_launch_head(commands[i]["words"])[0]) for i in idxs)
+    ]
+
+
+def _ends_launch(commands, pos, idxs):
+    """True when a foreground kill, pkill, killall or wait after the launch at
+    ``pos`` targets that job: `$!` or a variable assigned from it while it is
+    the latest background job, a job spec, a bare wait, or a pkill pattern
+    found in the launched command."""
+    jobs = sorted({c["bg"] for c in commands if c["bg"] is not None})
+
+    def latest_job(at):
+        return max((j for j in jobs if j < at), default=None)
+
+    names = {}
+    text = " ".join(" ".join(commands[i]["words"]) for i in idxs)
+    for command in commands:
+        for word in command["words"][:1]:
+            name, eq, value = word.partition("=")
+            if eq and _JOB_REF.match(value):
+                names[name] = latest_job(command["end"])
+        head = _launch_head(command["words"])[0]
+        prog = _program(head)
+        if command["bg"] is not None or command["end"] <= pos or prog not in _JOB_ENDERS:
+            continue
+        options = [a for a in head[1:] if a.startswith("-")]
+        args = [a for a in head[1:] if not a.startswith("-")]
+        if prog == "wait" and not args:
+            return True
+        if prog in ("pkill", "killall"):
+            if args and _pattern_in(args[-1], text):
+                return True
+            continue
+        if prog == "kill" and ("-0" in options or "0" in args[:1]):
+            continue
+        for arg in args:
+            ref = arg.lstrip("$").strip("{}")
+            if arg.startswith("%") or "jobs" in arg:
+                return True
+            if (_JOB_REF.match(arg) and latest_job(command["end"]) == pos) or (
+                    arg.startswith("$") and names.get(ref) == pos):
+                return True
+    return False
+
+
+def _pattern_in(pattern, text):
+    try:
+        return re.search(pattern, text) is not None
+    except re.error:
+        return pattern in text
 
 
 def _outcome_steps(command):
@@ -514,31 +684,36 @@ def _outcome_steps(command):
 
 
 def outcomes_decision(command, run_in_background, params=None):
-    """A script run left going past the call (detached, or the whole call in
-    the background) must name, in a `# OUTCOMES:` line, at least
-    ``outcomes_min_pairs`` outcomes leading to at least two different steps.
-    Exempt: a background call that is only a wait, and a script that stops or
-    awaits its own jobs (kill, pkill, wait, trap). No override marker exempts."""
+    """A script or binary of the session left running past the call (detached,
+    or the whole call in the background) must name, in a `# OUTCOMES:` line, at
+    least ``outcomes_min_pairs`` outcomes leading to at least two different
+    steps. Exempt: a background call that is only a wait, and a launch that a
+    later kill or wait of the same call stops or awaits. No override marker
+    exempts."""
     script, _ = _split_heredocs(command or "")
-    script = _strip_quotes("\n".join(l for l in script.split("\n") if not l.lstrip().startswith("#")))
-    script = _REDIRECT_AMP.sub(" ", script)
-    segments = _segments(script)
-    if any(_program(_segment_head(seg)) in _JOB_ENDERS for seg in segments):
-        return {"decision": "allow", "reason": "", "trigger": ""}
-    if any(_runs_script(t) for t in _detached_launches(script)):
+    script = "\n".join(l for l in script.split("\n") if not l.lstrip().startswith("#"))
+    script = _REDIRECT_AMP.sub(" ", _strip_quotes(script, keep_words=True))
+    commands = _commands(script)
+    launches = _detached_launches(commands)
+    open_launches = [(pos, idxs) for pos, idxs in launches if not _ends_launch(commands, pos, idxs)]
+    ended = {i for _, idxs in launches for i in idxs} - {i for _, idxs in open_launches for i in idxs}
+    runs = [" ".join(_launch_head(c["words"])[0]) for i, c in enumerate(commands)
+            if (open_launches and i in open_launches[0][1]) or (not open_launches and i not in ended)
+            if _runs_script(_launch_head(c["words"])[0])]
+    if open_launches:
         trigger = "detach"
-    elif run_in_background and not _is_pure_wait(script) and any(
-            _runs_script(_segment_head(seg)) for seg in segments):
+    elif run_in_background and runs and not _is_pure_wait(commands):
         trigger = "background"
     else:
-        return {"decision": "allow", "reason": "", "trigger": ""}
+        return {"decision": "allow", "reason": "", "trigger": "", "launch": ""}
     steps = _outcome_steps(command)
     if len(steps) < int(_merged_params(params)["outcomes_min_pairs"]):
         reason = (
-            "This command starts a script run whose result arrives after the call ({}). Name each "
-            "outcome of the run and the step it leads to in a line `{}` (at least two outcomes). "
-            "A run whose every outcome leads to the same step is not run: report the fact "
-            "already in hand instead.".format(trigger, _OUTCOMES_LINE)
+            "This command starts a script or binary of the session whose result arrives after "
+            "the call ({}: `{}`). Name each outcome of the run and the step it leads to in a "
+            "line `{}` (at least two outcomes). A run whose every outcome leads to the same "
+            "step is not run: report the fact already in hand instead.".format(
+                trigger, runs[0], _OUTCOMES_LINE)
         )
     elif len(set(steps)) < 2:
         reason = (
@@ -547,8 +722,9 @@ def outcomes_decision(command, run_in_background, params=None):
             "fact already in hand instead.".format(steps[0])
         )
     else:
-        return {"decision": "allow", "reason": "", "trigger": trigger}
-    return {"decision": "deny", "reason": reason, "trigger": trigger}
+        return {"decision": "allow", "reason": "", "trigger": trigger, "launch": runs[0]}
+    return {"decision": "deny", "reason": reason, "trigger": trigger, "launch": runs[0]}
+
 
 def _poll_rule(cmd, run_in_background, agent_type, params, timeout_ms):
     if run_in_background:

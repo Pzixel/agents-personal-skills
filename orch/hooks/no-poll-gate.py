@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """PreToolUse hook (Bash matcher, main session and all agents): refuse
 foreground polling loops, any run_in_background call from a subagent, and a
-script run left going past the call without a `# OUTCOMES:` line naming two different steps. All decision logic lives in tools/gate_policy.py;
-this file only moves fields. Escape hatch: a line `NO_POLL_OVERRIDE: <reason>` in the
-command. Fails open on absolutely any error -- a broken hook would block every
+script or binary of the session left running past the call without a
+`# OUTCOMES:` line naming two different steps. All decision logic lives in
+tools/gate_policy.py;
+this file only moves fields. Escape hatch for the polling rule only (the
+outcomes rule has none): a line `NO_POLL_OVERRIDE: <reason>` in the command. Fails open on absolutely any error -- a broken hook would block every
 live session."""
 
 import datetime

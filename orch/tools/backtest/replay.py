@@ -106,13 +106,13 @@ def false_fire(o):
 
 def outcomes(calls_path, probe_ts=None):
     """Outcomes gate over every call of extract.py: fires per trigger class and
-    per day, the 10 most recent fires, and the decision on the call at probe_ts."""
+    per day, the 10 most recent fires (the launched program, then 300 chars of the command), and the decision on the call at probe_ts."""
     rows = sorted((json.loads(l) for l in open(calls_path)), key=lambda r: r["start_utc"])
     fires = []
     for r in rows:
         d = g.outcomes_decision(r["command"], r.get("run_in_background"))
         if d["decision"] == "deny":
-            fires.append(dict(r, trigger=d["trigger"]))
+            fires.append(dict(r, trigger=d["trigger"], launch=d["launch"]))
         if probe_ts and r["start_utc"] == probe_ts:
             print("probe", probe_ts, d["decision"], d["trigger"])
     print("calls", len(rows), "fires", len(fires),
@@ -121,7 +121,7 @@ def outcomes(calls_path, probe_ts=None):
     for day, n in sorted(collections.Counter(f["start_utc"][:10] for f in fires).items()):
         print(day, n)
     for f in fires[-10:]:
-        print(f["start_utc"], f["trigger"], f["command"][:120].replace("\n", " "))
+        print(f["start_utc"], f["trigger"], "launch:", f["launch"][:120], "|", f["command"][:300].replace("\n", " "))
 
 
 def main():
