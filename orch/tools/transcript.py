@@ -6,14 +6,18 @@ the harness's own acknowledgements and task notifications."""
 import json
 import re
 
-# Only the harness's two launch acknowledgements, each the whole tool result:
-# an explicit background launch, and a foreground call moved there on timeout.
+# Only the harness's three launch acknowledgements, each the whole tool result:
+# an explicit background launch, a foreground call moved there on timeout, and
+# one moved there so that an arriving message can reach the agent.
 # Hook denials that mention the background are not launches.
 LAUNCH_RE = re.compile(
     r"^(?:Command running in background with ID: ([A-Za-z0-9_-]+)"
     r"|Command did not complete within its \d+s timeout and was moved to the background"
-    r"[^\n]*?ID:?\s*([A-Za-z0-9_-]+))"
+    r"[^\n]*?ID:?\s*([A-Za-z0-9_-]+)"
+    r"|Command was moved to the background \(ID: ([A-Za-z0-9_-]+)\))"
 )
+# The harness's prefix on a user entry that carries a Stop hook's block reason.
+STOP_FEEDBACK_PREFIX = "Stop hook feedback:"
 MONITOR_STARTED_RE = re.compile(r"^Monitor started \(task ([A-Za-z0-9_-]+)")
 _NOTIFICATION_RE = re.compile(r"<task-notification>(.*?)</task-notification>", re.DOTALL)
 _TASK_ID_RE = re.compile(r"<task-id>([A-Za-z0-9_-]+)</task-id>")
@@ -83,12 +87,14 @@ def background_watch_scan(entries, marker):
 
     tasks: id -> {launch, command, closed}; monitors: id -> {armed, ended};
     crons: indexes of CronCreate calls; turn_start: first index of the turn;
-    prior_block_seen: ``marker`` appears after the last launch or monitor end."""
+    prior_block_seen: a user entry starting with ``Stop hook feedback:`` and
+    carrying ``marker`` follows the last launch or monitor end; a tool result
+    that quotes the marker (a read of this source or a review) does not count."""
     state = {"tasks": {}, "monitors": {}, "crons": [], "markers": []}
     commands = {}  # Bash tool_use id -> command
     monitor_uses = set()
     turn_start = 0
-    for index, (raw, entry) in enumerate(entries):
+    for index, (_, entry) in enumerate(entries):
         kind = entry.get("type")
         if kind == "system" and entry.get("subtype") == "turn_duration":
             yield _snapshot(state, turn_start, marker, index, entry.get("timestamp") or "")
@@ -112,7 +118,12 @@ def background_watch_scan(entries, marker):
                     if target in state["monitors"] and state["monitors"][target]["ended"] is None:
                         state["monitors"][target]["ended"] = index
             continue
-        if marker in raw:
+        if kind == "user" and any(
+            block.get("type") == "text"
+            and str(block.get("text") or "").startswith(STOP_FEEDBACK_PREFIX)
+            and marker in str(block.get("text") or "")
+            for block in blocks_of(entry)
+        ):
             state["markers"].append(index)
         for block in blocks_of(entry):
             if block.get("type") == "tool_result":

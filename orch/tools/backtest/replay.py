@@ -168,7 +168,7 @@ def background_watch(days):
                 n["turn ends with a denial the old launch regex took for a launch"] += 1
             if any(not t["closed"] and t["launch"] >= start for t in facts["tasks"].values()):
                 n["turn ends with an open task launched this turn"] += 1
-            d = gate_policy.background_watch_decision(facts, False, False)
+            d = gate_policy.background_watch_decision(dict(facts, prior_block_seen=False))
             if any(facts["tasks"][w]["launch"] >= start for w in d["waits"]):
                 n["exempt as a pure wait"] += 1
             if d["decision"] != "block":

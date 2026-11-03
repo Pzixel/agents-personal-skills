@@ -690,8 +690,9 @@ def _outcomes_commands(command):
 
 
 def is_pure_wait(command):
-    """True when the whole command only waits (wait-for, a sleep loop): its own
-    exit is the event a caller waits for."""
+    """True when the whole command only waits (wait-for, a bare sleep, tail -f,
+    or a sleep loop whose condition runs a script of the session): its own exit
+    is the event a caller waits for."""
     return _is_pure_wait(_outcomes_commands(command))
 
 
@@ -4263,15 +4264,15 @@ _BACKGROUND_WATCH_REASON = (
 )
 
 
-def background_watch_decision(facts, stop_hook_active, prior_block_seen):
+def background_watch_decision(facts):
     """Return the stop once when a background task is open at the stop and
     unwatched, and it was launched this turn or its last watch ended this turn.
 
     facts: one snapshot of transcript.background_watch_scan. A watch is a
     Monitor armed after the launch and not ended, or any CronCreate after the
     launch. A launch that only waits is its own event and is exempt. Only this
-    hook's marker allows the second stop: ``stop_hook_active`` is set by any
-    Stop hook's block (reply-lint), so it is accepted for logging only."""
+    hook's marker (``facts["prior_block_seen"]``) allows the second stop:
+    ``stop_hook_active`` is set by any Stop hook's block (reply-lint)."""
     ids, waits = [], []
     turn_start = facts["turn_start"]
     for task, info in sorted(facts["tasks"].items()):
@@ -4288,7 +4289,7 @@ def background_watch_decision(facts, stop_hook_active, prior_block_seen):
             continue
         if launch >= turn_start or any(m["ended"] >= turn_start for m in watches):
             ids.append(task)
-    if not ids or prior_block_seen:
+    if not ids or facts["prior_block_seen"]:
         return {"decision": "allow", "ids": ids, "waits": waits}
     return {
         "decision": "block",

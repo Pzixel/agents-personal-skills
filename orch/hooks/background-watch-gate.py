@@ -43,9 +43,6 @@ def main():
     if not raw.strip():
         return 0
     payload = json.loads(raw)
-    # Subagents have sleeping-stop on SubagentStop.
-    if payload.get("agent_type") or payload.get("agent_id"):
-        return 0
     path = payload.get("transcript_path") or ""
     if not path or not os.path.isfile(path):
         return 0
@@ -54,9 +51,7 @@ def main():
     for facts in transcript.background_watch_scan(entries, gate_policy.BACKGROUND_WATCH_MARKER):
         pass
     stop_hook_active = bool(payload.get("stop_hook_active"))
-    decision = gate_policy.background_watch_decision(
-        facts, stop_hook_active, facts["prior_block_seen"]
-    )
+    decision = gate_policy.background_watch_decision(facts)
     log(
         {
             "session_id": payload.get("session_id") or "",

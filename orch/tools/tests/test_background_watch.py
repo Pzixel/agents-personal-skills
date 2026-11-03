@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 import unittest
@@ -43,12 +44,14 @@ def notification(task, body):
     return owner("<task-notification><task-id>{}</task-id>{}</task-notification>".format(task, body))
 
 
-def decide(entries, stop_hook_active=False):
-    import json
+def stop_feedback():
+    return owner("Stop hook feedback:\n" + MARKER + " Task(s): b1.")
+
+
+def decide(entries):
     raw = [(json.dumps(e), e) for e in entries]
     facts = list(transcript.background_watch_scan(raw, MARKER))[-1]
-    return gate_policy.background_watch_decision(
-        facts, stop_hook_active, facts["prior_block_seen"])["decision"]
+    return gate_policy.background_watch_decision(facts)["decision"]
 
 
 class BackgroundWatchTest(unittest.TestCase):
@@ -98,14 +101,15 @@ class BackgroundWatchTest(unittest.TestCase):
         self.assertEqual(decide([owner("go"), *launch("b1", cmd)]), "allow")
 
     def test_marker_after_launch_allows_second_stop(self):
-        entries = [owner("go"), *launch("b1"), owner("Stop hook feedback: " + MARKER)]
-        self.assertEqual(decide(entries, stop_hook_active=True), "allow")
+        self.assertEqual(decide([owner("go"), *launch("b1"), stop_feedback()]), "allow")
 
-    def test_stop_hook_active_without_marker_still_blocks(self):
-        self.assertEqual(decide([owner("go"), *launch("b1")], stop_hook_active=True), "block")
+    def test_marker_quoted_in_a_tool_result_still_blocks(self):
+        entries = [owner("go"), *launch("b1"), tool_use("r", "Read", {"file_path": "gate_policy.py"}),
+                   tool_result("r", 'BACKGROUND_WATCH_MARKER = "' + MARKER + '"')]
+        self.assertEqual(decide(entries), "block")
 
     def test_marker_before_a_new_launch_does_not_allow(self):
-        entries = [owner("go"), *launch("b1"), owner(MARKER), *launch("b2")]
+        entries = [owner("go"), *launch("b1"), stop_feedback(), *launch("b2")]
         self.assertEqual(decide(entries), "block")
 
 
@@ -117,6 +121,12 @@ class LaunchAckTest(unittest.TestCase):
         self.assertEqual(self.ack(
             "Command did not complete within its 120s timeout and was moved to the "
             "background (ID: bx12). Output is being written to: /tmp/x"), "bx12")
+
+    def test_moved_for_arriving_message_form_is_a_launch(self):
+        self.assertEqual(self.ack(
+            "Command was moved to the background (ID: bfepb7b13) so that a message that "
+            "arrived while it was running can reach you; it was not interrupted. Output is "
+            "being written to: /private/tmp/claude-501/x/tasks/bfepb7b13.output"), "bfepb7b13")
 
     def test_poll_gate_denial_is_not_a_launch(self):
         self.assertIsNone(self.ack(
