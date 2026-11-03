@@ -683,6 +683,18 @@ def _outcome_steps(command):
     return []
 
 
+def _outcomes_commands(command):
+    script, _ = _split_heredocs(command or "")
+    script = "\n".join(l for l in script.split("\n") if not l.lstrip().startswith("#"))
+    return _commands(_REDIRECT_AMP.sub(" ", _strip_quotes(script, keep_words=True)))
+
+
+def is_pure_wait(command):
+    """True when the whole command only waits (wait-for, a sleep loop): its own
+    exit is the event a caller waits for."""
+    return _is_pure_wait(_outcomes_commands(command))
+
+
 def outcomes_decision(command, run_in_background, params=None):
     """A script or binary of the session left running past the call (detached,
     or the whole call in the background) must name, in a `# OUTCOMES:` line, at
@@ -690,10 +702,7 @@ def outcomes_decision(command, run_in_background, params=None):
     steps. Exempt: a background call that is only a wait, and a launch that a
     later kill or wait of the same call stops or awaits. No override marker
     exempts."""
-    script, _ = _split_heredocs(command or "")
-    script = "\n".join(l for l in script.split("\n") if not l.lstrip().startswith("#"))
-    script = _REDIRECT_AMP.sub(" ", _strip_quotes(script, keep_words=True))
-    commands = _commands(script)
+    commands = _outcomes_commands(command)
     launches = _detached_launches(commands)
     open_launches = [(pos, idxs) for pos, idxs in launches if not _ends_launch(commands, pos, idxs)]
     ended = {i for _, idxs in launches for i in idxs} - {i for _, idxs in open_launches for i in idxs}
@@ -4237,3 +4246,53 @@ def headroom_facts(target, pod_json, top_text):
             if use is not None:
                 return {"limit": limit, "use": use, "container": name, "error": None}
     return {"error": "working set unreadable (metrics-server)", "container": name}
+
+
+# Fixed first sentence of the background-watch block reason; the hook finds it
+# in the transcript to know the session was already returned once.
+BACKGROUND_WATCH_MARKER = "A background task of this session is open with no watch on it."
+
+_BACKGROUND_WATCH_REASON = (
+    BACKGROUND_WATCH_MARKER + " Task(s): {ids}. The harness notifies only when the whole "
+    "command exits; a child that fails under `&` + `wait`, a stalled job or an hours-long "
+    "run stays silent (measured: 48 of 286 such turn ends in 14 days ended with the owner "
+    "back first, up to 20 h). Arm one Monitor on this run's terminal and failure lines in "
+    "its own log (done, exit=, Traceback, gave up, process gone), timeout sized from the "
+    "measured time of one unit, at most 60 min, re-armed on expiry while the job lives; "
+    "or stop the task. Then start the goal's next independent item in this turn."
+)
+
+
+def background_watch_decision(facts, stop_hook_active, prior_block_seen):
+    """Return the stop once when a background task is open at the stop and
+    unwatched, and it was launched this turn or its last watch ended this turn.
+
+    facts: one snapshot of transcript.background_watch_scan. A watch is a
+    Monitor armed after the launch and not ended, or any CronCreate after the
+    launch. A launch that only waits is its own event and is exempt. Only this
+    hook's marker allows the second stop: ``stop_hook_active`` is set by any
+    Stop hook's block (reply-lint), so it is accepted for logging only."""
+    ids, waits = [], []
+    turn_start = facts["turn_start"]
+    for task, info in sorted(facts["tasks"].items()):
+        if info["closed"]:
+            continue
+        if is_pure_wait(info["command"]):
+            waits.append(task)
+            continue
+        launch = info["launch"]
+        if any(c > launch for c in facts["crons"]):
+            continue
+        watches = [m for m in facts["monitors"].values() if m["armed"] > launch]
+        if any(m["ended"] is None for m in watches):
+            continue
+        if launch >= turn_start or any(m["ended"] >= turn_start for m in watches):
+            ids.append(task)
+    if not ids or prior_block_seen:
+        return {"decision": "allow", "ids": ids, "waits": waits}
+    return {
+        "decision": "block",
+        "ids": ids,
+        "waits": waits,
+        "reason": _BACKGROUND_WATCH_REASON.format(ids=", ".join(ids)),
+    }

@@ -20,7 +20,6 @@ error exits 0 with no output.
 import datetime
 import json
 import os
-import re
 import sys
 
 # Plugin layout first (hooks/../tools), the ~/.claude install as fallback;
@@ -33,16 +32,9 @@ STATE_DIR = os.path.expanduser("~/.claude")
 sys.path.insert(0, TOOLS_DIR)
 
 import gate_policy  # noqa: E402
+from transcript import blocks_of, entries_of, launch_id  # noqa: E402
 
 LOG_PATH = os.path.join(STATE_DIR, "sleeping-stop-log.jsonl")
-# The harness acknowledges a launched background command, and one it moved to
-# the background on reaching its timeout, with different wording.
-LAUNCH_RE = re.compile(
-    r"(?:Command running in background with ID: ([A-Za-z0-9_-]+)"
-    r"|[^\n]*?moved to (?:the )?background[^\n]*?ID:?\s*([A-Za-z0-9_-]+)"
-    r"|[^\n]*?background[^\n]*?with ID:?\s+([A-Za-z0-9_-]+))",
-    re.IGNORECASE,
-)
 # Tool calls that read or stop a background task account for it.
 TASK_TOOLS = frozenset({"TaskOutput", "TaskStop", "BashOutput", "KillShell"})
 
@@ -54,40 +46,6 @@ def account_of(transcript_path):
     if "/.claude-accounts/work/" in (transcript_path or ""):
         return "work"
     return "default"
-
-
-def entries_of(path):
-    """(raw line, parsed entry) pairs in transcript order."""
-    out = []
-    with open(path, errors="replace") as fh:
-        for line in fh:
-            line = line.strip()
-            if not line.startswith("{"):
-                continue
-            try:
-                out.append((line, json.loads(line)))
-            except Exception:
-                continue
-    return out
-
-
-def blocks_of(entry):
-    message = entry.get("message")
-    if not isinstance(message, dict):
-        return []
-    content = message.get("content")
-    if isinstance(content, str):
-        return [{"type": "text", "text": content}]
-    return [b for b in content if isinstance(b, dict)] if isinstance(content, list) else []
-
-
-def result_text(block):
-    content = block.get("content")
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        return " ".join(str(c.get("text") or "") for c in content if isinstance(c, dict))
-    return ""
 
 
 def facts_of(entries):
@@ -116,9 +74,9 @@ def facts_of(entries):
                 continue
             # Only the harness's own launch acknowledgement, which is the whole
             # result; a command output that quotes one is not a launch.
-            launch = LAUNCH_RE.match(result_text(block).strip())
-            if launch:
-                launched[next(g for g in launch.groups() if g)] = index
+            task_id = launch_id(block)
+            if task_id:
+                launched[task_id] = index
                 last_launch = index
         for task_id in launched:
             if launched[task_id] >= index:

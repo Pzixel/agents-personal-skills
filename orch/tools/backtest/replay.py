@@ -2,6 +2,7 @@
 
 usage: python3 replay.py <loop.tsv> <control.jsonl> [variants]
        python3 replay.py outcomes <calls.jsonl> [<start_utc of one call to probe>]
+       python3 replay.py background-watch [days]
 
 loop.tsv: start_utc, duration_s, agent, agent_type, command (one looping
 session, all rows one repository). control.jsonl: rows of extract.py (every
@@ -20,10 +21,13 @@ ran long twice since its ack); trigger (b) is the real one in all three."""
 import collections
 import csv
 import datetime
+import glob
 import json
 import os
+import re
 import subprocess
 import sys
+import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 import gate_policy as g  # noqa: E402
@@ -124,7 +128,67 @@ def outcomes(calls_path, probe_ts=None):
         print(f["start_utc"], f["trigger"], "launch:", f["launch"][:120], "|", f["command"][:300].replace("\n", " "))
 
 
+# Before the shared transcript.LAUNCH_RE: its generic alternatives also matched hook
+# denials that mention the background (bogus id `E`).
+_OLD_LAUNCH_RE = re.compile(
+    r"(?:Command running in background with ID: ([A-Za-z0-9_-]+)"
+    r"|[^\n]*?moved to (?:the )?background[^\n]*?ID:?\s*([A-Za-z0-9_-]+)"
+    r"|[^\n]*?background[^\n]*?with ID:?\s+([A-Za-z0-9_-]+))",
+    re.IGNORECASE,
+)
+
+
+def background_watch(days):
+    """Replay gate_policy.background_watch_decision at every recorded turn end
+    (`turn_duration`) of the main-session transcripts modified in ``days`` days."""
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+    import gate_policy
+    import transcript
+    cutoff = time.time() - days * 86400
+    roots = [os.path.expanduser("~/.claude/projects")] + glob.glob(
+        os.path.expanduser("~/.claude-accounts/*/projects"))
+    paths = set()
+    for root in roots:
+        for path in glob.glob(os.path.join(root, "*", "*.jsonl")):
+            if not os.path.basename(path).startswith("agent-") and os.path.getmtime(path) >= cutoff:
+                paths.add(os.path.realpath(path))
+    n = collections.Counter()
+    fired = []
+    for path in sorted(paths):
+        entries = transcript.entries_of(path)
+        old_only = [i for i, (raw, e) in enumerate(entries) if e.get("type") == "user" and any(
+            b.get("type") == "tool_result" and _OLD_LAUNCH_RE.match(transcript.result_text(b).strip())
+            and not transcript.launch_id(b) for b in transcript.blocks_of(e))]
+        for facts in transcript.background_watch_scan(entries, gate_policy.BACKGROUND_WATCH_MARKER):
+            if not facts["timestamp"]:
+                continue  # end of file: no recorded stop
+            n["turn ends"] += 1
+            start, end = facts["turn_start"], facts["index"]
+            if any(start <= i < end for i in old_only):
+                n["turn ends with a denial the old launch regex took for a launch"] += 1
+            if any(not t["closed"] and t["launch"] >= start for t in facts["tasks"].values()):
+                n["turn ends with an open task launched this turn"] += 1
+            d = gate_policy.background_watch_decision(facts, False, False)
+            if any(facts["tasks"][w]["launch"] >= start for w in d["waits"]):
+                n["exempt as a pure wait"] += 1
+            if d["decision"] != "block":
+                continue
+            n["fires"] += 1
+            this_turn = [t for t in d["ids"] if facts["tasks"][t]["launch"] >= start]
+            n["fires (a) launched this turn" if this_turn else "fires (b) watch ended this turn"] += 1
+            if any(m["armed"] > facts["tasks"][t]["launch"] for t in d["ids"]
+                   for m in facts["monitors"].values()):
+                n["fires where a Monitor was armed after the launch and ended"] += 1
+            fired.append((facts["timestamp"][:16], os.path.basename(path)[:8], ",".join(d["ids"])))
+    for key, value in n.items():
+        print(key, value)
+    for row in sorted(fired):
+        print(*row)
+
+
 def main():
+    if sys.argv[1] == "background-watch":
+        return background_watch(int(sys.argv[2]) if len(sys.argv) > 2 else 14)
     if sys.argv[1] == "outcomes":
         return outcomes(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else None)
     loop, control = load(sys.argv[1], sys.argv[2])

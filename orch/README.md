@@ -63,6 +63,7 @@ is installed with `CLAUDE_CONFIG_DIR=~/.claude-accounts/<name> ./install.sh clau
   - `checks-before-done.py` — builder's declared check.
   - `skill-load-gate.py` — keeps large expert skills out of the main session.
   - `no-poll-gate.py`, `sleeping-stop.py` — waiting protocol.
+  - `background-watch-gate.py` — Stop: no turn end with an open, unwatched background task.
   - `monitor-wait-note.py` — waiting protocol as context on every Monitor call.
   - `scout-bounds.py`, `bash-output-clamp.py` — output clamping.
   - `offline-gate.py` — offline lock on production access.
