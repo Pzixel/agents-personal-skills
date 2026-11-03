@@ -951,12 +951,15 @@ class HandoffJudgeTest(unittest.TestCase):
 
     def test_verdict_object_is_parsed(self):
         for result in (
-            '{"sentence": "Your call.", "handoff": true, "deferral_sentence": "none", "deferral": false}',
-            '```json\n{"sentence": "Your call.", "handoff": true, "deferral_sentence": "none", "deferral": false}\n```',
+            '{"sentence": "Your call.", "handoff": true, "deferral_sentence": "none", "deferral": false, '
+            '"next_step_sentence": "none", "next_step": false}',
+            '```json\n{"sentence": "Your call.", "handoff": true, "deferral_sentence": "none", "deferral": false, '
+            '"next_step_sentence": "none", "next_step": false}\n```',
         ):
             self.assertEqual(
                 gate_policy.parse_judge_verdict(self._cli(result)),
-                {"handoff": True, "sentence": "Your call.", "deferral": False, "deferral_sentence": "none"},
+                {"handoff": True, "sentence": "Your call.", "deferral": False, "deferral_sentence": "none",
+                 "next_step": False, "next_step_sentence": "none"},
                 result,
             )
 
@@ -969,6 +972,7 @@ class HandoffJudgeTest(unittest.TestCase):
             self._cli('{"sentence": "x", "handoff": "false"}'),
             self._cli('{"sentence": "x", "handoff": true}'),
             self._cli('{"sentence": "x", "handoff": true, "deferral": "false"}'),
+            self._cli('{"sentence": "x", "handoff": true, "deferral": false}'),
             self._cli('{"sentence": "x"} {"handoff": true}'),
         ):
             self.assertIsNone(gate_policy.parse_judge_verdict(stdout), stdout)

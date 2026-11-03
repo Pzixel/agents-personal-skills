@@ -41,6 +41,7 @@ TOOLS_DIR = (
 sys.path.insert(0, TOOLS_DIR)
 
 import gate_policy  # noqa: E402
+import transcript as transcript_scan  # noqa: E402
 
 LOG_PATH = os.path.expanduser("~/.claude/reply-lint-log.jsonl")
 JUDGE_ENV = "REPLY_LINT_JUDGE"
@@ -54,11 +55,22 @@ JUDGE_ARGS = [
 ]
 
 
-def judge(text):
+def next_step_candidate(text, transcript_path):
+    """The next-step trigger sentence when the session holds no live mechanism, else ""."""
+    sentence = gate_policy.next_step_sentence(text)
+    if not sentence or not os.path.isfile(transcript_path):
+        return ""
+    facts = None
+    for facts in transcript_scan.background_watch_scan(transcript_scan.entries_of(transcript_path), "\x00"):
+        pass
+    return "" if gate_policy.live_mechanisms(facts) else sentence
+
+
+def judge(text, next_step=""):
     """(verdict or None, error or None) from the nested small-model judge."""
     try:
         run = subprocess.run(
-            JUDGE_ARGS + [gate_policy.judge_prompt(text)],
+            JUDGE_ARGS + [gate_policy.judge_prompt(text, next_step)],
             capture_output=True, text=True, timeout=JUDGE_TIMEOUT_S,
             cwd=tempfile.gettempdir(), env=dict(os.environ, **{JUDGE_ENV: "1"}),
         )
@@ -119,9 +131,15 @@ def main():
             return 0
         text = last_assistant_text(transcript)
     stop_hook_active = bool(payload.get("stop_hook_active"))
-    skip_judge = stop_hook_active or not gate_policy.needs_judge(text)
-    verdict, judge_error = (None, None) if skip_judge else judge(text)
-    decision = gate_policy.reply_lint_decision(text, stop_hook_active, verdict)
+    next_step, scan_error = "", None
+    if not stop_hook_active:
+        try:
+            next_step = next_step_candidate(text, payload.get("transcript_path") or "")
+        except Exception as exc:  # the reply passes; the failure is logged
+            scan_error = "%s: %s" % (type(exc).__name__, exc)
+    skip_judge = stop_hook_active or not (next_step or gate_policy.needs_judge(text))
+    verdict, judge_error = (None, None) if skip_judge else judge(text, next_step)
+    decision = gate_policy.reply_lint_decision(text, stop_hook_active, verdict, next_step)
     if os.path.isfile(payload.get("transcript_path") or ""):
         log(
             {
@@ -129,6 +147,8 @@ def main():
                 "stop_hook_active": stop_hook_active,
                 "decision": decision["decision"],
                 "rules": decision["rules"],
+                "next_step_candidate": next_step,
+                "scan_error": scan_error,
                 "verdict": verdict,
                 "judge_error": judge_error,
                 "tail": text.strip()[-120:],

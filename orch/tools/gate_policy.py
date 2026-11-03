@@ -2072,9 +2072,77 @@ _CLAIM_REASON = (
 )
 _DEFERRAL_REASON = (
     REPLY_LINT_MARKER + " the reply defers work it could do this turn (\"{sentence}\"). "
-    "Do it now if it is inside your authority, or state plainly that it is not done "
-    "and name where it is tracked (issue, PR, handoff file). Append only the missing part; do not repeat the reply."
+    "Do it now if it is inside your authority. A step that waits on something that is not you names what it "
+    "waits on and the watch armed on it; a note or file written this turn to hold the step is not tracking. "
+    "Append only the missing part; do not repeat the reply."
 )
+_NEXT_STEP_REASON = (
+    REPLY_LINT_MARKER + " the reply ends on a step of your own that nothing waits for (\"{sentence}\"). "
+    "Run it now, in this turn. A step that waits on something that is not you names what it waits on and "
+    "the watch armed on it (Monitor id, Cron id, agent, PR check, the owner's instruction to stop). A file or "
+    "note written this turn is not tracking."
+)
+
+# -- next-step trigger (a): the closing part of the reply names a step of the agent's own --
+
+NEXT_STEP_CLOSING_CHARS = 600
+_FENCE_RE = re.compile(r"```.*?```", re.DOTALL)
+_URL_RE = re.compile(r"https?://\S+")
+_ABS_PATH_RE = re.compile(r"(?<![\w/])(?:~|/[\w.@-]+)(?:/[\w.@-]+)+/?")
+# A next-step label at a line start (list markers and bold allowed before it) ...
+_NEXT_STEP_LABEL_RE = re.compile(
+    r"^[ \t]*(?:(?:[-*+>]|\d+[.)])[ \t]+)*(?:\*\*|__|\*|_)?[ \t]*"
+    r"(?:следующ(?:ий|ие)\s+шаг|что\s+сделаю\s+дальше|дальше:|далее:|что\s+дальше"
+    r"|next\s+steps?\b|what\s+i\s+will\s+do\s+next)",
+    re.IGNORECASE | re.MULTILINE,
+)
+# ... or a first-person future verb of work.
+_NEXT_STEP_VERB_RE = re.compile(
+    r"\b(?:проверю|посчитаю|начну|запущу|пришлю|разложу|сверю|прогоню|посмотрю|выясню|найду"
+    r"|разберу|сравню|измерю|замерю|соберу|напишу|отправлю|доложу|вернусь)\b"
+    r"|\bI(?:'ll|\s+will)\s+(?:check|run|look|measure|compare|start|send|report)\b",
+    re.IGNORECASE,
+)
+_SENTENCE_BREAK_RE = re.compile(r"[.!?\n]")
+
+
+def _blank_code_paths_quoted(text):
+    """Length-preserving blanking of fenced code, URLs and absolute paths, then quoted spans."""
+    for pattern in (_FENCE_RE, _URL_RE, _ABS_PATH_RE):
+        text = pattern.sub(lambda m: " " * len(m.group(0)), text)
+    return _blank_quoted(text)
+
+
+def next_step_sentence(reply):
+    """Trigger (a) of the next-step rule: the sentence of the reply's closing part (its last
+    NEXT_STEP_CLOSING_CHARS, code, URLs, paths and quotes blanked) holding a next-step label or a
+    first-person future verb of work; "" when none."""
+    reply = reply or ""
+    original = reply[-NEXT_STEP_CLOSING_CHARS:]
+    blanked = _blank_code_paths_quoted(reply)[-NEXT_STEP_CLOSING_CHARS:]
+    match = _NEXT_STEP_LABEL_RE.search(blanked) or _NEXT_STEP_VERB_RE.search(blanked)
+    if not match:
+        return ""
+    start = 0
+    for brk in _SENTENCE_BREAK_RE.finditer(blanked, 0, match.start()):
+        start = brk.end()
+    end_match = _SENTENCE_BREAK_RE.search(blanked, match.end())
+    end = end_match.end() if end_match else len(blanked)
+    return re.sub(r"\s+", " ", original[start:end]).strip()
+
+
+def live_mechanisms(facts):
+    """Condition (c) of the next-step rule: ids of the session's mechanisms still live at the stop,
+    from any turn (``transcript.background_watch_scan`` facts). A background task is live until
+    its notification or TaskStop, a Monitor until its end notice, a scheduled job until its fire
+    or CronDelete (a one-shot job; a recurring one is not a wait), an async agent until its
+    notification or TaskStop (a SendMessage re-opens it); an Agent call with no result is live."""
+    live = [k for k, t in facts["tasks"].items() if not t["closed"]]
+    live += [k for k, m in facts["monitors"].items() if m["ended"] is None]
+    live += [k for k, j in facts["cron_jobs"].items() if not j["closed"]]
+    live += [k for k, a in facts["agents"].items() if not a["closed"]]
+    live += ["Agent call"] * facts["agent_calls"]
+    return live
 
 
 # The one word before a done word that makes it a question, a relative clause, a condition or a
@@ -2148,7 +2216,7 @@ def _has_done_claim(original):
 JUDGE_PROMPT = (
     "You check the final reply of a coding agent before its turn ends. The reply, as a JSON string:\n"
     "{reply}\n\n"
-    "Answer two questions about it (the reply may be in any language).\n\n"
+    "Answer three questions about it (the reply may be in any language).\n\n"
     "QUESTION A, OWNER HAND-OFF. The agent's tool to ask the owner, AskUserQuestion, pauses the turn and is "
     "not visible in this text, so a reply that ends the turn while still needing the owner has not asked "
     "through it. It is a hand-off only when either holds:\n"
@@ -2185,21 +2253,35 @@ JUDGE_PROMPT = (
     "QUESTION B, UNBACKED DEFERRAL. The agent says it will do some work later (\"I will add it to the "
     "plan\", \"I'll fix it in a follow-up PR\") that it could do in this turn, the deferral waits on "
     "nothing (no running agent, reviewer, tool, CI, test run, measurement, external event, or the owner's "
-    "answer), and the reply names no place where the remaining work is tracked (issue, PR, handoff or plan "
-    "file). Adding a point to a plan, a ticket or a file is itself work the agent can do now; a plan "
-    "counts as tracking only when the reply says the remaining work is already written there. NOT a deferral: a wait on any of those, even phrased in the first person (\"when I get the "
+    "answer), and the reply names no place where the remaining work is tracked (an issue, PR, handoff or "
+    "plan file that existed before this turn). Adding a point to a plan, a ticket or a file is itself work the agent "
+    "can do now; a plan, ticket or file written in this turn to hold the step is not tracking. NOT a deferral: a wait on any of those, even phrased in the first person (\"when I get the "
     "agent's result I will update the ticket\", \"I will fix it after review A\", \"if the measurement shows "
     "X, then I add a cache\"); a description of a plan a delegate carries out; a section label (\"How I will "
     "check.\"); a next step the agent names while its own delegate, reviewer, job or monitor is still "
     "running (the reply says so); a follow-up already tracked. A deferral needs the agent's work on the task "
     "to have ended this turn with the step left undone and untracked.\n\n"
+    "{question_c}"
     "For each question, find the one sentence that makes it true. If none exists, or a NOT case covers it, "
     "the answer is false. When unsure, answer false.\n\n"
     "Respond with one JSON object only, no other text, sentences written before the booleans:\n"
     "{{\"sentence\": \"<hand-off sentence quoted, at most 15 words, or none>\", \"handoff\": <true or false>, "
     "\"deferral_sentence\": \"<deferral sentence quoted, at most 15 words, or none>\", "
-    "\"deferral\": <true or false>}}"
+    "\"deferral\": <true or false>, "
+    "\"next_step_sentence\": \"<the step sentence quoted, at most 15 words, or none>\", "
+    "\"next_step\": <true or false>}}"
 )
+_QUESTION_C = (
+    "QUESTION C, OWN NEXT STEP. The reply's closing part names a step the agent itself will take "
+    "(\"{sentence}\"). Answer true when that step could start now in this same turn: nothing named in the "
+    "reply must happen first that is not the agent's own action. Answer false when the step waits on any of: "
+    "a running agent, reviewer, builder, probe, watcher, CI, test run, background task or job (the reply says "
+    "so or names its id); a named person, colleague, client, other session or third party acting first; a "
+    "clock time, date, data window or period that has not arrived; the owner's answer, approval, choice or "
+    "instruction, or the owner's earlier instruction to stop or hold; or when the sentence is a quote, a "
+    "section label, a description of a delegate's plan, or a step already done. When unsure, answer false.\n\n"
+)
+_NO_QUESTION_C = "QUESTION C is not asked for this reply: answer next_step false.\n\n"
 _HANDOFF_REASON = (
     REPLY_LINT_MARKER + " the reply leaves work waiting on the owner in plain text "
     "(\"{sentence}\"). If the decision is inside your authority (a technical question by the "
@@ -2246,14 +2328,16 @@ def needs_judge(reply):
     return addresses_owner(reply) or bool(_PROMISE_RE.search(_blank_quoted(reply)))
 
 
-def judge_prompt(reply):
-    """The judge prompt for one final reply; the reply goes in as a JSON string."""
-    return JUDGE_PROMPT.format(reply=json.dumps(reply, ensure_ascii=False))
+def judge_prompt(reply, next_step=""):
+    """The judge prompt for one final reply; the reply goes in as a JSON string. Question C is
+    asked only for a next-step candidate (``next_step`` = its trigger sentence)."""
+    question_c = _QUESTION_C.format(sentence=next_step.replace('"', "'")) if next_step else _NO_QUESTION_C
+    return JUDGE_PROMPT.format(reply=json.dumps(reply, ensure_ascii=False), question_c=question_c)
 
 
 def parse_judge_verdict(cli_stdout):
     """Verdict from `claude -p --output-format json` output:
-    {"handoff", "sentence", "deferral", "deferral_sentence"}, or None when the run
+    {"handoff", "sentence", "deferral", "deferral_sentence", "next_step", "next_step_sentence"}, or None when the run
     failed or the result is not exactly one verdict object (the hook then fails open)."""
     try:
         envelope = json.loads(cli_stdout)
@@ -2269,21 +2353,28 @@ def parse_judge_verdict(cli_stdout):
         verdict = json.loads(result)
     except ValueError:
         return None
-    if not isinstance(verdict, dict) or not all(isinstance(verdict.get(k), bool) for k in ("handoff", "deferral")):
+    if not isinstance(verdict, dict) or not all(
+        isinstance(verdict.get(k), bool) for k in ("handoff", "deferral", "next_step")
+    ):
         return None
     return {
         "handoff": verdict["handoff"],
         "sentence": str(verdict.get("sentence") or ""),
         "deferral": verdict["deferral"],
         "deferral_sentence": str(verdict.get("deferral_sentence") or ""),
+        "next_step": verdict["next_step"],
+        "next_step_sentence": str(verdict.get("next_step_sentence") or ""),
     }
 
 
-def reply_lint_decision(last_assistant_text, stop_hook_active, verdict=None):
+def reply_lint_decision(last_assistant_text, stop_hook_active, verdict=None, next_step=""):
     """Return the main session once when its final reply claims completion
     without an observation, or the judge ``verdict`` (``parse_judge_verdict``,
     None when no verdict exists) finds a plain-text hand-off to the owner or an
-    unbacked deferral of work. ``rules`` names every rule that fired.
+    unbacked deferral of work, or, for a next-step candidate (``next_step`` = the
+    trigger sentence of a reply whose session holds no live mechanism), the judge
+    finds the step could start now; ``next-step`` then replaces ``deferral``.
+    ``rules`` names every rule that fired.
     Not claims (2026-10-15): a Russian not-verified disclosure, a done word
     as a section label or with a manner complement.
     The second stop (``stop_hook_active``) always passes."""
@@ -2295,7 +2386,10 @@ def reply_lint_decision(last_assistant_text, stop_hook_active, verdict=None):
         fired.append(("claim", _CLAIM_REASON))
     if verdict and verdict["handoff"]:
         fired.append(("handoff", _HANDOFF_REASON.format(sentence=verdict["sentence"].replace('"', "'"))))
-    if verdict and verdict["deferral"]:
+    if next_step and verdict and verdict["next_step"]:
+        sentence = verdict["next_step_sentence"] or next_step
+        fired.append(("next-step", _NEXT_STEP_REASON.format(sentence=sentence.replace('"', "'"))))
+    elif verdict and verdict["deferral"]:
         fired.append(("deferral", _DEFERRAL_REASON.format(sentence=verdict["deferral_sentence"].replace('"', "'"))))
     if not fired:
         return {"decision": "allow", "rules": []}
