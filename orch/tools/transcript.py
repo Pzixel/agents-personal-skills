@@ -9,7 +9,12 @@ import re
 # Only the harness's three launch acknowledgements, each the whole tool result:
 # an explicit background launch, a foreground call moved there on timeout, and
 # one moved there so that an arriving message can reach the agent.
-# Hook denials that mention the background are not launches.
+# Hook denials that mention the background are not launches. The template alone
+# is not enough: a command whose output starts with another transcript's
+# acknowledgement (a grep over transcripts) matches it, so launch_id also needs
+# the harness's output path `/tasks/<id>.output`, present in every genuine
+# acknowledgement of all three forms. Residual: a full-line reprint of another
+# session's acknowledgement, path included (no instance in 14 days).
 LAUNCH_RE = re.compile(
     r"^(?:Command running in background with ID: ([A-Za-z0-9_-]+)"
     r"|Command did not complete within its \d+s timeout and was moved to the background"
@@ -59,8 +64,12 @@ def result_text(block):
 
 def launch_id(block):
     """Task id when this tool_result block is a background-launch acknowledgement."""
-    match = LAUNCH_RE.match(result_text(block).strip())
-    return next(g for g in match.groups() if g) if match else None
+    text = result_text(block).strip()
+    match = LAUNCH_RE.match(text)
+    if not match:
+        return None
+    task = next(g for g in match.groups() if g)
+    return task if "/tasks/%s.output" % task in text else None
 
 
 def _snapshot(state, turn_start, marker, index, timestamp):

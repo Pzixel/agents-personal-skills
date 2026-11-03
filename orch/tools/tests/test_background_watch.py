@@ -32,7 +32,8 @@ def tool_result(use_id, text):
 def launch(task, command="./run_full.sh", use_id=None):
     use_id = use_id or "u-" + task
     return [tool_use(use_id, "Bash", {"command": command, "run_in_background": True}),
-            tool_result(use_id, "Command running in background with ID: " + task)]
+            tool_result(use_id, "Command running in background with ID: {0}. Output is being "
+                        "written to: /private/tmp/claude-501/p/s/tasks/{0}.output".format(task))]
 
 
 def monitor(mon):
@@ -120,7 +121,15 @@ class LaunchAckTest(unittest.TestCase):
     def test_timeout_moved_form_is_a_launch(self):
         self.assertEqual(self.ack(
             "Command did not complete within its 120s timeout and was moved to the "
-            "background (ID: bx12). Output is being written to: /tmp/x"), "bx12")
+            "background (ID: bx12). Output is being written to: /private/tmp/claude-501/p/s/tasks/"
+            "bx12.output"), "bx12")
+
+    def test_ack_reprinted_by_a_command_without_its_output_path_is_not_a_launch(self):
+        self.assertIsNone(self.ack(
+            "Command was moved to the background (ID: bwl8kqtox) so that a message that "
+            "arrived while it was running can reach you; it was not interrupted. Output is "
+            "being written to: /private/tmp/claude-501/-Users-pzixel-Documents-Repos-retro-"
+            "evals/6b9a412c-3595-\nCommand was moved to the background (ID: bfdq6holr) so"))
 
     def test_moved_for_arriving_message_form_is_a_launch(self):
         self.assertEqual(self.ack(
