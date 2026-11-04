@@ -4,6 +4,7 @@ usage: python3 replay.py <loop.tsv> <control.jsonl> [variants]
        python3 replay.py outcomes <calls.jsonl> [<start_utc of one call to probe>]
        python3 replay.py background-watch [days]
        python3 replay.py next-step [days] [--against <backtest stops.tsv>]
+       python3 replay.py merge-gate [days]
 
 loop.tsv: start_utc, duration_s, agent, agent_type, command (one looping
 session, all rows one repository). control.jsonl: rows of extract.py (every
@@ -311,12 +312,73 @@ def next_step(days, against=None):
             print("delta only-replay", rows[key][0], *key, reason)
 
 
+def merge_gate(days):
+    """Replay gate_policy.merge_gate_decision over every Bash call of the last ``days``
+    days, main sessions (delegate=False) and subagents/agent-*.jsonl (delegate=True,
+    type from the sibling .meta.json). Prints per caller type allowed / refused by
+    fields / refused as delegate / delegate fall-through (the phrase without a
+    landing at command position, sent to the field check), each delegate refusal
+    and each fall-through row."""
+    cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=days)
+    mains = main_transcripts(days)
+    files = [(path, "main", False) for path in mains]
+    for path in mains:
+        for sub in glob.glob(os.path.join(path[: -len(".jsonl")], "subagents", "agent-*.jsonl")):
+            if os.path.getmtime(sub) < cutoff.timestamp():
+                continue
+            try:
+                with open(sub[: -len(".jsonl")] + ".meta.json") as fh:
+                    kind = json.load(fh).get("agentType") or "unknown"
+            except (OSError, ValueError):
+                kind = "unknown"
+            files.append((sub, kind, True))
+    counts = collections.defaultdict(collections.Counter)
+    refusals, fell = [], []
+    for path, kind, delegate in files:
+        session = re.search(r"([0-9a-f]{8})[0-9a-f-]*(?:\.jsonl|/subagents)", path)
+        sid = session.group(1) if session else os.path.basename(path)
+        for _, entry in transcript.entries_of(path):
+            ts = entry.get("timestamp") or ""
+            if entry.get("type") != "assistant" or ts < cutoff.strftime("%Y-%m-%dT%H:%M:%S"):
+                continue
+            for b in transcript.blocks_of(entry):
+                if b.get("type") != "tool_use" or b.get("name") != "Bash":
+                    continue
+                cmd = str((b.get("input") or {}).get("command") or "")
+                d = g.merge_gate_decision(cmd, None, delegate)
+                row = (ts[:19], sid, kind, cmd.replace("\n", " ")[:100])
+                if d["decision"] == "allow":
+                    counts[kind]["allowed"] += 1
+                elif d.get("kind") == "delegate":
+                    counts[kind]["refused-as-delegate"] += 1
+                    refusals.append(row)
+                else:
+                    counts[kind]["refused-by-fields"] += 1
+                if delegate and g._MERGE_RE.search(cmd) and not g.is_landing(cmd):
+                    counts[kind]["fell-through"] += 1
+                    fell.append(row)
+    cols = ("allowed", "refused-by-fields", "refused-as-delegate", "fell-through")
+    print("caller type | " + " | ".join(cols))
+    for kind in sorted(counts, key=lambda k: (k != "main", k)):
+        print(kind + " | " + " | ".join(str(counts[kind][c]) for c in cols))
+    sub = [k for k in counts if k != "main"]
+    print("total subagents | " + " | ".join(str(sum(counts[k][c] for k in sub)) for c in cols))
+    print("\ndelegate refusals (time, session, caller type, command[:100]):")
+    for row in sorted(refusals):
+        print(" | ".join(row))
+    print("\ndelegate rows sent to the field check (time, session, caller type, command[:100]):")
+    for row in sorted(fell):
+        print(" | ".join(row))
+
+
 def main():
     if sys.argv[1] == "next-step":
         args = sys.argv[2:]
         against = args[args.index("--against") + 1] if "--against" in args else None
         days = int(args[0]) if args and args[0].isdigit() else 14
         return next_step(days, against)
+    if sys.argv[1] == "merge-gate":
+        return merge_gate(int(sys.argv[2]) if len(sys.argv) > 2 else 28)
     if sys.argv[1] == "background-watch":
         return background_watch(int(sys.argv[2]) if len(sys.argv) > 2 else 14)
     if sys.argv[1] == "outcomes":

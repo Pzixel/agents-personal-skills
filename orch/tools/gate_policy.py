@@ -1899,12 +1899,47 @@ CHECK_RAN_TOKEN = "CHECK_RAN:"
 PROD_POSITION_TOKEN = "PROD_POSITION:"
 WAY_BACK_TOKEN = "WAY_BACK:"
 WORSE_FOR_TOKEN = "WORSE_FOR:"
+# The phrase anywhere in the command: the field check for every caller.
 _MERGE_RE = re.compile(
     r"\bgh\s+pr\s+merge\b"
     # git global options may stand between `git` and `push` (`git -C <dir> push`).
     r"|\bgit(?:\s+(?:-C|-c|--git-dir|--work-tree|--namespace)(?:=|\s+)\S+|\s+-\S+)*"
     r"\s+push\b[^|;&\n]*\b(?:master|main)\b"
 )
+# The stricter test for refusing a delegate as a delegate (CASE-62): the landing
+# at command position (line start, a separator, `then`/`do`/`else`, a case arm,
+# a brace group) behind env assignments and the rtk, time, env, exec and nohup
+# wrappers. Only heredoc bodies are stripped, so a grep pattern or a heredoc that
+# holds the phrase is not a landing; a delegate whose command only holds the
+# phrase falls through to the field check above.
+_LANDING_RE = re.compile(
+    r"(?:^|[;&|(){\n]|\b(?:then|do|else)\b)\s*"
+    r"(?:(?:\w+=(?:\"(?:[^\"\\]|\\.)*\"|'[^']*'|\S*)|rtk(?:\s+proxy)?|time(?:\s+-p)?|env(?:\s+-\S+)*"
+    r"|exec|nohup|command|sudo(?:\s+-\S+)*|nice(?:\s+-n\s+\S+|\s+-\S+)*|timeout(?:\s+-\S+)*\s+\S+)\s+)*"
+    # An absolute or relative program path counts (`/usr/bin/git`, `/opt/homebrew/bin/gh`).
+    r"(?:[^\s;&|(){}]*/)?(?:gh\b[^;&|\n]*\bpr\s+merge\b"
+    r"|git(?:\s+(?:-C|-c|--git-dir|--work-tree|--namespace)(?:=|\s+)\S+|\s+-\S+)*"
+    r"\s+push\b[^|;&\n]*(?:(?<![\w/.-])|(?<=refs/heads/))(?:master|main)(?![\w-]))"
+)
+_LANDING_HEREDOC_RE = re.compile(r"(<<-?[ \t]*(['\"]?)(\w+)\2[^\n]*\n).*?^[ \t]*\3[ \t]*$", re.S | re.M)
+_SHELL_C_RE = re.compile(r"\b(?:ba|z)?sh\s+(?:-\w+\s+)*-\w*c\w*\s+(\"(?:[^\"\\]|\\.)*\"|'[^']*')")
+
+
+def is_landing(command):
+    """True when ``command`` runs ``gh pr merge`` or a push to master/main at
+    command position, inside a ``bash -c``/``sh -c`` body included."""
+    text = _LANDING_HEREDOC_RE.sub(r"\1", command or "")
+    if _LANDING_RE.search(text):
+        return True
+    for m in _SHELL_C_RE.finditer(text):
+        body = m.group(1)[1:-1]
+        if m.group(1)[0] == '"':
+            body = re.sub(r"\\(.)", r"\1", body, flags=re.S)
+        if is_landing(body):
+            return True
+    return False
+
+
 _MERGE_REASON = (
     "Refused by merge-gate: this command lands a change on a shared branch. Run "
     "the declared check on the real path first (service start plus one unit "
@@ -1957,11 +1992,32 @@ def _always_on_satisfied(cmd, changed_paths):
     return bool(text) and text.lower() != "none"
 
 
-def merge_gate_decision(command, changed_paths=None):
-    """Deny ``gh pr merge`` and pushes to master/main unless the command carries
-    ``CHECK_RAN:``, ``PROD_POSITION:``, ``WAY_BACK:`` and ``WORSE_FOR:``, and ``ALWAYS_ON:``
-    when ``changed_paths`` touch an always-on rules file."""
+_DELEGATE_LANDING_REASON = (
+    "Refused by merge-gate: a delegate never lands a change on a shared branch, "
+    "whatever its prompt says (CASE-62). Commit on the task branch, reply with "
+    "`commits:` and the check, and name the landing request under `deviations:`; "
+    "the main session lands after the reviews (orchestrate step 8, Land)."
+)
+
+
+def is_delegate(payload):
+    """True when a hook payload comes from a subagent: its own transcript is a
+    subagents/agent-*.jsonl file, or the payload names an ``agent_id``. A main
+    session started with ``claude --agent`` carries ``agent_type`` too, so the
+    type alone does not tell (probe 2026-11-04, CASE-62)."""
+    # A non-empty sentinel stands in for a missing transcript so that agent_id alone counts.
+    return bool(own_transcript_path(payload.get("transcript_path") or "-", payload.get("agent_id") or ""))
+
+
+def merge_gate_decision(command, changed_paths=None, delegate=False):
+    """Deny a delegate's landing (``is_landing``) always. Any other command that
+    holds ``gh pr merge`` or a push to master/main, from any caller, is denied
+    unless it carries ``CHECK_RAN:``, ``PROD_POSITION:``, ``WAY_BACK:`` and
+    ``WORSE_FOR:``, and ``ALWAYS_ON:`` when ``changed_paths`` touch an
+    always-on rules file."""
     cmd = command or ""
+    if delegate and is_landing(cmd):
+        return {"decision": "deny", "kind": "delegate", "reason": _DELEGATE_LANDING_REASON}
     if not _MERGE_RE.search(cmd):
         return {"decision": "allow"}
     missing = [doc for token, doc in _MERGE_FIELD_DOCS if token not in cmd]

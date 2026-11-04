@@ -9,7 +9,8 @@ carries `CHECK_RAN: <what ran on the real path, result>`, `PROD_POSITION:
 minutes>` and `WORSE_FOR: <who gets worse or can break for every consumer,
 the new bottleneck; or none, with the reason>`, and `ALWAYS_ON:` when the pushed range changes an always-on
 rules file. The tokens are the agent's own statements; the gate only makes
-them unavoidable at the moment of merging. Decision: gate_policy.merge_gate_decision. Any error exits 0.
+them unavoidable at the moment of merging. A delegate's landing at command
+position is refused whatever it carries (CASE-62). Decision: gate_policy.merge_gate_decision. Any error exits 0.
 """
 import json
 import os
@@ -44,7 +45,11 @@ def _pushed_paths(command, cwd):
 def main():
     payload = json.load(sys.stdin)
     command = str((payload.get("tool_input") or {}).get("command") or "")
-    decision = gate_policy.merge_gate_decision(command, _pushed_paths(command, payload.get("cwd")))
+    delegate = gate_policy.is_delegate(payload)
+    # The delegate verdict needs no paths; the git diff runs only when it is not that.
+    decision = gate_policy.merge_gate_decision(command, None, delegate)
+    if decision.get("kind") != "delegate":
+        decision = gate_policy.merge_gate_decision(command, _pushed_paths(command, payload.get("cwd")), delegate)
     if decision["decision"] == "deny":
         print(decision["reason"], file=sys.stderr)
         return 2

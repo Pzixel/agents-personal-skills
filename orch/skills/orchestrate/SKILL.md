@@ -20,7 +20,7 @@ Declare every task `proof` or `ship` in the first line of the step 1 prompt.
 - small: the change is no more than a value, a field or a config line, whatever file holds it; or every file in `files:` is presentation (templates, styles, copy) or configuration that holds no rule, threshold or route. Reviews on `model: "opus"`. A value, field or config-line change carries no `design: required` and has no step 2; a larger presentation change carries `design: required`.
 - large: over about 400 LOC (`size:`) or more than one subsystem; split into slices, each with its own `check:`. Reviews on Fable.
 - medium: anything else (a decision, a query, a handler, state, a config that holds a rule, a threshold or a route, tests, docs, scripts, build files, migrations, policy prose); carries `design: required`. Reviews on Fable.
-With `design: required` the builder writes DESIGN.md first (scope and subsystems, size, the premises the fix rests on and how each was verified, the rejected alternatives) and stops. A hook refuses a builder prompt without `files:` and `check:` lines.
+With `design: required` the builder writes DESIGN.md first (scope and subsystems, size, the premises the fix rests on and how each was verified, the rejected alternatives) and stops. A hook refuses a builder prompt without `files:` and `check:` lines. The prompt, and every SendMessage after it, carries no landing instruction (PR, push, merge): landing is step 8.
 ```
 Agent(subagent_type: "orch:builder", description: <3-5 words>, prompt:
 task: <task>
@@ -80,6 +80,7 @@ Blockers/majors: <verified by cross-check> -> <open after recheck>
 Unverified: <each path or claim no run has executed>
 questions[]: <for the user only>
 ```
+8. Land, `ship` and `proof` alike, run by the main session only (merge-gate refuses a landing from any delegate): push the branch; open a PR to the default branch whose body carries the decisions and rejected alternatives from SPEC/DESIGN (or the proof run record) and the check output; wait for CI per Waiting (`wait-for --fail-on 1 -- gh pr checks <n>` or a Monitor) until green; merge with the merge-gate fields `CHECK_RAN`, `PROD_POSITION`, `WAY_BACK`, `WORSE_FOR`, plus `ALWAYS_ON` when an always-on rules file changed; then remove the worktree and delete the branch locally and remotely (rule: AGENTS.md git section). A repository without a PR flow (agents-personal-skills) gets a fast-forward push to master after the same reviews, with the same fields.
 
 ## Stop rules
 

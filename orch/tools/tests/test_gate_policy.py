@@ -719,6 +719,87 @@ class MergeGateDecisionTest(unittest.TestCase):
         for cmd in ("git push -u origin retro-fixes-2", "gh pr create --fill"):
             self.assertEqual(gate_policy.merge_gate_decision(cmd)["decision"], "allow", cmd)
 
+    def test_delegate_landing_is_denied_even_with_all_fields(self):
+        for cmd in (_MERGE_FULL, _MERGE_FULL.replace("gh pr merge 12 --squash", "git push origin HEAD:" + "master")):
+            result = gate_policy.merge_gate_decision(cmd, None, delegate=True)
+            self.assertEqual(result["decision"], "deny", cmd)
+            self.assertIn("a delegate never lands", result["reason"])
+
+    def test_delegate_text_holding_the_phrase_falls_through_to_the_field_check(self):
+        verb = "m" + "erge"
+        fields = "# " + "; ".join(_MERGE_FIELDS) + "\n"
+        for cmd in (
+            "cat > notes.md <<'EOF'\nthen gh pr %s 12 --squash\nEOF" % verb,
+            "grep -n 'gh pr %s' orch/hooks/*.py" % verb,
+        ):
+            bare = gate_policy.merge_gate_decision(cmd, None, delegate=True)
+            self.assertEqual(bare["decision"], "deny", cmd)
+            self.assertNotIn("a delegate never lands", bare["reason"])
+            self.assertEqual(gate_policy.merge_gate_decision(fields + cmd, None, delegate=True)["decision"], "allow", cmd)
+
+    # Landing shapes from the owner's transcripts (recheck 2026-11-04) and their
+    # wrapper siblings; the first is builder aa90618c, 2026-10-21.
+    _VERB = "m" + "erge"
+    _LANDING_FORMS = (
+        "for p in repo-a:281 repo-b:422; do gh pr %s ${p#*:} --squash; done" % _VERB,
+        "# CHECK_RAN: the revision's SQL ran on today's state\ngh pr %s 410 --squash" % _VERB,
+        'case "$r" in success*) gh pr %s 336 --squash;; esac' % _VERB,
+        "if gh pr checks 9; then gh pr %s 9 --squash; fi" % _VERB,
+        "{ gh pr %s 1; }" % _VERB,
+        'bash -c "cd /r && gh pr %s 1 --squash"' % _VERB,
+        "time gh pr %s 1" % _VERB,
+        "env X=1 gh pr %s 1" % _VERB,
+        "exec gh pr %s 1" % _VERB,
+        "git push origin HEAD:refs/heads/" + "master",
+        "git push origin '" + "main'",
+        # Main 3da26fbb, 2026-10-17: an absolute program path.
+        "/usr/bin/git push origin HEAD:" + "master",
+        "timeout 120 /opt/homebrew/bin/gh pr %s 7" % _VERB,
+    )
+
+    def test_delegate_landing_forms_are_refused_as_delegate(self):
+        for cmd in self._LANDING_FORMS:
+            result = gate_policy.merge_gate_decision(cmd, None, delegate=True)
+            self.assertIn("a delegate never lands", result.get("reason", ""), cmd)
+
+    def test_delegate_carrying_the_fields_as_quoted_assignments_is_refused_as_delegate(self):
+        # Builder 52051dcf, 2026-10-14 shape with all four fields.
+        cmd = ('CHECK_RAN="CI pass 833 tests" PROD_POSITION="2 pods" WAY_BACK="revert, 15 min" '
+               'WORSE_FOR="none" gh pr %s 1220 --squash' % self._VERB)
+        self.assertEqual(gate_policy.merge_gate_decision(cmd, None, delegate=True).get("kind"), "delegate")
+
+    def test_main_landing_forms_need_the_fields(self):
+        fields = "\n# " + "; ".join(_MERGE_FIELDS)
+        for cmd in self._LANDING_FORMS:
+            self.assertEqual(gate_policy.merge_gate_decision(cmd)["decision"], "deny", cmd)
+            self.assertEqual(gate_policy.merge_gate_decision(cmd + fields)["decision"], "allow", cmd)
+
+    def test_delegate_rtk_wrapped_landing_is_denied(self):
+        # A watcher landing seen in the replay, 2026-10-10 (CASE-62).
+        cmd = "cd /r/repo-a && rtk gh pr " + "m" + "erge 89 -R org/repo-a --squash"
+        self.assertEqual(gate_policy.merge_gate_decision(cmd, None, delegate=True)["decision"], "deny")
+
+    def test_delegate_branch_push_and_pr_create_are_allowed(self):
+        for cmd in ("git push -u origin merge-gate-delegate", "gh pr create --fill"):
+            self.assertEqual(gate_policy.merge_gate_decision(cmd, None, delegate=True)["decision"], "allow", cmd)
+
+
+class IsDelegateTest(unittest.TestCase):
+    _MAIN = "/h/.claude/projects/-w/e021b9bc.jsonl"
+
+    def test_subagent_payloads_are_delegates(self):
+        for payload in (
+            {"transcript_path": self._MAIN, "agent_id": "afd9ad9d", "agent_type": "orch:builder"},
+            {"transcript_path": "/h/.claude/projects/-w/e021b9bc/subagents/agent-afd9ad9d.jsonl"},
+            {"agent_id": "afd9ad9d"},
+        ):
+            self.assertTrue(gate_policy.is_delegate(payload), payload)
+
+    def test_main_session_started_with_agent_flag_is_not_a_delegate(self):
+        # Probe 2026-11-04: `claude --agent orch:scout -p` main-session payload.
+        payload = {"transcript_path": self._MAIN, "agent_type": "orch:scout", "agent_id": None}
+        self.assertFalse(gate_policy.is_delegate(payload))
+
 
 class AlwaysOnFieldTest(unittest.TestCase):
     _PUSH = "git push origin always-on-gate:master  # " + "; ".join(_MERGE_FIELDS)
