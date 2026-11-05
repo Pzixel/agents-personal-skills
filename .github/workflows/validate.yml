@@ -30,8 +30,12 @@ jobs:
       - run: git diff --check
 
   orch-tools:
-    runs-on: ubuntu-latest
+    # ubuntu-latest moved to 26.04 on 2026-10-31, where setup-python has no 3.9 build;
+    # 24.04 carries both versions of the matrix.
+    runs-on: ubuntu-24.04
     strategy:
+      # both results are evidence: a 3.9 failure must not cancel the 3.12 run.
+      fail-fast: false
       matrix:
         # 3.9 is /usr/bin/python3 on macOS, which runs the hooks live.
         python-version: ["3.9", "3.12"]
