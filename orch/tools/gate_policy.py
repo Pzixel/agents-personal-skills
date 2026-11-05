@@ -2159,6 +2159,27 @@ _NEXT_STEP_VERB_RE = re.compile(
     r"|\bI(?:'ll|\s+will)\s+(?:check|run|look|measure|compare|start|send|report)\b",
     re.IGNORECASE,
 )
+# ... or a step of the agent's own named as not yet run ("пока не запускал", "not run yet"), the
+# form a list of deciding checks closes with (CASE-64).
+_NEXT_STEP_HELD_RE = re.compile(
+    r"\b(?:пока|ещё|еще)\s+(?:ничего\s+)?не\s+(?:запускал|запустил|запущен\w*|проверял|проверил|делал|сделал"
+    r"|начинал|начал|смотрел|считал|мерил|замерял|сверял|трогал|пробовал)\b"
+    r"|\bне\s+запускал\w*\b"
+    r"|\b(?:not|haven't|hasn't|have\s+not|has\s+not)\s+(?:yet\s+)?(?:run|started|launched|checked|measured)\b"
+    r"|\bnot\s+(?:run|started|launched|checked)\s+yet\b",
+    re.IGNORECASE,
+)
+# ... or a label opening the list of checks that would decide the reply's open question; the
+# candidate sentence then carries the label and its first item (CASE-64).
+_NEXT_STEP_DECIDE_LABEL_RE = re.compile(
+    r"^[ \t]*(?:(?:[-*+>]|\d+[.)])[ \t]+)*(?:\*\*|__|\*|_)?[ \t]*"
+    r"(?:что\s+(?:это\s+|всё\s+|все\s+)?реш(?:ит|ило\s+бы|ает)\b"
+    r"|что\s+(?:ещё\s+|еще\s+)?(?:нужно\s+|надо\s+|осталось\s+|можно\s+)?проверить"
+    r"|чем\s+(?:это\s+)?проверить"
+    r"|what\s+(?:would\s+|will\s+)?(?:settle|decide)s?\b|what\s+(?:remains\s+|is\s+left\s+)?to\s+check"
+    r"|remaining\s+checks?\b|checks?\s+(?:that\s+)?(?:would\s+)?(?:decide|settle)\b)",
+    re.IGNORECASE | re.MULTILINE,
+)
 _SENTENCE_BREAK_RE = re.compile(r"[.!?\n]")
 
 
@@ -2171,12 +2192,14 @@ def _blank_code_paths_quoted(text):
 
 def next_step_sentence(reply):
     """Trigger (a) of the next-step rule: the sentence of the reply's closing part (its last
-    NEXT_STEP_CLOSING_CHARS, code, URLs, paths and quotes blanked) holding a next-step label or a
-    first-person future verb of work; "" when none."""
+    NEXT_STEP_CLOSING_CHARS, code, URLs, paths and quotes blanked) holding a next-step label, a
+    first-person future verb of work or a step named as not yet run; "" when none."""
     reply = reply or ""
     original = reply[-NEXT_STEP_CLOSING_CHARS:]
     blanked = _blank_code_paths_quoted(reply)[-NEXT_STEP_CLOSING_CHARS:]
-    match = _NEXT_STEP_LABEL_RE.search(blanked) or _NEXT_STEP_VERB_RE.search(blanked)
+    decide = _NEXT_STEP_DECIDE_LABEL_RE.search(blanked)
+    match = (_NEXT_STEP_LABEL_RE.search(blanked) or decide or _NEXT_STEP_VERB_RE.search(blanked)
+             or _NEXT_STEP_HELD_RE.search(blanked))
     if not match:
         return ""
     start = 0
@@ -2184,6 +2207,12 @@ def next_step_sentence(reply):
         start = brk.end()
     end_match = _SENTENCE_BREAK_RE.search(blanked, match.end())
     end = end_match.end() if end_match else len(blanked)
+    if match is decide:
+        # the label plus its first item, so the judge sees the check and not a bare heading
+        nxt = re.compile(r"\S").search(blanked, end)
+        if nxt:
+            item_end = _SENTENCE_BREAK_RE.search(blanked, nxt.start())
+            end = item_end.end() if item_end else len(blanked)
     return re.sub(r"\s+", " ", original[start:end]).strip()
 
 
@@ -2329,13 +2358,16 @@ JUDGE_PROMPT = (
 )
 _QUESTION_C = (
     "QUESTION C, OWN NEXT STEP. The reply's closing part names a step the agent itself will take "
-    "(\"{sentence}\"). Answer true when that step could start now in this same turn: nothing named in the "
-    "reply must happen first that is not the agent's own action. Answer false when the step waits on any of: "
+    "(\"{sentence}\"); a check the reply lists as what would decide its open question, or a check it says "
+    "it has not yet run (\"пока не запускал\"), counts as such a step. Answer true when that step could "
+    "start now in this same turn: nothing named in the reply must happen first that is not the agent's own "
+    "action. Answer false when the step waits on any of: "
     "a running agent, reviewer, builder, probe, watcher, CI, test run, background task or job (the reply says "
     "so or names its id); a named person, colleague, client, other session or third party acting first; a "
     "clock time, date, data window or period that has not arrived; the owner's answer, approval, choice or "
     "instruction, or the owner's earlier instruction to stop or hold; or when the sentence is a quote, a "
-    "section label, a description of a delegate's plan, or a step already done. When unsure, answer false.\n\n"
+    "section label, a description of a delegate's plan, a step already done, or a bare statement that nothing "
+    "was run or changed with no check named. When unsure, answer false.\n\n"
 )
 _NO_QUESTION_C = "QUESTION C is not asked for this reply: answer next_step false.\n\n"
 _HANDOFF_REASON = (

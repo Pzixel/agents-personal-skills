@@ -207,7 +207,7 @@ _SUBJECT_DIR_RE = re.compile(
 _NEXT_STEP_WITNESSES = (
     ("c56ffb38", "2026-11-03T10:20", True), ("c56ffb38", "2026-11-03T10:44", True),
     ("29acce51", "2026-10-28T17:18", True), ("e0df5fca", "2026-10-23T18:07", False),
-    ("f9af8046", "2026-10-24T00:40", False),
+    ("f9af8046", "2026-10-24T00:40", False), ("5b6476f0", "2026-11-04T23:38", True),
 )
 
 

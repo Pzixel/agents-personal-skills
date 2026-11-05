@@ -65,6 +65,16 @@ class NextStepTriggerTest(unittest.TestCase):
         ):
             self.assertIn(needle, gate_policy.next_step_sentence(WITNESSES[name]), name)
 
+    def test_held_step_in_nominal_check_list_triggers(self):
+        sentence = gate_policy.next_step_sentence(WITNESSES["5b6476f0-2338"])
+        self.assertIn("Что решит вопрос", sentence)
+        self.assertIn("Запрос к провайдеру", sentence)
+        self.assertIn("пока не запускал", gate_policy.next_step_sentence("Итог ясен.\nПроверку пока не запускал."))
+        self.assertIn("Not run yet", gate_policy.next_step_sentence("Checks that decide: a lookup by name. Not run yet."))
+
+    def test_past_negation_about_the_owner_or_inside_a_quote_does_not_trigger(self):
+        self.assertEqual(gate_policy.next_step_sentence("Владелец ответил: «пока не запускал».\nЖду."), "")
+
     def test_reply_without_label_or_future_verb_does_not_trigger(self):
         self.assertEqual(gate_policy.next_step_sentence("Сделано: тесты зелёные, PR влит."), "")
 
