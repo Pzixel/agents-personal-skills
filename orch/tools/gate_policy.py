@@ -885,7 +885,7 @@ def tool_call_class(tool_name, cmd_or_path, params=None):
     return classify_command(cmd_or_path, params)
 
 
-_WAIT_SHOWS_LINE = re.compile(r"^\s*#?\s*WAIT_SHOWS:\s*(.+)$", re.MULTILINE)
+_WAIT_SHOWS_LINE = re.compile(r"^[ \t]*#?[ \t]*WAIT_SHOWS:[ \t]*(.*)$", re.MULTILINE)
 _WAIT_SHOWS_NULL = {"nothing", "none", "-", "n/a"}
 _WAIT_SHOWS_WHERE = {
     "CronCreate": "add a line `WAIT_SHOWS: <fact>` to the CronCreate prompt",
@@ -955,7 +955,7 @@ def wait_shows_decision(tool_name, tool_input, now, params=None):
     if minutes is None or minutes < float(_merged_params(params)["wait_shows_min_minutes"]):
         return {"decision": "allow"}
     match = _WAIT_SHOWS_LINE.search(text)
-    if not match:
+    if not match or not match.group(1).strip():
         return {"decision": "deny", "reason": _WAIT_SHOWS_MISSING.format(
             hours=minutes / 60.0, where=_WAIT_SHOWS_WHERE[tool_name])}
     if match.group(1).strip().lower() in _WAIT_SHOWS_NULL:

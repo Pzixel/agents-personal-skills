@@ -35,6 +35,17 @@ class CronTest(unittest.TestCase):
     def test_a_named_fact_allows(self):
         self.assertEqual(cron(FACT + "check")["decision"], "allow")
 
+    def test_an_empty_value_counts_as_missing(self):
+        for prompt in ("WAIT_SHOWS:\ncheck the digest numbers", "WAIT_SHOWS: \ncheck"):
+            with self.subTest(prompt=prompt):
+                result = cron(prompt)
+                self.assertEqual(result["decision"], "deny")
+                self.assertIn("16.1 h ahead", result["reason"])
+
+    def test_exactly_an_hour_ahead_is_gated(self):
+        self.assertEqual(cron(cron_expr="38 16 * * *")["decision"], "deny")
+        self.assertEqual(cron(cron_expr="37 16 * * *")["decision"], "allow")
+
     def test_null_answers_get_the_nothing_reason(self):
         for value in ("nothing", "None", "-", "n/a"):
             with self.subTest(value=value):
@@ -59,6 +70,8 @@ class MonitorTest(unittest.TestCase):
         self.assertEqual(monitor(1500000)["decision"], "allow")
         self.assertEqual(monitor(5400000)["decision"], "deny")
         self.assertEqual(monitor("5400000")["decision"], "deny")
+        self.assertEqual(monitor(3600000)["decision"], "deny")
+        self.assertEqual(monitor(3540000)["decision"], "allow")
 
     def test_line_in_command_or_description_allows(self):
         self.assertEqual(monitor(5400000, command="# " + FACT + "wait-for -- true")["decision"], "allow")
