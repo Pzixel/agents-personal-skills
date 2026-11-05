@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """PreToolUse hook (CronCreate, Monitor): a wait armed an hour or more ahead
-as a check names, in a `WAIT_SHOWS:` line, the fact only that event produces
-(CASE-68). Policy: gate_policy.wait_shows_decision. Fails open."""
+as a check carries, in a `WAIT_SHOWS:` line, the proof of the exception to the
+pure-function check (CASE-68). Policy: gate_policy.wait_shows_decision. Fails open."""
 
 import datetime
 import json

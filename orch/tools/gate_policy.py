@@ -888,24 +888,17 @@ def tool_call_class(tool_name, cmd_or_path, params=None):
 _WAIT_SHOWS_LINE = re.compile(r"^[ \t]*#?[ \t]*WAIT_SHOWS:[ \t]*(.*)$", re.MULTILINE)
 _WAIT_SHOWS_NULL = {"nothing", "none", "-", "n/a"}
 _WAIT_SHOWS_WHERE = {
-    "CronCreate": "add a line `WAIT_SHOWS: <fact>` to the CronCreate prompt",
-    "Monitor": "Monitor: a `# WAIT_SHOWS: <fact>` line in the command",
-    "Bash": "Bash: a `# WAIT_SHOWS: <fact>` line in the command",
+    "CronCreate": "to the CronCreate prompt",
+    "Monitor": "as a `# WAIT_SHOWS:` line in the Monitor command or description",
+    "Bash": "as a `# WAIT_SHOWS:` line in the Bash command",
 }
 _WAIT_SHOWS_MISSING = (
-    "Refused by wait-shows-gate: this wait is armed {hours:.1f} h ahead as a check. "
-    "Name the fact that only this event produces, which running the deciding function "
-    "or query on the stored rows now would not show: {where}. If the answer is nothing, "
-    "do not arm the wait: run the function or query on today's rows now, read-only, and "
-    "report that result as the check; the event itself may still be observed in the "
-    "background. (Retro 2026-11-05: a 16 h one-shot on the next digest send was armed "
-    "while the digest was a function of stored rows and took 3 minutes to compute.)"
+    'Refused by wait-shows-gate: this wait is armed {hours:.1f} h ahead as a check. Behaviour is proven by a pure function on real input; a wait for an event is the rare exception, proven at the call: add a line `WAIT_SHOWS: <the fact only this event produces; why one pure function on stored data cannot answer it; why the refactor that would make it answerable is impossible or beyond the budget>`'
+    " {where}. "
+    "If a pure function can answer it, do not arm the wait: run it on today's rows now, read-only, and report that as the check; the event may still be observed in the background. (Retro 2026-11-05: a 16 h one-shot on the next digest send was armed while the digest was a function of stored rows and took 3 minutes to compute.)"
 )
 _WAIT_SHOWS_NOTHING = (
-    "Refused by wait-shows-gate: WAIT_SHOWS is nothing, so this event adds no fact: do "
-    "not arm the wait; run the deciding function or query on today's stored rows now, "
-    "read-only, and report that result as the check. Arm a background observation only "
-    "with a fact it produces (the delivery path, a first run of new wiring)."
+    "Refused by wait-shows-gate: WAIT_SHOWS is nothing, so a pure function on stored data answers it: do not arm the wait; run that function on today's rows now, read-only, and report the result as the check. Arm a background observation only with a fact it produces that no pure function can (a delivery path, a first run of new wiring), with the refactor cost that rules out making it pure."
 )
 
 
@@ -932,8 +925,9 @@ def _cron_horizon_minutes(cron, now):
 def wait_shows_decision(tool_name, tool_input, now, params=None):
     """A deferred wait armed ``wait_shows_min_minutes`` or more ahead (a
     one-shot CronCreate, a Monitor timeout, a pure Bash wait-for) must carry a
-    ``WAIT_SHOWS: <fact>`` line naming the fact only that event produces; a
-    null answer is refused too. Unparseable horizons are allowed (fail open)."""
+    ``WAIT_SHOWS:`` line with the exception's proof (the fact only that event
+    produces, why no pure function on stored data answers it, why the refactor
+    is impossible or over budget); a null answer is refused too. Unparseable horizons are allowed (fail open)."""
     tool_input = tool_input or {}
     if tool_name == "CronCreate":
         if tool_input.get("recurring"):

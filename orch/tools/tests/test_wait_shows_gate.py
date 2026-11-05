@@ -31,6 +31,7 @@ class CronTest(unittest.TestCase):
         result = cron()
         self.assertEqual(result["decision"], "deny")
         self.assertIn("16.1 h ahead", result["reason"])
+        self.assertIn("a pure function on real input", result["reason"])
 
     def test_a_named_fact_allows(self):
         self.assertEqual(cron(FACT + "check")["decision"], "allow")
@@ -51,7 +52,9 @@ class CronTest(unittest.TestCase):
             with self.subTest(value=value):
                 result = cron("WAIT_SHOWS: %s\ncheck" % value)
                 self.assertEqual(result["decision"], "deny")
-                self.assertIn("WAIT_SHOWS is nothing", result["reason"])
+                self.assertTrue(result["reason"].startswith(
+                    "Refused by wait-shows-gate: WAIT_SHOWS is nothing"))
+                self.assertIn("a pure function on stored data answers it", result["reason"])
 
     def test_a_time_already_past_today_rolls_to_tomorrow(self):
         self.assertEqual(cron(cron_expr="30 15 * * *")["decision"], "deny")
