@@ -885,6 +885,84 @@ def tool_call_class(tool_name, cmd_or_path, params=None):
     return classify_command(cmd_or_path, params)
 
 
+_WAIT_SHOWS_LINE = re.compile(r"^\s*#?\s*WAIT_SHOWS:\s*(.+)$", re.MULTILINE)
+_WAIT_SHOWS_NULL = {"nothing", "none", "-", "n/a"}
+_WAIT_SHOWS_WHERE = {
+    "CronCreate": "add a line `WAIT_SHOWS: <fact>` to the CronCreate prompt",
+    "Monitor": "Monitor: a `# WAIT_SHOWS: <fact>` line in the command",
+    "Bash": "Bash: a `# WAIT_SHOWS: <fact>` line in the command",
+}
+_WAIT_SHOWS_MISSING = (
+    "Refused by wait-shows-gate: this wait is armed {hours:.1f} h ahead as a check. "
+    "Name the fact that only this event produces, which running the deciding function "
+    "or query on the stored rows now would not show: {where}. If the answer is nothing, "
+    "do not arm the wait: run the function or query on today's rows now, read-only, and "
+    "report that result as the check; the event itself may still be observed in the "
+    "background. (Retro 2026-11-05: a 16 h one-shot on the next digest send was armed "
+    "while the digest was a function of stored rows and took 3 minutes to compute.)"
+)
+_WAIT_SHOWS_NOTHING = (
+    "Refused by wait-shows-gate: WAIT_SHOWS is nothing, so this event adds no fact: do "
+    "not arm the wait; run the deciding function or query on today's stored rows now, "
+    "read-only, and report that result as the check. Arm a background observation only "
+    "with a fact it produces (the delivery path, a first run of new wiring)."
+)
+
+
+def _cron_horizon_minutes(cron, now):
+    """Minutes from ``now`` to the next fire of a one-shot ``m h dom mon dow``
+    cron in local time; ``*`` in dom or mon is today's value; a time not after
+    ``now`` rolls to the next day. None when the string is not of that form."""
+    fields = (cron or "").split()
+    if len(fields) != 5:
+        return None
+    try:
+        minute, hour = int(fields[0]), int(fields[1])
+        day = now.day if fields[2] == "*" else int(fields[2])
+        month = now.month if fields[3] == "*" else int(fields[3])
+        fire = now.replace(month=month, day=day, hour=hour, minute=minute,
+                           second=0, microsecond=0)
+    except ValueError:
+        return None
+    if fire <= now:
+        fire += datetime.timedelta(days=1)
+    return (fire - now).total_seconds() / 60.0
+
+
+def wait_shows_decision(tool_name, tool_input, now, params=None):
+    """A deferred wait armed ``wait_shows_min_minutes`` or more ahead (a
+    one-shot CronCreate, a Monitor timeout, a pure Bash wait-for) must carry a
+    ``WAIT_SHOWS: <fact>`` line naming the fact only that event produces; a
+    null answer is refused too. Unparseable horizons are allowed (fail open)."""
+    tool_input = tool_input or {}
+    if tool_name == "CronCreate":
+        if tool_input.get("recurring"):
+            return {"decision": "allow"}
+        minutes = _cron_horizon_minutes(tool_input.get("cron"), now)
+        text = tool_input.get("prompt") or ""
+    elif tool_name == "Monitor":
+        try:
+            minutes = float(tool_input.get("timeout_ms")) / 60000.0
+        except (TypeError, ValueError):
+            minutes = None
+        text = (tool_input.get("command") or "") + "\n" + (tool_input.get("description") or "")
+    elif tool_name == "Bash":
+        text = tool_input.get("command") or ""
+        seconds = _wait_for_max(text) if is_pure_wait(text) else None
+        minutes = None if seconds is None else seconds / 60.0
+    else:
+        return {"decision": "allow"}
+    if minutes is None or minutes < float(_merged_params(params)["wait_shows_min_minutes"]):
+        return {"decision": "allow"}
+    match = _WAIT_SHOWS_LINE.search(text)
+    if not match:
+        return {"decision": "deny", "reason": _WAIT_SHOWS_MISSING.format(
+            hours=minutes / 60.0, where=_WAIT_SHOWS_WHERE[tool_name])}
+    if match.group(1).strip().lower() in _WAIT_SHOWS_NULL:
+        return {"decision": "deny", "reason": _WAIT_SHOWS_NOTHING}
+    return {"decision": "allow"}
+
+
 def override_marker(text, name, params=None):
     """Return the reason of an override marker ``name`` in ``text``, else None.
 
@@ -970,6 +1048,7 @@ DEFAULT_PARAMS = {
     "poll_sleep_min_seconds": 5,
     # A detached or background script run names at least this many outcomes in `# OUTCOMES:`.
     "outcomes_min_pairs": 2,
+    "wait_shows_min_minutes": 60,
     # A subagent's foreground wait-for: --max at most this, and the Bash call's
     # timeout at least (--max + 30) s, never above bash_timeout_max_ms.
     "wait_for_max_seconds": 570,

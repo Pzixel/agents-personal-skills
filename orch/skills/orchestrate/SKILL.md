@@ -75,7 +75,7 @@ A new finding with file:line and how it was verified counts as verified and goes
 7. Report to the user:
 ```
 Result: <branch, head, check result>
-Original scenario: <the observation on the real path: command or query, value, time; or "not verified">
+Original scenario: <the observation on the real path: command or query, value, time; when the scenario's result is a function of stored rows, that function run read-only on today's production rows, now; a scheduled event is awaited only for the fact only it produces (the WAIT_SHOWS line); or "not verified">
 Cost: <sum of the agents' reply usage, or "not shown">
 Blockers/majors: <verified by cross-check> -> <open after recheck>
 Unverified: <each path or claim no run has executed>
@@ -98,7 +98,7 @@ A question without a code change: one `orch:prod-probe` (report path in the prom
 
 ## Waiting
 
-Run the condition once in the foreground first (`wait-for` exits 2 on a broken condition). A wait over about two minutes in the main session goes to the harness `Monitor` tool; an `orch:watcher` collects the evidence after it fires, or stands in when `Monitor` is unavailable. Short waits: `~/.claude/tools/wait-for --every 30 --max 270 -- <condition>`; name terminal failure exits with `--fail-on` (`wait-for --fail-on 1 -- gh pr checks <n>` exits 3 at once on a failed check).
+Run the condition once in the foreground first (`wait-for` exits 2 on a broken condition). A wait of an hour or more carries a `WAIT_SHOWS:` line naming the fact only the event produces; when that is nothing, the deciding function or query runs on today's rows now instead. A wait over about two minutes in the main session goes to the harness `Monitor` tool; an `orch:watcher` collects the evidence after it fires, or stands in when `Monitor` is unavailable. Short waits: `~/.claude/tools/wait-for --every 30 --max 270 -- <condition>`; name terminal failure exits with `--fail-on` (`wait-for --fail-on 1 -- gh pr checks <n>` exits 3 at once on a failed check).
 
 ## Destructive commands
 

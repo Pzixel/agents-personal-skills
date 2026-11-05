@@ -74,6 +74,10 @@ def main():
     if decision.get("decision") != "deny":
         decision = gate_policy.outcomes_decision(command, background, params)
     if decision.get("decision") != "deny":
+        decision = gate_policy.wait_shows_decision(
+            "Bash", tool_input, datetime.datetime.now().astimezone(), params
+        )
+    if decision.get("decision") != "deny":
         return
     sys.stdout.write(
         json.dumps(

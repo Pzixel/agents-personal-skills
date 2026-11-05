@@ -143,6 +143,16 @@
         ]
       },
       {
+        "matcher": "CronCreate|Monitor",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/wait-shows-gate.py\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
         "matcher": "Monitor",
         "hooks": [
           {
