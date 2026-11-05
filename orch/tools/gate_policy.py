@@ -2041,10 +2041,10 @@ def merge_gate_decision(command, changed_paths=None, delegate=False, ci=None):
 
 
 _CI_RED_LEAD = (
-    "Refused by merge-gate: the last workflow run (CI or publish) of the target "
-    "branch is red; a landing on a red branch hides its own breakage behind the "
-    "earlier one (25 red runs on agents-personal-skills master from 2026-10-31, "
-    "7 landings pushed on it without reading the state)."
+    "Refused by merge-gate: a completed workflow run (CI or publish) of the tip "
+    "sha of the target branch is red; a landing on a red tip hides its own "
+    "breakage behind the earlier one (25 red runs on agents-personal-skills "
+    "master from 2026-10-31, 7 landings pushed on it without reading the state)."
 )
 _CI_RED_CONCLUSIONS = frozenset(("failure", "timed_out", "action_required", "startup_failure"))
 _CI_GREEN_CONCLUSIONS = frozenset(("success", "skipped", "neutral"))
@@ -2052,26 +2052,28 @@ _CI_IGNORED_EVENTS = frozenset(("schedule", "workflow_dispatch"))
 
 
 def ci_tip_state(runs):
-    """Workflow verdict of the branch tip from ``gh run list --json
-    status,conclusion,databaseId,headSha,event,workflowName`` (newest first),
-    or None when the read failed. Scheduled and manual runs are dropped; the
-    tip is the newest sha with a completed run. Returns ``{"state": "red",
-    "sha", "runs"}`` (the red runs), ``{"state": "green", "sha"}`` or
-    ``{"state": "unknown", "cause"}``."""
+    """Workflow verdict of the branch tip from ``gh run list --event push
+    --json status,conclusion,databaseId,headSha,event,workflowName`` (newest
+    first), or None when the read failed. Scheduled and manual runs are
+    dropped; the tip is the newest sha with a completed run. Red when a
+    completed run of the tip is red; green when every run of the tip is
+    completed green; otherwise (a run still in progress, cancelled, stale)
+    unknown. Returns ``{"state": "red", "sha", "runs"}`` (the red runs),
+    ``{"state": "green", "sha"}`` or ``{"state": "unknown", "cause"}``."""
     if runs is None:
         return {"state": "unknown", "cause": "gh read failed"}
     runs = [r for r in runs if r.get("event") not in _CI_IGNORED_EVENTS]
     sha = next((r.get("headSha") for r in runs if r.get("status") == "completed"), None)
     if not sha:
         return {"state": "unknown", "cause": "no completed push run in the last %d runs" % len(runs)}
-    done = [r for r in runs if r.get("headSha") == sha and r.get("status") == "completed"]
-    bad = [r for r in done if r.get("conclusion") in _CI_RED_CONCLUSIONS]
+    tip = [r for r in runs if r.get("headSha") == sha]
+    bad = [r for r in tip if r.get("status") == "completed" and r.get("conclusion") in _CI_RED_CONCLUSIONS]
     if bad:
         return {"state": "red", "sha": sha, "runs": bad}
-    if all(r.get("conclusion") in _CI_GREEN_CONCLUSIONS for r in done):
+    if all(r.get("status") == "completed" and r.get("conclusion") in _CI_GREEN_CONCLUSIONS for r in tip):
         return {"state": "green", "sha": sha}
     return {"state": "unknown", "cause": "tip %s has no verdict (%s)" % (
-        sha[:7], ", ".join(sorted({str(r.get("conclusion")) for r in done})))}
+        sha[:7], ", ".join(sorted({str(r.get("conclusion") or r.get("status")) for r in tip})))}
 
 
 def _ci_fix_lifts(cmd, sha):
@@ -2083,29 +2085,29 @@ def _ci_fix_lifts(cmd, sha):
 def _ci_red_doc(ci):
     runs = ", ".join("%s run %s %s" % (r.get("workflowName") or "workflow", r.get("databaseId"), r.get("conclusion"))
                      for r in ci["runs"])
+    sha7 = ci["sha"][:7]
     return ("a green target branch: tip %s is red (%s); fix it in this push and add the line "
-            "`# CI_FIX: %s <what the push repairs>`" % (ci["sha"][:7], runs, ci["sha"][:7]))
+            "`# CI_FIX: %s <what the push repairs>`, or, for a red run this push cannot repair "
+            "(an external publish failure), `# CI_FIX: %s publish red: <cause>, not this push`"
+            % (sha7, runs, sha7, sha7))
+
+
+# `gh pr merge` options that take a separate value.
+_PR_MERGE_VALUE_OPTIONS = frozenset({
+    "-b", "--body", "-F", "--body-file", "-t", "--subject", "-R", "--repo",
+    "-A", "--author-email", "--match-head-commit",
+})
 
 
 def landing_target(command, cwd):
-    """``{"dir", "branch", "pr"}`` of the landing in ``command``: the repository
-    directory (after a literal ``cd`` / ``git -C``; ``cwd`` otherwise), the
-    branch a push names (None for ``gh pr merge``: the caller resolves the
-    default branch) and the PR number ``gh pr merge <n>`` names."""
-    rng = push_range(command, cwd)
-    if rng is not None:
-        return {"dir": rng["dir"], "branch": rng["target"], "pr": None}
-    directory = cwd or None
-    for tokens in _shell_segments(command or ""):
-        tokens = _tokens_after_keywords(" ".join(tokens))
-        prog = _program(tokens)
-        if prog == "cd":
-            directory = _cd_target(prog, tokens[1:], {"dir": directory}) if directory else None
-        elif prog == "gh" and tokens[1:3] == ["pr", "merge"]:
-            pr = next((t for t in tokens[3:] if not t.startswith("-")), None)
-            return {"dir": directory or cwd, "branch": None, "pr": pr if pr and pr.isdigit() else None}
-    match = re.search(r"\bpush\b[^|;&\n]*?\b(master|main)\b", command or "")
-    return {"dir": cwd or None, "branch": match.group(1) if match else None, "pr": None}
+    """``{"dir", "branch", "pr"}`` of the first landing in ``command``: the
+    repository directory (``cwd`` moved by a literal ``cd``/``pushd``/``git
+    -C``; None when a move is not literal or ``cwd`` is None), the branch a
+    push names (None for ``gh pr merge``) and the PR number it names."""
+    hit = _landing_walk(command, cwd)
+    if hit is None:
+        return {"dir": None, "branch": None, "pr": None}
+    return {"dir": hit["dir"], "branch": hit.get("target"), "pr": hit.get("pr")}
 
 
 # git push options that take a separate value.
@@ -2116,14 +2118,32 @@ def push_range(command, cwd):
     """``{"dir", "remote", "src", "target"}`` of the first ``git push`` in
     ``command`` that updates master or main, or None when the repository
     directory, remote or refspec is not literal. ``cwd`` is the directory the
-    command starts in; a literal ``cd`` and ``git -C`` move it."""
+    command starts in; a literal ``cd``, ``pushd`` and ``git -C`` move it."""
+    hit = _landing_walk(command, cwd)
+    if hit is None or "remote" not in hit or not hit["dir"]:
+        return None
+    return {k: hit[k] for k in ("dir", "remote", "src", "target")}
+
+
+def _landing_walk(command, cwd):
+    """The first push to master/main or ``gh pr merge`` in ``command`` with
+    the directory it runs in (None when not literal)."""
     directory = cwd or None
     for tokens in _shell_segments(command or ""):
         tokens = _tokens_after_keywords(" ".join(tokens))
         prog = _program(tokens)
-        if prog == "cd":
+        if prog in ("cd", "pushd"):
             directory = _cd_target(prog, tokens[1:], {"dir": directory}) if directory else None
             continue
+        if prog == "gh" and tokens[1:3] == ["pr", "merge"]:
+            rest, pr, j = tokens[3:], None, 0
+            while j < len(rest):
+                if rest[j].startswith("-"):
+                    j += 2 if rest[j] in _PR_MERGE_VALUE_OPTIONS else 1
+                    continue
+                pr = pr or (rest[j] if rest[j].isdigit() else None)
+                j += 1
+            return {"dir": directory, "pr": pr}
         if prog != "git":
             continue
         args, repo, i = tokens[1:], directory, 0
@@ -2141,8 +2161,6 @@ def push_range(command, cwd):
                 continue
             operands.append(rest[j])
             j += 1
-        if len(operands) < 2 or not repo:
-            continue
         for spec in operands[1:]:
             src, _, dst = spec.lstrip("+").rpartition(":")
             dst = dst[len("refs/heads/"):] if dst.startswith("refs/heads/") else dst

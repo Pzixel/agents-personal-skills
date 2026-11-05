@@ -883,7 +883,7 @@ class CiTipStateTest(unittest.TestCase):
         self.assertEqual(gate_policy.ci_tip_state([_run(_TIP, "success"), _run(_OLD, "failure")])["state"], "green")
 
     def test_red_conclusions_are_red_with_their_runs(self):
-        for c in ("failure", "timed_out", "action_required"):
+        for c in ("failure", "timed_out", "action_required", "startup_failure"):
             got = gate_policy.ci_tip_state([_run(_TIP, c, rid=41945456898)])
             self.assertEqual((got["state"], got["sha"], got["runs"][0]["databaseId"]), ("red", _TIP, 41945456898), c)
 
@@ -903,6 +903,11 @@ class CiTipStateTest(unittest.TestCase):
     def test_in_progress_tip_falls_back_to_the_last_completed_sha(self):
         got = gate_policy.ci_tip_state([_run("f" * 40, "", status="in_progress"), _run(_OLD, "failure")])
         self.assertEqual((got["state"], got["sha"]), ("red", _OLD))
+
+    def test_tip_with_a_run_still_in_progress(self):
+        running = _run(_TIP, "", wf="Deploy", status="in_progress")
+        self.assertEqual(gate_policy.ci_tip_state([running, _run(_TIP, "success")])["state"], "unknown")
+        self.assertEqual(gate_policy.ci_tip_state([running, _run(_TIP, "failure")])["state"], "red")
 
     def test_scheduled_and_manual_runs_are_not_the_tip(self):
         runs = [_run("e" * 40, "success", event="schedule"), _run("d" * 40, "success", event="workflow_dispatch"),
@@ -960,6 +965,12 @@ class LandingTargetTest(unittest.TestCase):
             ("git -C %s push origin %s" % (repo, _M), "/other", (wt, _M, None)),
             ("gh pr merge 12 --squash", "/w", ("/w", None, "12")),
             ("cd %s && gh pr merge --squash" % repo, "/w", (wt, None, None)),
+            ("gh pr merge --squash --body x 12", "/w", ("/w", None, "12")),
+            ("pushd %s && git push origin %s" % (repo, _M), "/other", (wt, _M, None)),
+            ('cd "$R" && git push origin ' + _M, "/w", (None, _M, None)),
+            ("cd $W && git push -q origin " + _M, "/w", (None, _M, None)),
+            ("cd $D && gh pr merge 12", "/w", (None, None, "12")),
+            ("git push origin " + _M, None, (None, _M, None)),
         )
         for cmd, cwd, want in cases:
             got = gate_policy.landing_target(cmd, cwd)

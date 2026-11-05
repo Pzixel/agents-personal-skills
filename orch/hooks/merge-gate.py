@@ -38,7 +38,7 @@ def _pushed_paths(command, cwd):
         out = subprocess.run(
             ["git", "-C", rng["dir"], "diff", "--name-only",
              "%s/%s...%s" % (rng["remote"], rng["target"], rng["src"])],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True, timeout=5,
         )
     except (OSError, subprocess.SubprocessError):
         return None
@@ -54,22 +54,23 @@ def _read(args, cwd, timeout):
 
 
 def _ci_state(command, cwd):
-    """gate_policy.ci_tip_state of the landing's target branch; any read
-    failure is an unknown state with its cause (fail open)."""
+    """gate_policy.ci_tip_state of the landing's target branch, read in the
+    landing's repository directory; any read failure is an unknown state
+    with its cause (fail open)."""
     target = gate_policy.landing_target(command, cwd)
     directory, branch = target["dir"], target["branch"]
+    if not directory:
+        return {"state": "unknown", "cause": "repository directory not literal"}
     try:
+        if not branch and target["pr"]:
+            branch = json.loads(_read(["gh", "pr", "view", target["pr"], "--json", "baseRefName"],
+                                      directory, 4))["baseRefName"]
         if not branch:
-            try:
-                branch = _read(["git", "-C", directory or ".", "symbolic-ref", "--short",
-                                "refs/remotes/origin/HEAD"], None, 3).strip().split("/", 1)[-1]
-            except (OSError, subprocess.SubprocessError, RuntimeError):
-                if not target["pr"]:
-                    raise
-                branch = json.loads(_read(["gh", "pr", "view", target["pr"], "--json", "baseRefName"],
-                                          directory, 4))["baseRefName"]
-        runs = json.loads(_read(["gh", "run", "list", "--branch", branch, "--limit", "20", "--json",
-                                 "status,conclusion,databaseId,headSha,event,workflowName"], directory, 4))
+            branch = _read(["git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+                           directory, 3).strip().split("/", 1)[-1]
+        runs = json.loads(_read(["gh", "run", "list", "--branch", branch, "--event", "push", "--limit", "20",
+                                 "--json", "status,conclusion,databaseId,headSha,event,workflowName"],
+                                directory, 4))
     except (OSError, subprocess.SubprocessError, RuntimeError, ValueError, KeyError, TypeError) as exc:
         return {"state": "unknown", "cause": "%s: %s" % (type(exc).__name__, str(exc)[:160])}
     return gate_policy.ci_tip_state(runs if isinstance(runs, list) else None)
