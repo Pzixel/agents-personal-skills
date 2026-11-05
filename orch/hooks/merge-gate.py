@@ -10,7 +10,10 @@ minutes>` and `WORSE_FOR: <who gets worse or can break for every consumer,
 the new bottleneck; or none, with the reason>`, and `ALWAYS_ON:` when the pushed range changes an always-on
 rules file. The tokens are the agent's own statements; the gate only makes
 them unavoidable at the moment of merging. A delegate's landing at command
-position is refused whatever it carries (CASE-62). Decision: gate_policy.merge_gate_decision. Any error exits 0.
+position is refused whatever it carries (CASE-62). A landing (`is_landing`)
+on a branch whose tip workflow runs are red is refused unless it carries
+`# CI_FIX: <sha7> <what the push repairs>`; one `gh run list` in the target
+repository, 4 s, fail open. Decision: gate_policy.merge_gate_decision. Any error exits 0.
 """
 import json
 import os
@@ -42,6 +45,36 @@ def _pushed_paths(command, cwd):
     return out.stdout.split() if out.returncode == 0 else None
 
 
+def _read(args, cwd, timeout):
+    """stdout of ``args`` run in ``cwd``, or the failure cause as an exception."""
+    out = subprocess.run(args, cwd=cwd, capture_output=True, text=True, timeout=timeout)
+    if out.returncode != 0:
+        raise RuntimeError("%s exit %d: %s" % (args[0], out.returncode, out.stderr.strip()[:120]))
+    return out.stdout
+
+
+def _ci_state(command, cwd):
+    """gate_policy.ci_tip_state of the landing's target branch; any read
+    failure is an unknown state with its cause (fail open)."""
+    target = gate_policy.landing_target(command, cwd)
+    directory, branch = target["dir"], target["branch"]
+    try:
+        if not branch:
+            try:
+                branch = _read(["git", "-C", directory or ".", "symbolic-ref", "--short",
+                                "refs/remotes/origin/HEAD"], None, 3).strip().split("/", 1)[-1]
+            except (OSError, subprocess.SubprocessError, RuntimeError):
+                if not target["pr"]:
+                    raise
+                branch = json.loads(_read(["gh", "pr", "view", target["pr"], "--json", "baseRefName"],
+                                          directory, 4))["baseRefName"]
+        runs = json.loads(_read(["gh", "run", "list", "--branch", branch, "--limit", "20", "--json",
+                                 "status,conclusion,databaseId,headSha,event,workflowName"], directory, 4))
+    except (OSError, subprocess.SubprocessError, RuntimeError, ValueError, KeyError, TypeError) as exc:
+        return {"state": "unknown", "cause": "%s: %s" % (type(exc).__name__, str(exc)[:160])}
+    return gate_policy.ci_tip_state(runs if isinstance(runs, list) else None)
+
+
 def main():
     payload = json.load(sys.stdin)
     command = str((payload.get("tool_input") or {}).get("command") or "")
@@ -49,7 +82,9 @@ def main():
     # The delegate verdict needs no paths; the git diff runs only when it is not that.
     decision = gate_policy.merge_gate_decision(command, None, delegate)
     if decision.get("kind") != "delegate":
-        decision = gate_policy.merge_gate_decision(command, _pushed_paths(command, payload.get("cwd")), delegate)
+        ci = _ci_state(command, payload.get("cwd")) if gate_policy.is_landing(command) else None
+        decision = gate_policy.merge_gate_decision(
+            command, _pushed_paths(command, payload.get("cwd")), delegate, ci)
     if decision["decision"] == "deny":
         print(decision["reason"], file=sys.stderr)
         return 2

@@ -868,6 +868,104 @@ class PushRangeTest(unittest.TestCase):
             self.assertIsNone(gate_policy.push_range(cmd, cwd), cmd)
 
 
+_M = "ma" + "ster"
+_TIP = "a6213bb2de6a2258d96bfafa3b191d6eb0efefbd"
+_OLD = "7c2651a2cfaff1ff6e9cab561c8c100546000636"
+
+
+def _run(sha, conclusion, wf="orch-tools", event="push", status="completed", rid=1):
+    return {"status": status, "conclusion": conclusion if status == "completed" else "",
+            "databaseId": rid, "headSha": sha, "event": event, "workflowName": wf}
+
+
+class CiTipStateTest(unittest.TestCase):
+    def test_success_is_green(self):
+        self.assertEqual(gate_policy.ci_tip_state([_run(_TIP, "success"), _run(_OLD, "failure")])["state"], "green")
+
+    def test_red_conclusions_are_red_with_their_runs(self):
+        for c in ("failure", "timed_out", "action_required"):
+            got = gate_policy.ci_tip_state([_run(_TIP, c, rid=41945456898)])
+            self.assertEqual((got["state"], got["sha"], got["runs"][0]["databaseId"]), ("red", _TIP, 41945456898), c)
+
+    def test_one_failed_workflow_of_the_tip_makes_it_red(self):
+        runs = [_run(_TIP, "success", wf="Deploy"), _run(_TIP, "failure", wf="Tests", rid=7)]
+        got = gate_policy.ci_tip_state(runs)
+        self.assertEqual([r["workflowName"] for r in got["runs"]], ["Tests"])
+
+    def test_skipped_and_neutral_count_green(self):
+        self.assertEqual(gate_policy.ci_tip_state([_run(_TIP, "skipped"), _run(_TIP, "neutral")])["state"], "green")
+
+    def test_cancelled_only_is_unknown(self):
+        got = gate_policy.ci_tip_state([_run(_TIP, "cancelled"), _run(_OLD, "failure")])
+        self.assertEqual(got["state"], "unknown")
+        self.assertIn("cancelled", got["cause"])
+
+    def test_in_progress_tip_falls_back_to_the_last_completed_sha(self):
+        got = gate_policy.ci_tip_state([_run("f" * 40, "", status="in_progress"), _run(_OLD, "failure")])
+        self.assertEqual((got["state"], got["sha"]), ("red", _OLD))
+
+    def test_scheduled_and_manual_runs_are_not_the_tip(self):
+        runs = [_run("e" * 40, "success", event="schedule"), _run("d" * 40, "success", event="workflow_dispatch"),
+                _run(_TIP, "failure")]
+        self.assertEqual(gate_policy.ci_tip_state(runs)["sha"], _TIP)
+
+    def test_empty_list_and_failed_read_are_unknown(self):
+        self.assertEqual(gate_policy.ci_tip_state([])["state"], "unknown")
+        self.assertEqual(gate_policy.ci_tip_state(None)["state"], "unknown")
+
+
+class CiGateDecisionTest(unittest.TestCase):
+    RED = {"state": "red", "sha": _TIP, "runs": [_run(_TIP, "failure", rid=41945456898)]}
+
+    def test_red_tip_with_all_fields_is_denied_naming_run_and_fix_line(self):
+        got = gate_policy.merge_gate_decision(_MERGE_FULL, ci=self.RED)
+        self.assertEqual(got["decision"], "deny")
+        for part in ("41945456898", "failure", "`# CI_FIX: a6213bb <what the push repairs>`"):
+            self.assertIn(part, got["reason"])
+
+    def test_red_item_joins_the_field_refusal(self):
+        got = gate_policy.merge_gate_decision("git push origin x:" + _M, ci=self.RED)
+        self.assertIn("`CHECK_RAN", got["reason"])
+        self.assertIn("CI_FIX: a6213bb", got["reason"])
+
+    def test_ci_fix_with_the_tip_sha_lifts_it(self):
+        cmd = _MERGE_FULL + "\n# CI_FIX: a6213bb pin ubuntu-24.04"
+        self.assertEqual(gate_policy.merge_gate_decision(cmd, ci=self.RED)["decision"], "allow")
+
+    def test_ci_fix_without_or_with_another_sha_does_not_lift(self):
+        for line in ("# CI_FIX: pin ubuntu-24.04 runner", "# CI_FIX: 7c2651a pin ubuntu-24.04"):
+            got = gate_policy.merge_gate_decision(_MERGE_FULL + "\n" + line, ci=self.RED)
+            self.assertEqual(got["decision"], "deny", line)
+
+    def test_green_or_unknown_passes(self):
+        for ci in ({"state": "green", "sha": _TIP}, {"state": "unknown", "cause": "gh read failed"}):
+            self.assertEqual(gate_policy.merge_gate_decision(_MERGE_FULL, ci=ci)["decision"], "allow")
+
+    def test_unknown_cause_is_named_in_another_refusal(self):
+        got = gate_policy.merge_gate_decision("gh pr merge 12", ci={"state": "unknown", "cause": "TimeoutExpired"})
+        self.assertIn("Workflow state unknown: TimeoutExpired", got["reason"])
+
+    def test_non_landing_is_untouched(self):
+        self.assertEqual(gate_policy.merge_gate_decision("git status", ci=self.RED)["decision"], "allow")
+
+
+class LandingTargetTest(unittest.TestCase):
+    def test_dir_branch_and_pr(self):
+        repo = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, repo)
+        wt = os.path.realpath(repo)
+        cases = (
+            ("cd %s && git push -q origin %s" % (repo, _M), "/other", (wt, _M, None)),
+            ("git push origin x:main", "/w", ("/w", "main", None)),
+            ("git -C %s push origin %s" % (repo, _M), "/other", (wt, _M, None)),
+            ("gh pr merge 12 --squash", "/w", ("/w", None, "12")),
+            ("cd %s && gh pr merge --squash" % repo, "/w", (wt, None, None)),
+        )
+        for cmd, cwd, want in cases:
+            got = gate_policy.landing_target(cmd, cwd)
+            self.assertEqual((got["dir"], got["branch"], got["pr"]), want, cmd)
+
+
 class ReplyLintDecisionTest(unittest.TestCase):
     def _d(self, text):
         return gate_policy.reply_lint_decision(text, False)["decision"]

@@ -2009,12 +2009,14 @@ def is_delegate(payload):
     return bool(own_transcript_path(payload.get("transcript_path") or "-", payload.get("agent_id") or ""))
 
 
-def merge_gate_decision(command, changed_paths=None, delegate=False):
+def merge_gate_decision(command, changed_paths=None, delegate=False, ci=None):
     """Deny a delegate's landing (``is_landing``) always. Any other command that
     holds ``gh pr merge`` or a push to master/main, from any caller, is denied
     unless it carries ``CHECK_RAN:``, ``PROD_POSITION:``, ``WAY_BACK:`` and
-    ``WORSE_FOR:``, and ``ALWAYS_ON:`` when ``changed_paths`` touch an
-    always-on rules file."""
+    ``WORSE_FOR:``, ``ALWAYS_ON:`` when ``changed_paths`` touch an always-on
+    rules file, and ``# CI_FIX: <sha7> ...`` when ``ci`` (``ci_tip_state``
+    of the target branch) is red. An unknown ``ci`` passes open; its cause is
+    named when the command is refused for another reason."""
     cmd = command or ""
     if delegate and is_landing(cmd):
         return {"decision": "deny", "kind": "delegate", "reason": _DELEGATE_LANDING_REASON}
@@ -2024,9 +2026,86 @@ def merge_gate_decision(command, changed_paths=None, delegate=False):
     lead = _MERGE_REASON if missing else _ALWAYS_ON_LEAD
     if not _always_on_satisfied(cmd, changed_paths):
         missing.append(_ALWAYS_ON_DOC)
+    ci = ci or {"state": "unread"}
+    red = ci["state"] == "red" and not _ci_fix_lifts(cmd, ci["sha"])
+    if red:
+        if not missing:
+            lead = _CI_RED_LEAD
+        missing.append(_ci_red_doc(ci))
     if not missing:
         return {"decision": "allow"}
-    return {"decision": "deny", "reason": lead + " Missing: " + "; ".join(missing) + "."}
+    reason = lead + " Missing: " + "; ".join(missing) + "."
+    if ci["state"] == "unknown":
+        reason += " Workflow state unknown: %s." % ci["cause"]
+    return {"decision": "deny", "reason": reason}
+
+
+_CI_RED_LEAD = (
+    "Refused by merge-gate: the last workflow run (CI or publish) of the target "
+    "branch is red; a landing on a red branch hides its own breakage behind the "
+    "earlier one (25 red runs on agents-personal-skills master from 2026-10-31, "
+    "7 landings pushed on it without reading the state)."
+)
+_CI_RED_CONCLUSIONS = frozenset(("failure", "timed_out", "action_required", "startup_failure"))
+_CI_GREEN_CONCLUSIONS = frozenset(("success", "skipped", "neutral"))
+_CI_IGNORED_EVENTS = frozenset(("schedule", "workflow_dispatch"))
+
+
+def ci_tip_state(runs):
+    """Workflow verdict of the branch tip from ``gh run list --json
+    status,conclusion,databaseId,headSha,event,workflowName`` (newest first),
+    or None when the read failed. Scheduled and manual runs are dropped; the
+    tip is the newest sha with a completed run. Returns ``{"state": "red",
+    "sha", "runs"}`` (the red runs), ``{"state": "green", "sha"}`` or
+    ``{"state": "unknown", "cause"}``."""
+    if runs is None:
+        return {"state": "unknown", "cause": "gh read failed"}
+    runs = [r for r in runs if r.get("event") not in _CI_IGNORED_EVENTS]
+    sha = next((r.get("headSha") for r in runs if r.get("status") == "completed"), None)
+    if not sha:
+        return {"state": "unknown", "cause": "no completed push run in the last %d runs" % len(runs)}
+    done = [r for r in runs if r.get("headSha") == sha and r.get("status") == "completed"]
+    bad = [r for r in done if r.get("conclusion") in _CI_RED_CONCLUSIONS]
+    if bad:
+        return {"state": "red", "sha": sha, "runs": bad}
+    if all(r.get("conclusion") in _CI_GREEN_CONCLUSIONS for r in done):
+        return {"state": "green", "sha": sha}
+    return {"state": "unknown", "cause": "tip %s has no verdict (%s)" % (
+        sha[:7], ", ".join(sorted({str(r.get("conclusion")) for r in done})))}
+
+
+def _ci_fix_lifts(cmd, sha):
+    reason = override_marker(cmd, "CI_FIX")
+    token = (reason or "").split()[0].lower() if reason else ""
+    return len(token) >= 7 and sha.lower().startswith(token)
+
+
+def _ci_red_doc(ci):
+    runs = ", ".join("%s run %s %s" % (r.get("workflowName") or "workflow", r.get("databaseId"), r.get("conclusion"))
+                     for r in ci["runs"])
+    return ("a green target branch: tip %s is red (%s); fix it in this push and add the line "
+            "`# CI_FIX: %s <what the push repairs>`" % (ci["sha"][:7], runs, ci["sha"][:7]))
+
+
+def landing_target(command, cwd):
+    """``{"dir", "branch", "pr"}`` of the landing in ``command``: the repository
+    directory (after a literal ``cd`` / ``git -C``; ``cwd`` otherwise), the
+    branch a push names (None for ``gh pr merge``: the caller resolves the
+    default branch) and the PR number ``gh pr merge <n>`` names."""
+    rng = push_range(command, cwd)
+    if rng is not None:
+        return {"dir": rng["dir"], "branch": rng["target"], "pr": None}
+    directory = cwd or None
+    for tokens in _shell_segments(command or ""):
+        tokens = _tokens_after_keywords(" ".join(tokens))
+        prog = _program(tokens)
+        if prog == "cd":
+            directory = _cd_target(prog, tokens[1:], {"dir": directory}) if directory else None
+        elif prog == "gh" and tokens[1:3] == ["pr", "merge"]:
+            pr = next((t for t in tokens[3:] if not t.startswith("-")), None)
+            return {"dir": directory or cwd, "branch": None, "pr": pr if pr and pr.isdigit() else None}
+    match = re.search(r"\bpush\b[^|;&\n]*?\b(master|main)\b", command or "")
+    return {"dir": cwd or None, "branch": match.group(1) if match else None, "pr": None}
 
 
 # git push options that take a separate value.
