@@ -2341,7 +2341,8 @@ _LEVER_CONSUMER_RE = re.compile(
 # A stage whose cause the reply itself leaves unexplained: a lever on it is a candidate with or
 # without a speed-up form.
 _LEVER_UNEXPLAINED_RE = re.compile(
-    r"причин\w*\s+(?:не\s+найден|неизвестн|не\s+провер)|cause\s+(?:unknown|not\s+found|unverified)"
+    r"(?:причин|механизм)\w{0,4}(?:\s+\w+){0,2}\s+(?:не\s+найден|неизвестн|не\s+провер|не\s+выяснен)"
+    r"|cause(?:\s+of(?:\s+\w+){1,3})?\s+(?:is\s+|was\s+|remains\s+)?(?:unknown|not\s+found|unverified|unexplained)"
     r"|не\s+удалось\s+(?:найти|объяснить)|unexplained",
     re.IGNORECASE,
 )
