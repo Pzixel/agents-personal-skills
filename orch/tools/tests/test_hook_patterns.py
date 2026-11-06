@@ -80,5 +80,17 @@ class IncidentChecklist(unittest.TestCase):
                 self.assertEqual(incident(prompt), fires)
 
 
+class OptimizationChecklist(unittest.TestCase):
+    def test_lever_with_target_or_speed_word(self):
+        for prompt, fires in [
+            ("Посмотри какие есть рычаги чтобы сделать деплой 1-2 минуты", True),
+            ("какие рычаги для 500req/s", True),
+            ("за последние 72 часа что-то упало, посмотри", False),
+        ]:
+            with self.subTest(prompt=prompt):
+                out = run("task-type-checklist.py", {"prompt": prompt}).stdout
+                self.assertEqual("Optimization checklist" in out, fires)
+
+
 if __name__ == "__main__":
     unittest.main()
