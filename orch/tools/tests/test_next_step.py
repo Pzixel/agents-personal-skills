@@ -161,22 +161,34 @@ class NextStepDecisionTest(unittest.TestCase):
 
 
 class LeverTriggerTest(unittest.TestCase):
-    def test_lever_list_with_speed_up_and_no_consumer_read_is_a_candidate(self):
-        for text in (
-            "Рычаги на ожидании сборки: флаг пропуска прогрева и параллельный прогон двух стадий.",
-            "Levers: raise the poll interval, then merge the two waits into one.",
+    def test_lever_lists_with_no_consumer_read_are_candidates(self):
+        for text, sentence in (
+            ("Рычаги на ожидании сборки: флаг пропуска прогрева и параллельный прогон двух стадий.",
+             "Рычаги на ожидании сборки: флаг пропуска прогрева и параллельный прогон двух стадий"),
+            ("Levers: raise the poll interval, then merge the two waits into one.",
+             "Levers: raise the poll interval, then merge the two waits into one"),
+            ("Стадия длится 9 минут. Рычаг: кэш артефакта, webhook не нужен.",
+             "Рычаг: кэш артефакта, webhook не нужен"),
+            ("Lever #2: done. Рычаг: таймаут ожидания раннера снизить.", "Рычаг: таймаут ожидания раннера снизить"),
+            ("Рычаг: убираем таймаут ожидания и ставим параллельный прогон.",
+             "Рычаг: убираем таймаут ожидания и ставим параллельный прогон"),
+            ("Рычаг: кэш, чтобы не делать лишних запросов к API.", "Рычаг: кэш, чтобы не делать лишних запросов к API"),
+            ("Levers: cache the status poll; the webhook is not needed.",
+             "Levers: cache the status poll; the webhook is not needed"),
+            ("Lever: cache to cut CPU consumption of the poll loop.",
+             "Lever: cache to cut CPU consumption of the poll loop"),
         ):
-            self.assertIn("ычаг" if "ычаг" in text else "Lever", gate_policy.lever_candidate(text), text)
+            self.assertEqual(gate_policy.lever_candidate(text), sentence, text)
 
-    def test_candidate_keeps_only_the_lever_sentences(self):
-        text = "Стадия длится 9 минут. Рычаг: кэш артефакта между прогонами."
-        self.assertEqual(gate_policy.lever_candidate(text), "Рычаг: кэш артефакта между прогонами")
-
-    def test_status_and_consumer_reads_are_not_candidates(self):
+    def test_status_labels_and_consumer_reads_are_not_candidates(self):
         for text in (
             "Сборка зелёная, PR влит, кэш прогрет.",
+            "lever #1: p95 438 ms; blocker: none; doing: review of the cache before the PR.",
+            "We leverage the cache already; PR merged, CI green.",
             "Рычаг первый: прочитать, кто читает результат шага; флаг потом.",
             "Шаг не нужен, убираем: это и есть рычаг, быстрее не станет ничего другого.",
+            "Рычаг: убираем шаг прогрева целиком, кэш не нужен.",
+            "Рычаг: никто не потребляет результат прогрева, параллельный прогон не нужен.",
             "Who reads the warm-up output? Nobody, so the lever is its removal, not a parallel run.",
             "Главный рычаг здесь — цена письма.",
         ):
@@ -201,6 +213,11 @@ class LeverDecisionTest(unittest.TestCase):
         lever = gate_policy.lever_candidate(self.TEXT)
         for verdict in (self._verdict(False), None):
             self.assertEqual(gate_policy.reply_lint_decision(self.TEXT, False, verdict, "", lever)["decision"], "allow")
+
+    def test_lever_and_next_step_fire_together(self):
+        verdict = dict(self._verdict(True), next_step=True, next_step_sentence="Проверю логи.")
+        decision = gate_policy.reply_lint_decision(self.TEXT, False, verdict, "Проверю логи.", "Рычаги: флаг пропуска прогрева")
+        self.assertEqual(decision["rules"], ["next-step", "lever"])
 
     def test_question_d_is_asked_only_for_a_candidate(self):
         self.assertIn("QUESTION D, LEVER", gate_policy.judge_prompt("x", "", "Рычаг: кэш."))

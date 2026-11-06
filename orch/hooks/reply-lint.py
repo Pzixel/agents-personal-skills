@@ -131,13 +131,13 @@ def main():
             return 0
         text = last_assistant_text(transcript)
     stop_hook_active = bool(payload.get("stop_hook_active"))
-    next_step, scan_error = "", None
+    next_step, lever, scan_error = "", "", None
     if not stop_hook_active:
         try:
             next_step = next_step_candidate(text, payload.get("transcript_path") or "")
+            lever = gate_policy.lever_candidate(text)
         except Exception as exc:  # the reply passes; the failure is logged
             scan_error = "%s: %s" % (type(exc).__name__, exc)
-    lever = "" if stop_hook_active else gate_policy.lever_candidate(text)
     skip_judge = stop_hook_active or not (next_step or lever or gate_policy.needs_judge(text))
     verdict, judge_error = (None, None) if skip_judge else judge(text, next_step, lever)
     decision = gate_policy.reply_lint_decision(text, stop_hook_active, verdict, next_step, lever)
