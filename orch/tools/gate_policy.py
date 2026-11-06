@@ -2321,14 +2321,15 @@ LEVER_CHARS = 600
 _LEVER_WORD_RE = re.compile(r"рычаг|\blevers?\b(?!\s*#\d)", re.IGNORECASE)
 _LEVER_RE = re.compile(
     r"флаг|flag|requeue|интервал|interval|параллел|parallel|слить|сплющ|merge|flatten|ускор|быстрее"
-    r"|кэш|cache|таймаут|timeout|poll|опрос",
+    r"|кэш|cache|таймаут|timeout|poll|(?<!в)опрос",
     re.IGNORECASE,
 )
 _LEVER_CONSUMER_RE = re.compile(
     r"кто\s+(?:читает|потребляет|использует|ждёт|ждет)|никто\s+не\s+(?:читает|потребляет|использует)"
     r"|никому\s+не\s+нуж\w{0,4}\s+(?:шаг|этап|результат)|потребител|нужн(?:а|о|ы|ен)?\s+ли"
-    r"|зачем\s+(?:он|она|оно|они|нужн)|needed at all|who\s+(?:reads|uses|waits)|removal"
-    r"|consumer|consumes|consumed by|no one consumes"
+    r"|зачем\s+(?:он|она|оно|они|нужн)|needed at all|who\s+(?:reads|uses|waits)"
+    r"|removal\s+(?:of\s+the\s+)?(?:step|stage|job|link|edge|wait)|removal is the lever"
+    r"|consumer\s+(?:of|is|reads|needs)|no\s+consumer|consumed\s+by|who\s+consumes|no one consumes"
     r"|убрать\s+(?:шаг|звено|связ)|убира(?:ем|ю)\s+(?:шаг|этап|звено|связ|джоб|job)"
     r"|лишн\w{0,12}\s+(?:шаг|этап|звен|связ|джоб|job)|(?:шаг|этап|стади)\w{0,12}\s+не\s+нуж"
     r"|(?:step|stage|job|link|edge)\s+(?:is\s+)?not\s+needed",
@@ -2585,9 +2586,12 @@ _QUESTION_D = (
     "faster (a flag, an interval, a parallel run, a merge, a cache); its lever sentences: \"{sentence}\". "
     "Answer true when such a lever is listed for a step and the reply names neither who consumes that step's "
     "result nor whether the step is needed at all. Answer false when the reply names the consumer read as the "
-    "first step or states the step is needed and by what; when the lever is already applied, measured or "
-    "decided (a result, a retrospective, a status); or when the text explains a cause or a feature rollout "
-    "rather than proposing a lever. When unsure, answer false.\n\n"
+    "first step or states the step is needed and by what; when the lever is already applied or measured "
+    "(a result, a retrospective, a status); when the text explains a cause or a feature rollout "
+    "rather than proposing a lever; or when the lever is a rewrite of a query or code judged on its own cost, "
+    "a design alternative, a feature or product rollout, a paid option, or a retrospective of work already "
+    "done. True only for a change to the timing, frequency, parallelism, caching or merging of an existing "
+    "step or wait whose consumer the reply never names. When unsure, answer false.\n\n"
 )
 _NO_QUESTION_D = "QUESTION D is not asked for this reply: answer lever false.\n\n"
 _HANDOFF_REASON = (

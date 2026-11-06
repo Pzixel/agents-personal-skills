@@ -377,21 +377,21 @@ _LEVER_WITNESS = ("2ed7c202", "2026-11-06T08:21", "true")
 LEVER_JUDGE_CAP = 200
 
 
-def _hook_judge_args():
-    """The hook's judge command (JUDGE_ARGS of reply-lint.py), read from its source: the hook runs
-    on import."""
+def _hook_judge_args(name="JUDGE_ARGS"):
+    """A constant of reply-lint.py (its judge command or timeout), read from its source: the hook
+    runs on import."""
     import ast
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "hooks", "reply-lint.py")
     for node in ast.parse(open(path).read()).body:
-        if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "JUDGE_ARGS":
+        if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == name:
             return ast.literal_eval(node.value)
-    raise SystemExit("JUDGE_ARGS not found in " + path)
+    raise SystemExit(name + " not found in " + path)
 
 
-def _judge_lever(text, lever, args):
+def _judge_lever(text, lever, args, timeout):
     try:
         run = subprocess.run(args + [g.judge_prompt(text, "", lever)], capture_output=True, text=True,
-                             timeout=12, env=dict(os.environ, REPLY_LINT_JUDGE="1"), cwd="/tmp")
+                             timeout=timeout, env=dict(os.environ, REPLY_LINT_JUDGE="1"), cwd="/tmp")
     except subprocess.TimeoutExpired:
         return "timeout"
     verdict = g.parse_judge_verdict(run.stdout)
@@ -420,10 +420,10 @@ def lever(days, judge=False, cap=LEVER_JUDGE_CAP):
     rows.sort()
     n["candidates"] = len(rows)
     if judge:
-        args = _hook_judge_args()
+        args, timeout = _hook_judge_args(), _hook_judge_args("JUDGE_TIMEOUT_S")
         with ThreadPoolExecutor(8) as pool:
             newest = rows[-cap:]
-            for row, answer in zip(newest, pool.map(lambda r: _judge_lever(r[2], r[3], args), newest)):
+            for row, answer in zip(newest, pool.map(lambda r: _judge_lever(r[2], r[3], args, timeout), newest)):
                 row[4] = answer
         n["judged"] = min(len(rows), cap)
         n["judge true"] = sum(r[4] == "true" for r in rows)
