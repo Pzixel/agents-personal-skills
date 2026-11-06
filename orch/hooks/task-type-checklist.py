@@ -35,12 +35,10 @@ CHECKLISTS = [
         "- No fix, config change or measurement longer than a minute before the table names the surviving hypothesis.",
     ),
     (
-        r"(оптимиз|ускор|производительн|пропускн|throughput|latency|\bперф|perf\b|бенч|bench|\d+\s*/\s*(?:с|s|сек|sec)\b|\brps\b|\bqps\b|(?:максим|целев|target)\w*\s+скорост|(?:cpu|память|memory|диск|disk|cost|стоимост)\W+(?:\S+\s+){0,3}?(?:сниз|уменьш|мень|cut|reduce|lower|limit|лимит|бюджет|budget|цел|target)|(?:сниз|уменьш|cut|reduce|lower)\W+(?:\S+\s+){0,3}?(?:cpu|память|memory|диск|disk|cost|стоимост|latency|задержк))|\A(?s:(?=.*?рычаг)(?=.*?(?:\d\s*(?:(?:мс|ms|сек(?:унд\w*)?|s|sec|мин(?:ут\w*)?|min|час\w*|rps|qps|req)\b|%)|быстрее|медленн|сниз|уменьш|латенс|задержк|cpu|памят|memory)))",
+        r"(оптимиз|ускор|производительн|пропускн|throughput|latency|\bперф|perf\b|бенч|bench|\d+\s*/\s*(?:с|s|сек|sec)\b|\brps\b|\bqps\b|(?:максим|целев|target)\w*\s+скорост|(?:cpu|память|memory|диск|disk|cost|стоимост)\W+(?:\S+\s+){0,3}?(?:сниз|уменьш|мень|cut|reduce|lower|limit|лимит|бюджет|budget|цел|target)|(?:сниз|уменьш|cut|reduce|lower)\W+(?:\S+\s+){0,3}?(?:cpu|память|memory|диск|disk|cost|стоимост|latency|задержк))",
         "Optimization checklist (first reply artifact):\n"
         "- Name the unit of work at the customer boundary and the one metric: units/s or resource per unit there. Part metrics are diagnostics.\n"
         "- Unit-cost table: operation x minimum per unit by contract x measured actual x gap at target load; fix the top row; a code count is a hypothesis.\n"
-        "- Before a lever is listed for any work on the path: who consumes its result, read from the consumer's own code or manifest, never from the current order, a README or the manifest that declares the work; work with no consumer is removed, and its removal is the lever.\n"
-        "- Only for work that survives: what makes it slow, as a mechanism read from the system (a log line, an interval, a flag); a stage with no named mechanism gets no lever until that read.\n"
         "- Candidates include the minimum-facts design built from zero; accept changes of cardinality before constants; hardware only after a saturation run.\n"
         "- First deliverable is the number from the thinnest prototype on the real path; guarantees after; re-measure the target after every change on the path.\n"
         "- Decide the store and the cardinality first; per-unit arithmetic inside the store you already have comes after that decision, never instead of it.\n"

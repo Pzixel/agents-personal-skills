@@ -6,7 +6,6 @@ import shutil
 import tempfile
 import pathlib
 import subprocess
-import time
 import unittest
 
 HOOKS = pathlib.Path(__file__).resolve().parents[2] / "hooks"
@@ -79,38 +78,6 @@ class IncidentChecklist(unittest.TestCase):
         ]:
             with self.subTest(prompt=prompt):
                 self.assertEqual(incident(prompt), fires)
-
-
-def checklist_hook_timeout():
-    config = json.loads((HOOKS / "hooks.json").read_text())
-    for groups in config["hooks"].values():
-        for group in groups:
-            for hook in group["hooks"]:
-                if "task-type-checklist.py" in hook["command"]:
-                    return hook["timeout"]
-    raise AssertionError("task-type-checklist.py is not registered in hooks.json")
-
-
-class OptimizationChecklist(unittest.TestCase):
-    def test_lever_with_target_or_speed_word(self):
-        for prompt, fires in [
-            ("Посмотри какие есть рычаги чтобы сделать деплой 1-2 минуты", True),
-            ("какие рычаги для 500req/s", True),
-            ("за последние 72 часа что-то упало, посмотри", False),
-            ("поясни каждый рычаг чуть подробнее (50-100 слов)", False),
-            ("какие рычаги есть у 5 секций отчёта", False),
-        ]:
-            with self.subTest(prompt=prompt):
-                out = run("task-type-checklist.py", {"prompt": prompt}).stdout
-                self.assertEqual("Optimization checklist" in out, fires)
-
-    def test_long_prompt_with_lever_word_and_no_unit_is_fast(self):
-        prompt = "build 12345 step 67890 " * 2200 + "рычаг"
-        started = time.monotonic()
-        out = run("task-type-checklist.py", {"prompt": prompt}).stdout
-        # The hook shares its harness timeout with the other checklists and the harness itself: one fifth of it.
-        self.assertLess(time.monotonic() - started, checklist_hook_timeout() / 5)
-        self.assertNotIn("Optimization checklist", out)
 
 
 if __name__ == "__main__":
