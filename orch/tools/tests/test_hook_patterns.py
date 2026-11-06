@@ -81,6 +81,16 @@ class IncidentChecklist(unittest.TestCase):
                 self.assertEqual(incident(prompt), fires)
 
 
+def checklist_hook_timeout():
+    config = json.loads((HOOKS / "hooks.json").read_text())
+    for groups in config["hooks"].values():
+        for group in groups:
+            for hook in group["hooks"]:
+                if "task-type-checklist.py" in hook["command"]:
+                    return hook["timeout"]
+    raise AssertionError("task-type-checklist.py is not registered in hooks.json")
+
+
 class OptimizationChecklist(unittest.TestCase):
     def test_lever_with_target_or_speed_word(self):
         for prompt, fires in [
@@ -98,7 +108,8 @@ class OptimizationChecklist(unittest.TestCase):
         prompt = "build 12345 step 67890 " * 2200 + "рычаг"
         started = time.monotonic()
         out = run("task-type-checklist.py", {"prompt": prompt}).stdout
-        self.assertLess(time.monotonic() - started, 1.0)
+        # The hook shares its harness timeout with the other checklists and the harness itself: one fifth of it.
+        self.assertLess(time.monotonic() - started, checklist_hook_timeout() / 5)
         self.assertNotIn("Optimization checklist", out)
 
 
