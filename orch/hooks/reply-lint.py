@@ -33,6 +33,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 
 _PLUGIN_TOOLS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tools")
 TOOLS_DIR = (
@@ -139,7 +140,9 @@ def main():
         except Exception as exc:  # the reply passes; the failure is logged
             scan_error = "%s: %s" % (type(exc).__name__, exc)
     skip_judge = stop_hook_active or not (next_step or lever or gate_policy.needs_judge(text))
+    started = time.monotonic()
     verdict, judge_error = (None, None) if skip_judge else judge(text, next_step, lever)
+    judge_ms = None if skip_judge else int((time.monotonic() - started) * 1000)
     decision = gate_policy.reply_lint_decision(text, stop_hook_active, verdict, next_step, lever)
     if os.path.isfile(payload.get("transcript_path") or ""):
         log(
@@ -153,6 +156,7 @@ def main():
                 "scan_error": scan_error,
                 "verdict": verdict,
                 "judge_error": judge_error,
+                "judge_ms": judge_ms,
                 "tail": text.strip()[-120:],
             }
         )

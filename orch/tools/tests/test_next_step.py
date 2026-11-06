@@ -175,6 +175,8 @@ class LeverTriggerTest(unittest.TestCase):
             ("Рычаг: кэш, чтобы не делать лишних запросов к API.", "Рычаг: кэш, чтобы не делать лишних запросов к API"),
             ("Levers: cache the status poll; the webhook is not needed.",
              "Levers: cache the status poll; the webhook is not needed"),
+            ("Ожидание после job 66-198 с, причина не найдена. Рычаг на эту стадию: перенести публикацию в job сборки.",
+             "Рычаг на эту стадию: перенести публикацию в job сборки"),
             ("Lever: raise Kafka consumer parallelism for the poll stage.",
              "Lever: raise Kafka consumer parallelism for the poll stage"),
             ("Lever: cache to cut CPU consumption of the poll loop.",
@@ -193,6 +195,7 @@ class LeverTriggerTest(unittest.TestCase):
             "Рычаг: никто не потребляет результат прогрева, параллельный прогон не нужен.",
             "Who reads the warm-up output? Nobody, so the lever is its removal, not a parallel run.",
             "Главный рычаг здесь — цена письма.",
+            "Причина не найдена; на эту стадию рычаг не ставлю, пока не прочитан механизм.",
             "Рычаг понятен, остался один вопрос по цене.",
         ):
             self.assertEqual(gate_policy.lever_candidate(text), "", text)

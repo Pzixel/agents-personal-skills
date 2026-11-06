@@ -2332,16 +2332,28 @@ _LEVER_CONSUMER_RE = re.compile(
     r"|consumer\s+(?:of|is|reads|needs)|no\s+consumer|consumed\s+by|who\s+consumes|no one consumes"
     r"|убрать\s+(?:шаг|звено|связ)|убира(?:ем|ю)\s+(?:шаг|этап|звено|связ|джоб|job)"
     r"|лишн\w{0,12}\s+(?:шаг|этап|звен|связ|джоб|job)|(?:шаг|этап|стади)\w{0,12}\s+не\s+нуж"
-    r"|(?:step|stage|job|link|edge)\s+(?:is\s+)?not\s+needed",
+    r"|(?:step|stage|job|link|edge)\s+(?:is\s+)?not\s+needed"
+    r"|рычаг\w{0,4}\s+не\s+став|no\s+lever\s+(?:until|before)",
+    re.IGNORECASE,
+)
+
+
+# A stage whose cause the reply itself leaves unexplained: a lever on it is a candidate with or
+# without a speed-up form.
+_LEVER_UNEXPLAINED_RE = re.compile(
+    r"причин\w*\s+(?:не\s+найден|неизвестн|не\s+провер)|cause\s+(?:unknown|not\s+found|unverified)"
+    r"|не\s+удалось\s+(?:найти|объяснить)|unexplained",
     re.IGNORECASE,
 )
 
 
 def lever_candidate(reply):
     """The sentences carrying the lever word (at most ``LEVER_CHARS``) when the reply lists a lever
-    with a speed-up form and names no consumer or necessity read, else ""."""
+    with a speed-up form or on a stage it calls unexplained, and names no consumer or necessity
+    read, else ""."""
     text = reply or ""
-    if not (_LEVER_WORD_RE.search(text) and _LEVER_RE.search(text)) or _LEVER_CONSUMER_RE.search(text):
+    if (not _LEVER_WORD_RE.search(text) or not (_LEVER_RE.search(text) or _LEVER_UNEXPLAINED_RE.search(text))
+            or _LEVER_CONSUMER_RE.search(text)):
         return ""
     sentences = [s.strip() for s in _SENTENCE_BREAK_RE.split(text) if _LEVER_WORD_RE.search(s)]
     return re.sub(r"\s+", " ", " ".join(sentences))[:LEVER_CHARS]
@@ -2586,12 +2598,15 @@ _QUESTION_D = (
     "faster (a flag, an interval, a parallel run, a merge, a cache); its lever sentences: \"{sentence}\". "
     "Answer true when such a lever is listed for a step and the reply names neither who consumes that step's "
     "result nor whether the step is needed at all. Answer false when the reply names the consumer read as the "
-    "first step or states the step is needed and by what; when the lever is already applied or measured "
-    "(a result, a retrospective, a status); when the text explains a cause or a feature rollout "
+    "first step or states the step is needed and by what; when the lever itself is already applied or its "
+    "effect measured (a result, a retrospective, a status; measured durations of the step do not excuse a "
+    "proposed lever); when the text explains a cause or a feature rollout "
     "rather than proposing a lever; or when the lever is a rewrite of a query or code judged on its own cost, "
     "a design alternative, a feature or product rollout, a paid option, or a retrospective of work already "
     "done. True only for a change to the timing, frequency, parallelism, caching or merging of an existing "
-    "step or wait whose consumer the reply never names. When unsure, answer false.\n\n"
+    "step or wait whose consumer the reply never names, or when the reply credits a lever to a stage or wait "
+    "whose cause the reply itself calls unknown, unverified or not found (a lever on an unexplained stage). "
+    "When unsure, answer false.\n\n"
 )
 _NO_QUESTION_D = "QUESTION D is not asked for this reply: answer lever false.\n\n"
 _HANDOFF_REASON = (
