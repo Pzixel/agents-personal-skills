@@ -398,6 +398,15 @@ def _judge_lever(text, lever, args, timeout):
     return "error" if verdict is None else str(verdict["lever"]).lower()
 
 
+# The first prompt of a retro-evals subject session: not an owner session.
+_SUBJECT_PROMPT = "You are the agent in the situation described in the file"
+
+
+def _subject_session(entries):
+    first = next((e for _, e in entries if _owner_message(e)), None)
+    return first is not None and _entry_text(first).lstrip().startswith(_SUBJECT_PROMPT)
+
+
 def lever(days, judge=False, cap=LEVER_JUDGE_CAP):
     """Replay the lever trigger (``gate_policy.lever_candidate``) at the first stop of every turn of
     the owner sessions in the window; with ``judge`` run the hook's judge (question D) on each
@@ -408,6 +417,9 @@ def lever(days, judge=False, cap=LEVER_JUDGE_CAP):
     rows = []
     for path in main_transcripts(days, _SUBJECT_DIR_RE):
         entries = transcript.entries_of(path)
+        if _subject_session(entries):
+            n["subject sessions skipped"] += 1
+            continue
         for stop in first_stops(entries):
             stamp = str(entries[stop][1].get("timestamp") or "")
             if stamp < cut:

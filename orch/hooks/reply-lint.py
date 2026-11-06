@@ -46,8 +46,8 @@ import transcript as transcript_scan  # noqa: E402
 
 LOG_PATH = os.path.expanduser("~/.claude/reply-lint-log.jsonl")
 JUDGE_ENV = "REPLY_LINT_JUDGE"
-# Under the hook's 15 s timeout; judge wall time p90 is in ORIGINS.md.
-JUDGE_TIMEOUT_S = 12
+# 5 s under the hook's 30 s timeout; sized from the judge wall time in decisions/lever-starts-from-who-consumes-the-work.md.
+JUDGE_TIMEOUT_S = 25
 JUDGE_ARGS = [
     "claude", "-p", "--model", "haiku", "--tools", "", "--no-session-persistence",
     "--setting-sources", "", "--settings", '{"disableAllHooks":true}', "--strict-mcp-config",

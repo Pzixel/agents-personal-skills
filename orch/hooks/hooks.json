@@ -201,7 +201,7 @@
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/reply-lint.py\"",
-            "timeout": 15
+            "timeout": 30
           },
           {
             "type": "command",
