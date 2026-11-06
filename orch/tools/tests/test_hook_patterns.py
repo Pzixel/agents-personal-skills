@@ -6,6 +6,7 @@ import shutil
 import tempfile
 import pathlib
 import subprocess
+import time
 import unittest
 
 HOOKS = pathlib.Path(__file__).resolve().parents[2] / "hooks"
@@ -86,10 +87,19 @@ class OptimizationChecklist(unittest.TestCase):
             ("Посмотри какие есть рычаги чтобы сделать деплой 1-2 минуты", True),
             ("какие рычаги для 500req/s", True),
             ("за последние 72 часа что-то упало, посмотри", False),
+            ("поясни каждый рычаг чуть подробнее (50-100 слов)", False),
+            ("какие рычаги есть у 5 секций отчёта", False),
         ]:
             with self.subTest(prompt=prompt):
                 out = run("task-type-checklist.py", {"prompt": prompt}).stdout
                 self.assertEqual("Optimization checklist" in out, fires)
+
+    def test_long_prompt_with_lever_word_and_no_unit_is_fast(self):
+        prompt = "build 12345 step 67890 " * 2200 + "рычаг"
+        started = time.monotonic()
+        out = run("task-type-checklist.py", {"prompt": prompt}).stdout
+        self.assertLess(time.monotonic() - started, 1.0)
+        self.assertNotIn("Optimization checklist", out)
 
 
 if __name__ == "__main__":
