@@ -1149,7 +1149,7 @@ class HandoffJudgeTest(unittest.TestCase):
             self.assertEqual(
                 gate_policy.parse_judge_verdict(self._cli(result)),
                 {"handoff": True, "sentence": "Your call.", "deferral": False, "deferral_sentence": "none",
-                 "next_step": False, "next_step_sentence": "none"},
+                 "next_step": False, "next_step_sentence": "none", "lever": False, "lever_sentence": ""},
                 result,
             )
 

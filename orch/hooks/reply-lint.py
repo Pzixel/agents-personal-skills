@@ -66,11 +66,11 @@ def next_step_candidate(text, transcript_path):
     return "" if gate_policy.live_mechanisms(facts) else sentence
 
 
-def judge(text, next_step=""):
+def judge(text, next_step="", lever=""):
     """(verdict or None, error or None) from the nested small-model judge."""
     try:
         run = subprocess.run(
-            JUDGE_ARGS + [gate_policy.judge_prompt(text, next_step)],
+            JUDGE_ARGS + [gate_policy.judge_prompt(text, next_step, lever)],
             capture_output=True, text=True, timeout=JUDGE_TIMEOUT_S,
             cwd=tempfile.gettempdir(), env=dict(os.environ, **{JUDGE_ENV: "1"}),
         )
@@ -137,9 +137,10 @@ def main():
             next_step = next_step_candidate(text, payload.get("transcript_path") or "")
         except Exception as exc:  # the reply passes; the failure is logged
             scan_error = "%s: %s" % (type(exc).__name__, exc)
-    skip_judge = stop_hook_active or not (next_step or gate_policy.needs_judge(text))
-    verdict, judge_error = (None, None) if skip_judge else judge(text, next_step)
-    decision = gate_policy.reply_lint_decision(text, stop_hook_active, verdict, next_step)
+    lever = "" if stop_hook_active else gate_policy.lever_candidate(text)
+    skip_judge = stop_hook_active or not (next_step or lever or gate_policy.needs_judge(text))
+    verdict, judge_error = (None, None) if skip_judge else judge(text, next_step, lever)
+    decision = gate_policy.reply_lint_decision(text, stop_hook_active, verdict, next_step, lever)
     if os.path.isfile(payload.get("transcript_path") or ""):
         log(
             {
@@ -148,6 +149,7 @@ def main():
                 "decision": decision["decision"],
                 "rules": decision["rules"],
                 "next_step_candidate": next_step,
+                "lever_candidate": lever,
                 "scan_error": scan_error,
                 "verdict": verdict,
                 "judge_error": judge_error,

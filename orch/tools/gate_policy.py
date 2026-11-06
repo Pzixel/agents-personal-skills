@@ -2309,6 +2309,39 @@ _NEXT_STEP_REASON = (
     "note written this turn is not tracking."
 )
 
+_LEVER_REASON = (
+    REPLY_LINT_MARKER + " a lever that makes a step faster is listed before the read of who consumes that "
+    "step's result; name the consumer (from its own code or manifest) and whether the step is needed, or list "
+    "that read as the first step; work with no consumer is removed, and its removal is the lever."
+)
+
+# -- lever trigger: a lever that speeds up an existing step, with no read of who consumes it --
+
+LEVER_CHARS = 600
+_LEVER_WORD_RE = re.compile(r"рычаг|\blever", re.IGNORECASE)
+_LEVER_RE = re.compile(
+    r"флаг|flag|requeue|интервал|interval|параллел|parallel|слить|сплющ|merge|flatten|ускор|быстрее"
+    r"|кэш|cache|таймаут|timeout|poll|опрос",
+    re.IGNORECASE,
+)
+_LEVER_CONSUMER_RE = re.compile(
+    r"кто\s+(?:читает|потребляет|использует|ждёт|ждет)|consum|потребител|нужн(?:а|о|ы|ен)?\s+ли"
+    r"|зачем\s+(?:он|она|оно|они|нужн)|needed at all|who\s+(?:reads|uses|waits)|removal"
+    r"|убрать\s+(?:шаг|звено|связ)|лишн|(?:шаг|этап|стади)\w*\s+не\s+нуж|убира(?:ем|ю)|not needed",
+    re.IGNORECASE,
+)
+
+
+def lever_candidate(reply):
+    """The sentences carrying the lever word (at most ``LEVER_CHARS``) when the reply lists a lever
+    with a speed-up form and names no consumer or necessity read, else ""."""
+    text = reply or ""
+    if not (_LEVER_WORD_RE.search(text) and _LEVER_RE.search(text)) or _LEVER_CONSUMER_RE.search(text):
+        return ""
+    sentences = [s.strip() for s in _SENTENCE_BREAK_RE.split(text) if _LEVER_WORD_RE.search(s)]
+    return re.sub(r"\s+", " ", " ".join(sentences))[:LEVER_CHARS]
+
+
 # -- next-step trigger (a): the closing part of the reply names a step of the agent's own --
 
 NEXT_STEP_CLOSING_CHARS = 600
@@ -2471,7 +2504,7 @@ def _has_done_claim(original):
 JUDGE_PROMPT = (
     "You check the final reply of a coding agent before its turn ends. The reply, as a JSON string:\n"
     "{reply}\n\n"
-    "Answer three questions about it (the reply may be in any language).\n\n"
+    "Answer the questions about it (the reply may be in any language).\n\n"
     "QUESTION A, OWNER HAND-OFF. The agent's tool to ask the owner, AskUserQuestion, pauses the turn and is "
     "not visible in this text, so a reply that ends the turn while still needing the owner has not asked "
     "through it. It is a hand-off only when either holds:\n"
@@ -2517,6 +2550,7 @@ JUDGE_PROMPT = (
     "running (the reply says so); a follow-up already tracked. A deferral needs the agent's work on the task "
     "to have ended this turn with the step left undone and untracked.\n\n"
     "{question_c}"
+    "{question_d}"
     "For each question, find the one sentence that makes it true. If none exists, or a NOT case covers it, "
     "the answer is false. When unsure, answer false.\n\n"
     "Respond with one JSON object only, no other text, sentences written before the booleans:\n"
@@ -2524,7 +2558,9 @@ JUDGE_PROMPT = (
     "\"deferral_sentence\": \"<deferral sentence quoted, at most 15 words, or none>\", "
     "\"deferral\": <true or false>, "
     "\"next_step_sentence\": \"<the step sentence quoted, at most 15 words, or none>\", "
-    "\"next_step\": <true or false>}}"
+    "\"next_step\": <true or false>, "
+    "\"lever_sentence\": \"<the lever sentence quoted, at most 15 words, or none>\", "
+    "\"lever\": <true or false>}}"
 )
 _QUESTION_C = (
     "QUESTION C, OWN NEXT STEP. The reply's closing part names a step the agent itself will take "
@@ -2540,6 +2576,14 @@ _QUESTION_C = (
     "was run or changed with no check named. When unsure, answer false.\n\n"
 )
 _NO_QUESTION_C = "QUESTION C is not asked for this reply: answer next_step false.\n\n"
+_QUESTION_D = (
+    "QUESTION D, LEVER WITHOUT A CONSUMER READ. The reply lists a lever that makes an existing step or wait "
+    "faster (a flag, an interval, a parallel run, a merge, a cache); its lever sentences: \"{sentence}\". "
+    "Answer true when such a lever is listed for a step and the reply names neither who consumes that step's "
+    "result nor whether the step is needed at all. Answer false when the reply names the consumer read as the "
+    "first step or states the step is needed and by what. When unsure, answer false.\n\n"
+)
+_NO_QUESTION_D = "QUESTION D is not asked for this reply: answer lever false.\n\n"
 _HANDOFF_REASON = (
     REPLY_LINT_MARKER + " the reply leaves work waiting on the owner in plain text "
     "(\"{sentence}\"). If the decision is inside your authority (a technical question by the "
@@ -2586,11 +2630,13 @@ def needs_judge(reply):
     return addresses_owner(reply) or bool(_PROMISE_RE.search(_blank_quoted(reply)))
 
 
-def judge_prompt(reply, next_step=""):
+def judge_prompt(reply, next_step="", lever=""):
     """The judge prompt for one final reply; the reply goes in as a JSON string. Question C is
-    asked only for a next-step candidate (``next_step`` = its trigger sentence)."""
+    asked only for a next-step candidate (``next_step`` = its trigger sentence), question D only
+    for a lever candidate (``lever`` = ``lever_candidate``)."""
     question_c = _QUESTION_C.format(sentence=next_step.replace('"', "'")) if next_step else _NO_QUESTION_C
-    return JUDGE_PROMPT.format(reply=json.dumps(reply, ensure_ascii=False), question_c=question_c)
+    question_d = _QUESTION_D.format(sentence=lever.replace('"', "'")) if lever else _NO_QUESTION_D
+    return JUDGE_PROMPT.format(reply=json.dumps(reply, ensure_ascii=False), question_c=question_c, question_d=question_d)
 
 
 def parse_judge_verdict(cli_stdout):
@@ -2622,16 +2668,19 @@ def parse_judge_verdict(cli_stdout):
         "deferral_sentence": str(verdict.get("deferral_sentence") or ""),
         "next_step": verdict["next_step"],
         "next_step_sentence": str(verdict.get("next_step_sentence") or ""),
+        "lever": verdict.get("lever") is True,
+        "lever_sentence": str(verdict.get("lever_sentence") or ""),
     }
 
 
-def reply_lint_decision(last_assistant_text, stop_hook_active, verdict=None, next_step=""):
+def reply_lint_decision(last_assistant_text, stop_hook_active, verdict=None, next_step="", lever=""):
     """Return the main session once when its final reply claims completion
     without an observation, or the judge ``verdict`` (``parse_judge_verdict``,
     None when no verdict exists) finds a plain-text hand-off to the owner or an
     unbacked deferral of work, or, for a next-step candidate (``next_step`` = the
     trigger sentence of a reply whose session holds no live mechanism), the judge
-    finds the step could start now; ``next-step`` then replaces ``deferral``.
+    finds the step could start now; ``next-step`` then replaces ``deferral``; or, for a
+    lever candidate (``lever``), the judge finds a lever listed with no consumer read.
     ``rules`` names every rule that fired.
     Not claims (2026-10-15): a Russian not-verified disclosure, a done word
     as a section label or with a manner complement.
@@ -2649,6 +2698,8 @@ def reply_lint_decision(last_assistant_text, stop_hook_active, verdict=None, nex
         fired.append(("next-step", _NEXT_STEP_REASON.format(sentence=sentence.replace('"', "'"))))
     elif verdict and verdict["deferral"]:
         fired.append(("deferral", _DEFERRAL_REASON.format(sentence=verdict["deferral_sentence"].replace('"', "'"))))
+    if lever and verdict and verdict.get("lever"):
+        fired.append(("lever", _LEVER_REASON))
     if not fired:
         return {"decision": "allow", "rules": []}
     return {"decision": "block", "rules": [r for r, _ in fired], "reason": " ".join(m for _, m in fired)}

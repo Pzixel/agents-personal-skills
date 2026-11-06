@@ -160,5 +160,56 @@ class NextStepDecisionTest(unittest.TestCase):
         self.assertNotEqual(gate_policy.judge_prompt("x", "Проверю логи."), gate_policy.judge_prompt("x"))
 
 
+class LeverTriggerTest(unittest.TestCase):
+    def test_lever_list_with_speed_up_and_no_consumer_read_is_a_candidate(self):
+        for text in (
+            "Рычаги на ожидании сборки: флаг пропуска прогрева и параллельный прогон двух стадий.",
+            "Levers: raise the poll interval, then merge the two waits into one.",
+        ):
+            self.assertIn("ычаг" if "ычаг" in text else "Lever", gate_policy.lever_candidate(text), text)
+
+    def test_candidate_keeps_only_the_lever_sentences(self):
+        text = "Стадия длится 9 минут. Рычаг: кэш артефакта между прогонами."
+        self.assertEqual(gate_policy.lever_candidate(text), "Рычаг: кэш артефакта между прогонами")
+
+    def test_status_and_consumer_reads_are_not_candidates(self):
+        for text in (
+            "Сборка зелёная, PR влит, кэш прогрет.",
+            "Рычаг первый: прочитать, кто читает результат шага; флаг потом.",
+            "Шаг не нужен, убираем: это и есть рычаг, быстрее не станет ничего другого.",
+            "Who reads the warm-up output? Nobody, so the lever is its removal, not a parallel run.",
+            "Главный рычаг здесь — цена письма.",
+        ):
+            self.assertEqual(gate_policy.lever_candidate(text), "", text)
+
+
+class LeverDecisionTest(unittest.TestCase):
+    TEXT = "Рычаги: флаг пропуска прогрева."
+
+    @staticmethod
+    def _verdict(lever):
+        return {"handoff": False, "sentence": "", "deferral": False, "deferral_sentence": "",
+                "next_step": False, "next_step_sentence": "", "lever": lever, "lever_sentence": ""}
+
+    def test_judged_true_returns_the_lever_reason(self):
+        lever = gate_policy.lever_candidate(self.TEXT)
+        decision = gate_policy.reply_lint_decision(self.TEXT, False, self._verdict(True), "", lever)
+        self.assertEqual((decision["decision"], decision["rules"]), ("block", ["lever"]))
+        self.assertIn("who consumes that step's result", decision["reason"])
+
+    def test_judged_false_or_no_verdict_passes(self):
+        lever = gate_policy.lever_candidate(self.TEXT)
+        for verdict in (self._verdict(False), None):
+            self.assertEqual(gate_policy.reply_lint_decision(self.TEXT, False, verdict, "", lever)["decision"], "allow")
+
+    def test_question_d_is_asked_only_for_a_candidate(self):
+        self.assertIn("QUESTION D, LEVER", gate_policy.judge_prompt("x", "", "Рычаг: кэш."))
+        self.assertNotIn("QUESTION D, LEVER", gate_policy.judge_prompt("x"))
+
+    def test_verdict_without_the_lever_key_reads_false(self):
+        out = json.dumps({"result": json.dumps({"handoff": False, "deferral": False, "next_step": False})})
+        self.assertFalse(gate_policy.parse_judge_verdict(out)["lever"])
+
+
 if __name__ == "__main__":
     unittest.main()

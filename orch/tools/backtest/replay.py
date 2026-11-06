@@ -5,6 +5,7 @@ usage: python3 replay.py <loop.tsv> <control.jsonl> [variants]
        python3 replay.py background-watch [days]
        python3 replay.py next-step [days] [--against <backtest stops.tsv>]
        python3 replay.py merge-gate [days]
+       python3 replay.py lever [days] [--judge]
 
 loop.tsv: start_utc, duration_s, agent, agent_type, command (one looping
 session, all rows one repository). control.jsonl: rows of extract.py (every
@@ -371,7 +372,75 @@ def merge_gate(days):
         print(" | ".join(row))
 
 
+_LEVER_WITNESS = "2ed7c202"
+LEVER_JUDGE_CAP = 200
+
+
+def _hook_judge_args():
+    """The hook's judge command (JUDGE_ARGS of reply-lint.py), read from its source: the hook runs
+    on import."""
+    import ast
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "hooks", "reply-lint.py")
+    for node in ast.parse(open(path).read()).body:
+        if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "JUDGE_ARGS":
+            return ast.literal_eval(node.value)
+    raise SystemExit("JUDGE_ARGS not found in " + path)
+
+
+def _judge_lever(text, lever, args):
+    try:
+        run = subprocess.run(args + [g.judge_prompt(text, "", lever)], capture_output=True, text=True,
+                             timeout=30, env=dict(os.environ, REPLY_LINT_JUDGE="1"), cwd="/tmp")
+    except subprocess.TimeoutExpired:
+        return "timeout"
+    verdict = g.parse_judge_verdict(run.stdout)
+    return "error" if verdict is None else str(verdict["lever"]).lower()
+
+
+def lever(days, judge=False):
+    """Replay the lever trigger (``gate_policy.lever_candidate``) at the first stop of every turn of
+    the owner sessions in the window; with ``judge`` run the hook's judge (question D) on each
+    candidate, at most the newest ``LEVER_JUDGE_CAP``."""
+    from concurrent.futures import ThreadPoolExecutor
+    cut = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=days)).isoformat()
+    n = collections.Counter()
+    rows = []
+    for path in main_transcripts(days, _SUBJECT_DIR_RE):
+        entries = transcript.entries_of(path)
+        for stop in first_stops(entries):
+            stamp = str(entries[stop][1].get("timestamp") or "")
+            if stamp < cut:
+                continue
+            n["turn ends"] += 1
+            text = _entry_text(entries[stop][1])
+            candidate = g.lever_candidate(text)
+            if candidate:
+                rows.append([stamp[:16], os.path.basename(path)[:8], text, candidate, "-"])
+    rows.sort()
+    n["candidates"] = len(rows)
+    if judge:
+        args = _hook_judge_args()
+        with ThreadPoolExecutor(8) as pool:
+            newest = rows[-LEVER_JUDGE_CAP:]
+            for row, answer in zip(newest, pool.map(lambda r: _judge_lever(r[2], r[3], args), newest)):
+                row[4] = answer
+        n["judged"] = min(len(rows), LEVER_JUDGE_CAP)
+        n["judge true"] = sum(r[4] == "true" for r in rows)
+    for key, value in n.items():
+        print(key, value)
+    print("candidates per day:", dict(sorted(collections.Counter(r[0][:10] for r in rows).items())))
+    if judge:
+        print("judge true per day:", dict(sorted(collections.Counter(r[0][:10] for r in rows if r[4] == "true").items())))
+    for stamp, session, text, _, answer in rows:
+        print("candidate", session, stamp, answer, re.sub(r"\s+", " ", text.strip())[-120:])
+    hits = [(r[0][11:], r[4]) for r in rows if r[1] == _LEVER_WITNESS]
+    print("witness", _LEVER_WITNESS, "candidates:", hits or "none")
+
+
 def main():
+    if sys.argv[1] == "lever":
+        args = sys.argv[2:]
+        return lever(int(args[0]) if args and args[0].isdigit() else 28, "--judge" in args)
     if sys.argv[1] == "next-step":
         args = sys.argv[2:]
         against = args[args.index("--against") + 1] if "--against" in args else None
