@@ -2312,7 +2312,8 @@ _NEXT_STEP_REASON = (
 _LEVER_REASON = (
     REPLY_LINT_MARKER + " a lever that makes a step faster is listed before the read of who consumes that "
     "step's result; name the consumer (from its own code or manifest) and whether the step is needed, or list "
-    "that read as the first step; work with no consumer is removed, and its removal is the lever."
+    "that read as the first step; work with no consumer is removed, and its removal is the lever; a stage or "
+    "wait whose cause you call unknown gets no lever until its mechanism is read (a log line, an interval, a flag)."
 )
 
 # -- lever trigger: a lever that speeds up an existing step, with no read of who consumes it --
