@@ -69,7 +69,7 @@ Fix round <n>. Verified findings: <the table from the cross-check reply>. Fix ea
 6. Recheck. SendMessage to the step 3 reviewer of review-a.md:
 ```
 mode: recheck
-Re-check <old head>..<new head> in <ws> against <notes>/review-verified.md.
+Re-check <old head>..<new head> in <ws> against <notes>/review-verified.md. Each row: `fixed` / `not fixed` / `not checked`, with the read at <new head> that decides it (file:line as read, or command and output line); a row with no read at the new head is `not checked`.
 ```
 A new finding with file:line and how it was verified counts as verified and goes back to step 5.
 7. Report to the user:
