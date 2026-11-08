@@ -238,5 +238,133 @@ class LeverDecisionTest(unittest.TestCase):
         self.assertFalse(gate_policy.parse_judge_verdict(out)["lever"])
 
 
+def scan(entries):
+    facts = None
+    for facts in transcript.background_watch_scan([("", e) for e in entries], "\x00"):
+        pass
+    return facts
+
+
+# Scrubbed paraphrases of the two CASE-71 witnesses: a heading with the night and its window, the own
+# steps as list items; a closing promise for the next night.
+TIMED_HEADING = (
+    "Команды лежат в описании ночных шагов.\n\n"
+    "**Суббота ночью**, окно примерно 04:15-05:45 UTC:\n"
+    "- проверяю, что фоновая задача не идёт;\n"
+    "- присылаю точный план команд;\n"
+    "- после твоего «давай» иду по шагам."
+)
+TIMED_CLOSING = "Если сегодня не начинаем, на следующую ночь поставлю будильник и назову его id."
+
+
+class TimedStepTriggerTest(unittest.TestCase):
+    def test_present_tense_steps_under_a_time_heading_trigger_with_the_heading_and_first_item(self):
+        self.assertEqual(gate_policy.timed_step_sentence(TIMED_HEADING),
+                         "**Суббота ночью**, окно примерно 04:15-05:45 UTC: - проверяю, что фоновая задача не идёт;")
+
+    def test_own_step_after_a_relative_time_triggers_with_its_sentence(self):
+        self.assertEqual(gate_policy.timed_step_sentence("Тесты зелёные. " + TIMED_CLOSING), TIMED_CLOSING)
+
+    def test_weekday_after_vo_triggers(self):
+        self.assertEqual(gate_policy.timed_step_sentence("Во вторник проверю отправки."), "Во вторник проверю отправки.")
+
+    def test_english_future_with_a_forward_clock_time_triggers(self):
+        self.assertEqual(gate_policy.timed_step_sentence("Build is green. I will merge it after 18:00."),
+                         "I will merge it after 18:00.")
+
+    def test_a_bare_past_timestamp_or_date_does_not_trigger(self):
+        for reply in ("Проверю логи: сбой был 20.10 около 03:12 UTC.", "Сверю данные с 2026-10-20 по сегодня."):
+            self.assertEqual(gate_policy.timed_step_sentence(reply), "", reply)
+
+    def test_time_in_a_report_sentence_does_not_borrow_a_verb_from_another_sentence(self):
+        self.assertEqual(gate_policy.timed_step_sentence("PR влит в 18:44. Проверю логи."), "")
+
+    def test_time_without_an_own_step_does_not_trigger(self):
+        self.assertEqual(gate_policy.timed_step_sentence("Задача системы запускается завтра ночью сама."), "")
+
+    def test_time_marker_inside_code_does_not_trigger(self):
+        self.assertEqual(gate_policy.timed_step_sentence("Проверю это. Пример: `завтра ночью`."), "")
+
+
+class TimedStepConditionTest(unittest.TestCase):
+    def test_live_one_shot_cron_exempts(self):
+        self.assertEqual(gate_policy.live_clocks(scan(CRON_ONE_SHOT)), ["1db1ccfe"])
+
+    def test_live_recurring_cron_exempts_timed_step_and_not_next_step(self):
+        recurring = [tool_use("c2", "CronCreate", {"cron": "23 * * * *", "recurring": True, "prompt": "tick"}),
+                     tool_result("c2", "Scheduled recurring job 5e0a11c3 (Every hour at :23). Next run: Oct 28 12:23pm.")]
+        facts = scan(recurring)
+        self.assertEqual((gate_policy.live_clocks(facts), gate_policy.live_mechanisms(facts)), (["5e0a11c3"], []))
+
+    # A /loop wakeup armed at 10:29:00 for 1859 s (due 10:59:59), as in a real /loop session (a1ddb115).
+    WAKEUP = [dict(tool_use("w1", "ScheduleWakeup", {"delaySeconds": 1800}), timestamp="2026-11-05T10:28:58.100Z"),
+              dict(tool_result("w1", "Next wakeup scheduled for 13:00:00 (in 1859s)."), timestamp="2026-11-05T10:29:00.200Z")]
+
+    @staticmethod
+    def _reply_at(timestamp):
+        return {"type": "assistant", "timestamp": timestamp, "message": {"content": [{"type": "text", "text": "x"}]}}
+
+    def test_pending_loop_wakeup_exempts_until_it_fires(self):
+        fired = {"type": "system", "subtype": "scheduled_task_fire", "timestamp": "2026-11-05T10:59:01.000Z",
+                 "content": "Claude resuming /loop wakeup (Nov 5 12:59pm)"}
+        before_due = self.WAKEUP + [self._reply_at("2026-11-05T10:45:00.000Z")]
+        self.assertEqual((gate_policy.live_clocks(scan(before_due)), gate_policy.live_clocks(scan(self.WAKEUP + [fired]))),
+                         (["wakeup"], []))
+
+    def test_stopped_loop_wakeup_does_not_exempt(self):
+        stop = [dict(tool_use("w2", "ScheduleWakeup", {"stop": True}), timestamp="2026-11-05T10:31:00.000Z"),
+                dict(tool_result("w2", "Loop stopped \u2014 cancelled 1 pending wakeup(s);"), timestamp="2026-11-05T10:31:01.000Z"),
+                self._reply_at("2026-11-05T10:32:00.000Z")]
+        self.assertEqual(gate_policy.live_clocks(scan(self.WAKEUP + stop)), [])
+
+    def test_wakeup_past_its_due_time_does_not_exempt(self):
+        self.assertEqual(gate_policy.live_clocks(scan(self.WAKEUP + [self._reply_at("2026-11-05T11:00:30.000Z")])), [])
+
+    def test_monitor_or_agent_alone_does_not_exempt(self):
+        monitor = [tool_use("m1", "Monitor", {"command": "x"}), tool_result("m1", "Monitor started (task mo1, timeout 300s)")]
+        self.assertEqual(gate_policy.live_clocks(scan(monitor + AGENT_LAUNCH + BASH_LAUNCH)), [])
+
+
+class TimedStepDecisionTest(unittest.TestCase):
+    @staticmethod
+    def _verdict(timed_step, **extra):
+        verdict = {"handoff": False, "sentence": "", "deferral": False, "deferral_sentence": "", "next_step": False,
+                   "next_step_sentence": "", "lever": False, "lever_sentence": "", "timed_step": timed_step,
+                   "timed_step_sentence": "на следующую ночь поставлю будильник" if timed_step else ""}
+        verdict.update(extra)
+        return verdict
+
+    def test_candidate_judged_true_is_returned_with_the_step(self):
+        decision = gate_policy.reply_lint_decision(TIMED_CLOSING, False, self._verdict(True), timed_step=TIMED_CLOSING)
+        self.assertEqual(decision["rules"], ["timed-step"])
+        self.assertIn("на следующую ночь поставлю будильник", decision["reason"])
+        self.assertIn("CronCreate", decision["reason"])
+
+    def test_candidate_judged_false_passes(self):
+        decision = gate_policy.reply_lint_decision(TIMED_CLOSING, False, self._verdict(False), timed_step=TIMED_CLOSING)
+        self.assertEqual(decision, {"decision": "allow", "rules": []})
+
+    def test_without_a_candidate_the_verdict_cannot_fire(self):
+        decision = gate_policy.reply_lint_decision(TIMED_CLOSING, False, self._verdict(True))
+        self.assertEqual(decision["rules"], [])
+
+    def test_rules_add_up_with_deferral(self):
+        verdict = self._verdict(True, deferral=True, deferral_sentence="поставлю будильник")
+        decision = gate_policy.reply_lint_decision(TIMED_CLOSING, False, verdict, timed_step=TIMED_CLOSING)
+        self.assertEqual(decision["rules"], ["deferral", "timed-step"])
+
+    def test_question_e_is_asked_only_for_a_candidate(self):
+        self.assertIn("QUESTION E, OWN STEP", gate_policy.judge_prompt(TIMED_CLOSING, timed_step=TIMED_CLOSING))
+        self.assertIn("answer timed_step false", gate_policy.judge_prompt(TIMED_CLOSING))
+
+    def test_verdict_field_is_parsed_and_old_verdicts_read_false(self):
+        new = {"handoff": False, "deferral": False, "next_step": False, "timed_step": True, "timed_step_sentence": "x"}
+        old = {"handoff": False, "deferral": False, "next_step": False}
+        parsed_new = gate_policy.parse_judge_verdict(json.dumps({"result": json.dumps(new)}))
+        parsed_old = gate_policy.parse_judge_verdict(json.dumps({"result": json.dumps(old)}))
+        self.assertEqual((parsed_new["timed_step"], parsed_new["timed_step_sentence"]), (True, "x"))
+        self.assertEqual((parsed_old["timed_step"], parsed_old["timed_step_sentence"]), (False, ""))
+
+
 if __name__ == "__main__":
     unittest.main()

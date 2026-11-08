@@ -388,14 +388,31 @@ def _hook_judge_args(name="JUDGE_ARGS"):
     raise SystemExit(name + " not found in " + path)
 
 
-def _judge_lever(text, lever, args, timeout):
+_CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "tmp", "judge-cache")
+
+
+def _judge(policy, prompt, args, timeout, run_tag=""):
+    """The hook's judge on one prompt: the parsed verdict, or "timeout" / "error". Verdicts are cached on
+    disk by sha256(prompt, run_tag), so a rerun re-judges only changed prompts; another ``run_tag`` draws
+    a fresh sample (the noise floor)."""
+    import hashlib
+    key = hashlib.sha256((run_tag + "\x00" + prompt).encode()).hexdigest()
+    path = os.path.join(_CACHE_DIR, key + ".json")
+    if os.path.isfile(path):
+        with open(path) as fh:
+            return json.load(fh)
     try:
-        run = subprocess.run(args + [g.judge_prompt(text, "", lever)], capture_output=True, text=True,
+        run = subprocess.run(args + [prompt], capture_output=True, text=True,
                              timeout=timeout, env=dict(os.environ, REPLY_LINT_JUDGE="1"), cwd="/tmp")
     except subprocess.TimeoutExpired:
         return "timeout"
-    verdict = g.parse_judge_verdict(run.stdout)
-    return "error" if verdict is None else str(verdict["lever"]).lower()
+    verdict = policy.parse_judge_verdict(run.stdout)
+    if verdict is None:
+        return "error"
+    os.makedirs(_CACHE_DIR, exist_ok=True)
+    with open(path, "w") as fh:
+        json.dump(verdict, fh)
+    return verdict
 
 
 # The first prompt of a retro-evals subject session: not an owner session.
@@ -407,49 +424,140 @@ def _subject_session(entries):
     return first is not None and _entry_text(first).lstrip().startswith(_SUBJECT_PROMPT)
 
 
-def lever(days, judge=False, cap=LEVER_JUDGE_CAP):
-    """Replay the lever trigger (``gate_policy.lever_candidate``) at the first stop of every turn of
-    the owner sessions in the window; with ``judge`` run the hook's judge (question D) on each
-    candidate, at most the newest ``cap``."""
-    from concurrent.futures import ThreadPoolExecutor
+def _owner_stops(days):
+    """(path, entries, stop index, stamp) of the first stop of every turn of the owner sessions in the window."""
     cut = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=days)).isoformat()
-    n = collections.Counter()
-    rows = []
     for path in main_transcripts(days, _SUBJECT_DIR_RE):
         entries = transcript.entries_of(path)
         if _subject_session(entries):
-            n["subject sessions skipped"] += 1
             continue
         for stop in first_stops(entries):
             stamp = str(entries[stop][1].get("timestamp") or "")
-            if stamp < cut:
-                continue
-            n["turn ends"] += 1
-            text = _entry_text(entries[stop][1])
-            candidate = g.lever_candidate(text)
-            if candidate:
-                rows.append([stamp[:16], os.path.basename(path)[:8], text, candidate, "-"])
+            if stamp >= cut:
+                yield path, entries, stop, stamp
+
+
+def _facts_at(entries, stop):
+    facts = None
+    for facts in transcript.background_watch_scan(entries[: stop + 1], "\x00"):
+        pass
+    return facts
+
+
+def _lever_candidate(text, entries, stop):
+    return g.lever_candidate(text)
+
+
+def _timed_step_candidate(text, entries, stop):
+    sentence = g.timed_step_sentence(text)
+    return sentence and g.exempt_candidates("", sentence, _facts_at(entries, stop))[1]
+
+
+# (candidate function, judge_prompt keyword arguments for a candidate, verdict key, witnesses).
+_CANDIDATE_MODES = {
+    "lever": (_lever_candidate, lambda c: {"lever": c}, "lever", [_LEVER_WITNESS]),
+    "timed-step": (_timed_step_candidate, lambda c: {"timed_step": c}, "timed_step",
+                   [("beb0e057", "2026-11-02T10:39", "true"), ("beb0e057", "2026-11-07T23:49", "true")]),
+}
+
+
+def candidate_mode(name, days, judge=False, cap=LEVER_JUDGE_CAP):
+    """Replay one reply-lint trigger at the first stop of every turn of the owner sessions in the window
+    (the text trigger first, the transcript scan only on a match); with ``judge`` run the hook's judge on
+    each candidate, at most the newest ``cap``, and list every fire."""
+    from concurrent.futures import ThreadPoolExecutor
+    candidate_fn, kwargs_fn, key, witnesses = _CANDIDATE_MODES[name]
+    n = collections.Counter()
+    rows = []
+    for path, entries, stop, stamp in _owner_stops(days):
+        n["turn ends"] += 1
+        text = _entry_text(entries[stop][1])
+        candidate = candidate_fn(text, entries, stop)
+        if candidate:
+            n["already judged by needs_judge"] += g.needs_judge(text)
+            if name == "timed-step":
+                n["of them through a relative marker"] += bool(g._RELATIVE_TIME_RE.search(candidate))
+            rows.append([stamp[:16], os.path.basename(path)[:8], text, candidate, "-"])
     rows.sort()
     n["candidates"] = len(rows)
     if judge:
         args, timeout = _hook_judge_args(), _hook_judge_args("JUDGE_TIMEOUT_S")
+
+        def answer(row):
+            verdict = _judge(g, g.judge_prompt(row[2], **kwargs_fn(row[3])), args, timeout)
+            return verdict if isinstance(verdict, str) else str(verdict[key]).lower()
         with ThreadPoolExecutor(8) as pool:
             newest = rows[-cap:]
-            for row, answer in zip(newest, pool.map(lambda r: _judge_lever(r[2], r[3], args, timeout), newest)):
-                row[4] = answer
+            for row, got in zip(newest, pool.map(answer, newest)):
+                row[4] = got
         n["judged"] = min(len(rows), cap)
         n["judge true"] = sum(r[4] == "true" for r in rows)
-    for key, value in n.items():
-        print(key, value)
+    for k, value in n.items():
+        print(k, value)
     print("candidates per day:", dict(sorted(collections.Counter(r[0][:10] for r in rows).items())))
     if judge:
         print("judge true per day:", dict(sorted(collections.Counter(r[0][:10] for r in rows if r[4] == "true").items())))
-    for stamp, session, text, _, answer in rows:
-        print("candidate", session, stamp, answer, re.sub(r"\s+", " ", text.strip())[-120:])
-    session, minute, expected = _LEVER_WITNESS
-    actual = next((r[4] if judge else "candidate" for r in rows if r[1] == session and r[0] == minute), "not a candidate")
-    print("witness", session, minute, "expected", expected if judge else "candidate", "actual", actual)
-    print("witness", session, "candidates:", [(r[0][11:], r[4]) for r in rows if r[1] == session] or "none")
+    for stamp, session, text, candidate, got in rows:
+        print("candidate", session, stamp, got, re.sub(r"\s+", " ", candidate.strip())[:160])
+    for session, minute, expected in witnesses:
+        actual = next((r[4] if judge else "candidate" for r in rows if r[1] == session and r[0] == minute), "not a candidate")
+        print("witness", session, minute, "expected", expected if judge else "candidate", "actual", actual)
+
+
+def lever(days, judge=False, cap=LEVER_JUDGE_CAP):
+    return candidate_mode("lever", days, judge, cap)
+
+
+_CONTROL_KEYS = ("handoff", "deferral", "next_step", "lever")
+
+
+def judge_control(days, cap, policy_path, out, run_tag=""):
+    """The A-D judge control: the newest ``cap`` first stops the head hook would judge, candidates from the
+    head triggers, judged with the prompt of the gate_policy at ``policy_path`` (base or head); one TSV row
+    per stop with the four booleans."""
+    import importlib.util
+    import inspect
+    from concurrent.futures import ThreadPoolExecutor
+    spec = importlib.util.spec_from_file_location("gate_policy_under_test", policy_path)
+    policy = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(policy)
+    has_e = "timed_step" in inspect.signature(policy.judge_prompt).parameters
+    stops = []
+    for path, entries, stop, stamp in _owner_stops(days):
+        text = _entry_text(entries[stop][1])
+        lever_c, next_c, timed_c = g.lever_candidate(text), g.next_step_sentence(text), g.timed_step_sentence(text)
+        if next_c or timed_c:
+            next_c, timed_c = g.exempt_candidates(next_c, timed_c, _facts_at(entries, stop))
+        if next_c or lever_c or timed_c or g.needs_judge(text):
+            stops.append((stamp[:19], os.path.basename(path)[:8], stop, text, next_c, lever_c, timed_c))
+    stops = sorted(stops)[-cap:]
+    args, timeout = _hook_judge_args(), _hook_judge_args("JUDGE_TIMEOUT_S")
+
+    def one(row):
+        extra = {"timed_step": row[6]} if has_e else {}
+        return _judge(policy, policy.judge_prompt(row[3], row[4], row[5], **extra), args, timeout, run_tag)
+    with ThreadPoolExecutor(8) as pool, open(out, "w") as fh:
+        fh.write("stamp\tsession\tstop\t" + "\t".join(_CONTROL_KEYS) + "\n")
+        for row, verdict in zip(stops, pool.map(one, stops)):
+            cells = [verdict] * 4 if isinstance(verdict, str) else [str(verdict[k]).lower() for k in _CONTROL_KEYS]
+            fh.write("\t".join([row[0], row[1], str(row[2])] + cells) + "\n")
+    print("judged stops", len(stops), "->", out)
+
+
+def judge_diff(a, b):
+    """Per-stop differences of the four booleans between two judge-control TSVs."""
+    def load_tsv(path):
+        with open(path) as fh:
+            return {(r["session"], r["stop"]): r for r in csv.DictReader(fh, delimiter="\t")}
+    left, right = load_tsv(a), load_tsv(b)
+    common = sorted(set(left) & set(right))
+    print("common stops", len(common), "only left", len(set(left) - set(right)), "only right", len(set(right) - set(left)))
+    for k in _CONTROL_KEYS:
+        diffs = [s for s in common if left[s][k] != right[s][k]]
+        print(k, "differ", len(diffs), "true left", sum(left[s][k] == "true" for s in common),
+              "true right", sum(right[s][k] == "true" for s in common))
+        for s in diffs:
+            print("  ", k, left[s]["stamp"], *s, left[s][k], "->", right[s][k])
 
 
 def main():
@@ -457,6 +565,17 @@ def main():
         args = sys.argv[2:]
         cap = int(args[args.index("--cap") + 1]) if "--cap" in args else LEVER_JUDGE_CAP
         return lever(int(args[0]) if args and args[0].isdigit() else 28, "--judge" in args, cap)
+    if sys.argv[1] == "timed-step":
+        args = sys.argv[2:]
+        cap = int(args[args.index("--cap") + 1]) if "--cap" in args else LEVER_JUDGE_CAP
+        return candidate_mode("timed-step", int(args[0]) if args and args[0].isdigit() else 14, "--judge" in args, cap)
+    if sys.argv[1] == "judge-control":
+        args = sys.argv[2:]
+        opt = {k: args[args.index(k) + 1] for k in ("--cap", "--policy", "--out", "--run") if k in args}
+        return judge_control(int(args[0]) if args and args[0].isdigit() else 14, int(opt.get("--cap", 300)),
+                             opt.get("--policy", g.__file__), opt["--out"], opt.get("--run", ""))
+    if sys.argv[1] == "judge-diff":
+        return judge_diff(sys.argv[2], sys.argv[3])
     if sys.argv[1] == "next-step":
         args = sys.argv[2:]
         against = args[args.index("--against") + 1] if "--against" in args else None

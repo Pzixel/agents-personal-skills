@@ -3,6 +3,7 @@
 A transcript is one JSON entry per line. Background-task facts are read from
 the harness's own acknowledgements and task notifications."""
 
+import datetime
 import json
 import re
 
@@ -30,6 +31,17 @@ _TASK_ID_RE = re.compile(r"<task-id>([A-Za-z0-9_-]+)</task-id>")
 _AGENT_LAUNCHED_RE = re.compile(r"^Async agent launched\b.*?agentId:\s*([A-Za-z0-9_-]+)", re.DOTALL)
 # Only a one-shot job is a wait (a clock time); a recurring job is a clock the session wakes on.
 _CRON_SCHEDULED_RE = re.compile(r"^Scheduled one-shot task ([A-Za-z0-9_-]+)")
+# A recurring job and a /loop wakeup wake the session on a clock (the timed-step condition only).
+_CRON_RECURRING_RE = re.compile(r"^Scheduled recurring (?:job|task) ([A-Za-z0-9_-]+)")
+_WAKEUP_SCHEDULED_RE = re.compile(r"^Next wakeup scheduled\b[^\n]*?\(in (\d+)s\)")
+
+
+def _instant(timestamp):
+    """UTC datetime of an entry's ISO timestamp (fraction and zone suffix dropped); None when absent."""
+    try:
+        return datetime.datetime.strptime(str(timestamp or "")[:19], "%Y-%m-%dT%H:%M:%S")
+    except ValueError:
+        return None
 
 
 def entries_of(path):
@@ -76,7 +88,7 @@ def launch_id(block):
     return task if "/tasks/%s.output" % task in text else None
 
 
-def _snapshot(state, turn_start, marker, index, timestamp):
+def _snapshot(state, turn_start, marker, index, timestamp, now):
     last_event = max(
         [t["launch"] for t in state["tasks"].values()]
         + [m["ended"] for m in state["monitors"].values() if m["ended"] is not None]
@@ -92,6 +104,8 @@ def _snapshot(state, turn_start, marker, index, timestamp):
         "agents": {k: dict(v) for k, v in state["agents"].items()},
         "agent_calls": len(state["agent_calls"]),
         "cron_jobs": {k: dict(v) for k, v in state["cron_jobs"].items()},
+        "recurring_jobs": {k: dict(v) for k, v in state["recurring_jobs"].items()},
+        "wakeup_pending": bool(state["wakeup_due"] and now and now < state["wakeup_due"]),
         "prior_block_seen": any(i > last_event for i in state["markers"]),
     }
 
@@ -106,26 +120,35 @@ def background_watch_scan(entries, marker):
     agents: async Agent id -> {launch, closed} (closed by its notification or a
     TaskStop, re-opened by a SendMessage to it); agent_calls: Agent calls with no
     tool_result yet; cron_jobs: one-shot job id -> {created, closed} (closed by
-    its `scheduled_task_fire` entry or CronDelete);
+    its `scheduled_task_fire` entry or CronDelete); recurring_jobs: recurring job id ->
+    {created, closed} (closed by CronDelete); wakeup_pending: the last ScheduleWakeup armed a wakeup that has
+    not fired, was not stopped (``{"stop": true}``) and whose due time (the result's timestamp plus its
+    ``(in Ns)``) is after the latest entry timestamp seen; a compaction or an owner message does not clear it;
     prior_block_seen: a user entry starting with ``Stop hook feedback:`` and
     carrying ``marker`` follows the last launch or monitor end; a tool result
     that quotes the marker (a read of this source or a review) does not count."""
     state = {"tasks": {}, "monitors": {}, "crons": [], "markers": [],
-             "agents": {}, "agent_calls": set(), "cron_jobs": {}}
+             "agents": {}, "agent_calls": set(), "cron_jobs": {}, "recurring_jobs": {}, "wakeup_due": None}
+    wakeup_uses, wakeup_stops = set(), set()
+    now = None  # the latest entry timestamp seen
     commands = {}  # Bash tool_use id -> command
     monitor_uses = set()
     cron_uses = set()
     turn_start = 0
     for index, (_, entry) in enumerate(entries):
         kind = entry.get("type")
+        stamp = _instant(entry.get("timestamp"))
+        now = max(now, stamp) if now and stamp else stamp or now  # entry timestamps are not monotonic
         if kind == "system" and entry.get("subtype") == "turn_duration":
-            yield _snapshot(state, turn_start, marker, index, entry.get("timestamp") or "")
+            yield _snapshot(state, turn_start, marker, index, entry.get("timestamp") or "", now)
             turn_start = index + 1
             continue
         if kind == "system" and entry.get("subtype") == "scheduled_task_fire":
             job = state["cron_jobs"].get(str(entry.get("taskId") or ""))
             if job:
                 job["closed"] = True
+            if "/loop wakeup" in str(entry.get("content") or ""):
+                state["wakeup_due"] = None
             continue
         if kind == "assistant":
             for block in blocks_of(entry):
@@ -140,9 +163,14 @@ def background_watch_scan(entries, marker):
                     state["crons"].append(index)
                     cron_uses.add(block.get("id"))
                 elif name == "CronDelete":
-                    job = state["cron_jobs"].get(str(args.get("id") or ""))
-                    if job:
-                        job["closed"] = True
+                    for jobs in (state["cron_jobs"], state["recurring_jobs"]):
+                        job = jobs.get(str(args.get("id") or ""))
+                        if job:
+                            job["closed"] = True
+                elif name == "ScheduleWakeup":
+                    wakeup_uses.add(block.get("id"))
+                    if args.get("stop") is True:
+                        wakeup_stops.add(block.get("id"))
                 elif name == "Agent":
                     state["agent_calls"].add(block.get("id"))
                 elif name == "SendMessage" and str(args.get("to") or "") in state["agents"]:
@@ -175,6 +203,16 @@ def background_watch_scan(entries, marker):
                     scheduled = _CRON_SCHEDULED_RE.match(result_text(block).strip())
                     if scheduled:
                         state["cron_jobs"][scheduled.group(1)] = {"created": index, "closed": False}
+                    recurring = _CRON_RECURRING_RE.match(result_text(block).strip())
+                    if recurring:
+                        state["recurring_jobs"][recurring.group(1)] = {"created": index, "closed": False}
+                    continue
+                if block.get("tool_use_id") in wakeup_uses:
+                    armed = _WAKEUP_SCHEDULED_RE.match(result_text(block).strip())
+                    if armed and (stamp or now):
+                        state["wakeup_due"] = (stamp or now) + datetime.timedelta(seconds=int(armed.group(1)))
+                    elif block.get("tool_use_id") in wakeup_stops:
+                        state["wakeup_due"] = None
                     continue
                 task = launch_id(block)
                 if task:
@@ -202,5 +240,5 @@ def background_watch_scan(entries, marker):
                         "<status>" in body or "[Monitor expired" in body
                     ):
                         monitor["ended"] = index
-    yield _snapshot(state, turn_start, marker, len(entries), "")
+    yield _snapshot(state, turn_start, marker, len(entries), "", now)
 

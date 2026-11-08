@@ -2309,6 +2309,13 @@ _NEXT_STEP_REASON = (
     "note written this turn is not tracking."
 )
 
+_TIMED_STEP_REASON = (
+    REPLY_LINT_MARKER + " the reply names a step of your own at a time that has not arrived (\"{sentence}\") "
+    "and nothing wakes the session on a clock for it (no Cron job, no pending /loop wakeup). Arm one `CronCreate` one-shot at that time now and name "
+    "its id, its fire time, that `CronList` shows it and that session exit kills it; or state that nothing of "
+    "yours runs before the owner's word at that time. Append only the missing part; do not repeat the reply."
+)
+
 _LEVER_REASON = (
     REPLY_LINT_MARKER + " a lever that makes a step faster is listed before the read of who consumes that "
     "step's result; name the consumer (from its own code or manifest) and whether the step is needed, or list "
@@ -2424,18 +2431,91 @@ def next_step_sentence(reply):
              or _NEXT_STEP_HELD_RE.search(blanked))
     if not match:
         return ""
+    # a decide label is shown with its first item, so the judge sees the check and not a bare heading
+    start, end = _sentence_span(blanked, match, match is decide)
+    return re.sub(r"\s+", " ", original[start:end]).strip()
+
+
+def _sentence_span(blanked, match, with_first_item=None):
+    """(start, end) of the sentence of ``match``, extended by the first item that follows when
+    ``with_first_item`` (None: when the sentence is a heading ending with ":")."""
     start = 0
     for brk in _SENTENCE_BREAK_RE.finditer(blanked, 0, match.start()):
         start = brk.end()
     end_match = _SENTENCE_BREAK_RE.search(blanked, match.end())
     end = end_match.end() if end_match else len(blanked)
-    if match is decide:
-        # the label plus its first item, so the judge sees the check and not a bare heading
+    if with_first_item is None:
+        with_first_item = blanked[start:end].rstrip().endswith(":")
+    if with_first_item:
         nxt = re.compile(r"\S").search(blanked, end)
         if nxt:
             item_end = _SENTENCE_BREAK_RE.search(blanked, nxt.start())
             end = item_end.end() if item_end else len(blanked)
+    return start, end
+
+
+# A future time of the timed-step rule: a relative marker (always) or a date / HH:MM after a forward word.
+_WEEKDAY_RU = r"(?:понедельник\w*|вторник\w*|сред[ау]|четверг\w*|пятниц\w+|суббот\w+|воскресень\w+)"
+_WEEKDAY_EN = r"(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)"
+_MONTH = (r"(?:январ\w*|феврал\w*|март\w*|апрел\w*|ма[яй]|июн\w*|июл\w*|август\w*|сентябр\w*|октябр\w*"
+          r"|ноябр\w*|декабр\w*|jan\w*|feb\w*|mar\w*|apr\w*|may|jun\w*|jul\w*|aug\w*|sep\w*|oct\w*|nov\w*|dec\w*)")
+_DATE = r"(?:\d{4}-\d{2}-\d{2}|\d{1,2}\.\d{2}(?:\.\d{2,4})?|\d{1,2}\s+" + _MONTH + r")"
+_RELATIVE_TIME_RE = re.compile(
+    r"\bзавтра\b|\b(?:сегодня|следующ\w+)\s+ночью\b|\bна\s+следующ\w+\s+(?:ночь|недел\w+)\b"
+    r"|\bв\s+следующ\w+\s+" + _WEEKDAY_RU + r"|\bво?\s+" + _WEEKDAY_RU + r"\b"
+    r"|\b" + _WEEKDAY_RU + r"\W{0,4}\s*(?:ночью|утром|вечером|днём|днем)\b|\b(?:ночью|утром|вечером)\b"
+    r"|\b(?:tonight|tomorrow)\b|\bnext\s+(?:week|night|" + _WEEKDAY_EN + r")\b|\bon\s+" + _WEEKDAY_EN + r"\b",
+    re.IGNORECASE,
+)
+# A date or HH:MM counts only after a forward word.
+_FORWARD_ABSOLUTE_TIME_RE = re.compile(
+    r"\b(?:в|к|до|после|с|начиная\s+с|at|by|until|after)\s+\d{1,2}:\d{2}\b"
+    r"|\b(?:on|до|к)\s+" + _DATE + r"\b",
+    re.IGNORECASE,
+)
+_TIME_MARKER_RE = re.compile(_RELATIVE_TIME_RE.pattern + "|" + _FORWARD_ABSOLUTE_TIME_RE.pattern, re.IGNORECASE)
+# The agent's own step: the next-step future verbs plus present-tense forms used as futures.
+_TIMED_VERB_RE = re.compile(
+    _NEXT_STEP_VERB_RE.pattern
+    + r"|\b(?:запускаю|смотрю|проверяю|катаю|присылаю|пришлю|иду|пишу|отправляю|делаю|начинаю|мержу|смержу"
+    r"|сверяю|считаю|поставлю|назову|спрошу|удалю|перезапущу|выкачу|задеплою|применю|сделаю)\b"
+    r"|\bI(?:'ll|\s+will|'m\s+going\s+to)\s+(?:merge|deploy|roll|arm|ask|do|apply|restart|delete)\b",
+    re.IGNORECASE,
+)
+
+
+def timed_step_sentence(reply):
+    """Trigger (a) of the timed-step rule: the closing part (as in ``next_step_sentence``) holds a future
+    time marker whose sentence (with its first item when the sentence ends with ":") holds a first-person
+    step verb or a next-step label. Returns that span of the first such marker; "" when none."""
+    reply = reply or ""
+    original = reply[-NEXT_STEP_CLOSING_CHARS:]
+    blanked = _blank_code_paths_quoted(reply)[-NEXT_STEP_CLOSING_CHARS:]
+    spans = [_sentence_span(blanked, m) for m in _TIME_MARKER_RE.finditer(blanked)]
+    span = next((sp for sp in spans if _TIMED_VERB_RE.search(blanked, *sp)
+                 or _NEXT_STEP_LABEL_RE.search(blanked[sp[0]:sp[1]])), None)
+    if span is None:
+        return ""
+    start, end = span
     return re.sub(r"\s+", " ", original[start:end]).strip()
+
+
+def live_clocks(facts):
+    """Condition (c) of the timed-step rule: what will wake the session on a clock, live at the stop
+    (``transcript.background_watch_scan`` facts): one-shot and recurring cron jobs and a pending /loop
+    wakeup. A Monitor, agent or task is not a clock and does not exempt."""
+    live = [k for k, j in facts["cron_jobs"].items() if not j["closed"]]
+    live += [k for k, j in facts["recurring_jobs"].items() if not j["closed"]]
+    return live + (["wakeup"] if facts["wakeup_pending"] else [])
+
+
+def exempt_candidates(next_step, timed_step, facts):
+    """The (next-step, timed-step) candidates of a stop given its transcript facts: each "" when the session
+    holds a mechanism that exempts it (any live one for next-step, a live clock for timed-step); both "" when
+    ``facts`` is None (no transcript to scan)."""
+    if facts is None:
+        return "", ""
+    return ("" if live_mechanisms(facts) else next_step, "" if live_clocks(facts) else timed_step)
 
 
 def live_mechanisms(facts):
@@ -2570,6 +2650,7 @@ JUDGE_PROMPT = (
     "to have ended this turn with the step left undone and untracked.\n\n"
     "{question_c}"
     "{question_d}"
+    "{question_e}"
     "For each question, find the one sentence that makes it true. If none exists, or a NOT case covers it, "
     "the answer is false. When unsure, answer false.\n\n"
     "Respond with one JSON object only, no other text, sentences written before the booleans:\n"
@@ -2579,7 +2660,9 @@ JUDGE_PROMPT = (
     "\"next_step_sentence\": \"<the step sentence quoted, at most 15 words, or none>\", "
     "\"next_step\": <true or false>, "
     "\"lever_sentence\": \"<the lever sentence quoted, at most 15 words, or none>\", "
-    "\"lever\": <true or false>}}"
+    "\"lever\": <true or false>, "
+    "\"timed_step_sentence\": \"<the timed step sentence quoted, at most 15 words, or none>\", "
+    "\"timed_step\": <true or false>}}"
 )
 _QUESTION_C = (
     "QUESTION C, OWN NEXT STEP. The reply's closing part names a step the agent itself will take "
@@ -2611,6 +2694,24 @@ _QUESTION_D = (
     "When unsure, answer false.\n\n"
 )
 _NO_QUESTION_D = "QUESTION D is not asked for this reply: answer lever false.\n\n"
+_QUESTION_E = (
+    "QUESTION E, OWN STEP AT A TIME NOT YET ARRIVED. The reply's closing part names a future time next to "
+    "steps (\"{sentence}\"). Answer true when the reply says the agent itself will take an action at or "
+    "after a clock time, date, night, window or period that has not arrived, at least one such action runs "
+    "without the owner's word first (a check, a message or a plan the agent sends before the owner's go "
+    "counts, even when later steps wait on the owner), and the reply names no scheduled one-shot (a CronCreate "
+    "id) already armed for it; a promise to arm one later is not an armed one. Answer false when the time "
+    "belongs to an external event the agent only describes (a job's or system cron's schedule, CI, someone "
+    "else's window), when the time is when something already happened or was observed (a merge, a build, a "
+    "failure at that time), when the action at that time is a delegate's (an agent, watcher, builder or probe "
+    "waits or checks) or the owner's (\"you run it in the morning\"), when the reply names an armed loop wake-up "
+    "or scheduled check of this session for it, when every step at that time starts only on the owner's word and the reply says so, "
+    "when the named time is only a deadline or bound (\"до 24 ноября\", \"by/until <date>\") on a step whose "
+    "start is an event or the owner's word (\"после выкатки\", \"after the rollout\") rather than that time, "
+    "when the sentence quotes a rule or an example, when the time has passed (a report of what happened), "
+    "or when a one-shot id is named as armed. When unsure, answer false.\n\n"
+)
+_NO_QUESTION_E = "QUESTION E is not asked for this reply: answer timed_step false.\n\n"
 _HANDOFF_REASON = (
     REPLY_LINT_MARKER + " the reply leaves work waiting on the owner in plain text "
     "(\"{sentence}\"). If the decision is inside your authority (a technical question by the "
@@ -2657,13 +2758,15 @@ def needs_judge(reply):
     return addresses_owner(reply) or bool(_PROMISE_RE.search(_blank_quoted(reply)))
 
 
-def judge_prompt(reply, next_step="", lever=""):
+def judge_prompt(reply, next_step="", lever="", *, timed_step=""):
     """The judge prompt for one final reply; the reply goes in as a JSON string. Question C is
     asked only for a next-step candidate (``next_step`` = its trigger sentence), question D only
-    for a lever candidate (``lever`` = ``lever_candidate``)."""
+    for a lever candidate (``lever`` = ``lever_candidate``), question E only for a timed-step candidate."""
     question_c = _QUESTION_C.format(sentence=next_step.replace('"', "'")) if next_step else _NO_QUESTION_C
     question_d = _QUESTION_D.format(sentence=lever.replace('"', "'")) if lever else _NO_QUESTION_D
-    return JUDGE_PROMPT.format(reply=json.dumps(reply, ensure_ascii=False), question_c=question_c, question_d=question_d)
+    question_e = _QUESTION_E.format(sentence=timed_step.replace('"', "'")) if timed_step else _NO_QUESTION_E
+    return JUDGE_PROMPT.format(reply=json.dumps(reply, ensure_ascii=False), question_c=question_c,
+                               question_d=question_d, question_e=question_e)
 
 
 def parse_judge_verdict(cli_stdout):
@@ -2697,17 +2800,22 @@ def parse_judge_verdict(cli_stdout):
         "next_step_sentence": str(verdict.get("next_step_sentence") or ""),
         "lever": verdict.get("lever") is True,
         "lever_sentence": str(verdict.get("lever_sentence") or ""),
+        "timed_step": verdict.get("timed_step") is True,
+        "timed_step_sentence": str(verdict.get("timed_step_sentence") or ""),
     }
 
 
-def reply_lint_decision(last_assistant_text, stop_hook_active, verdict=None, next_step="", lever=""):
+def reply_lint_decision(last_assistant_text, stop_hook_active, verdict=None, next_step="", lever="", *,
+                        timed_step=""):
     """Return the main session once when its final reply claims completion
     without an observation, or the judge ``verdict`` (``parse_judge_verdict``,
     None when no verdict exists) finds a plain-text hand-off to the owner or an
     unbacked deferral of work, or, for a next-step candidate (``next_step`` = the
     trigger sentence of a reply whose session holds no live mechanism), the judge
     finds the step could start now; ``next-step`` then replaces ``deferral``; or, for a
-    lever candidate (``lever``), the judge finds a lever listed with no consumer read.
+    lever candidate (``lever``), the judge finds a lever listed with no consumer read; or, for a timed-step
+    candidate (``timed_step`` = ``timed_step_sentence`` of a reply whose session holds no live clock,
+    ``live_clocks``), the judge finds an own step at a time not yet arrived. Rules add up.
     ``rules`` names every rule that fired.
     Not claims (2026-10-15): a Russian not-verified disclosure, a done word
     as a section label or with a manner complement.
@@ -2727,6 +2835,9 @@ def reply_lint_decision(last_assistant_text, stop_hook_active, verdict=None, nex
         fired.append(("deferral", _DEFERRAL_REASON.format(sentence=verdict["deferral_sentence"].replace('"', "'"))))
     if lever and verdict and verdict.get("lever"):
         fired.append(("lever", _LEVER_REASON))
+    if timed_step and verdict and verdict.get("timed_step"):
+        sentence = verdict.get("timed_step_sentence") or timed_step
+        fired.append(("timed-step", _TIMED_STEP_REASON.format(sentence=sentence.replace('"', "'"))))
     if not fired:
         return {"decision": "allow", "rules": []}
     return {"decision": "block", "rules": [r for r, _ in fired], "reason": " ".join(m for _, m in fired)}
