@@ -26,7 +26,9 @@ decisions, texts, and summaries that never contain a value, only its length
 and a short digest.
 """
 
+import base64
 import hashlib
+import json
 import os
 import re
 
@@ -258,3 +260,32 @@ def secret_access_violation(tool_name, tool_input, cwd, vault_dir, known_tokens,
     if tool_name in ("Grep", "Glob") and _within(vault_dir, resolved):
         return "the search root contains the secret vault; search a narrower directory"
     return None
+
+
+# -- apply to a Kubernetes Secret ----------------------------------------------------
+
+
+def apply_value(text, label):
+    """The bytes (as text) ``apply-k8s`` writes to ``data[KEY]``, the inverse of
+    ``pull-k8s``: with ``label`` the bare value of that entry (``pull-k8s --label``
+    stored ``"L\nvalue\n"``); without it the file text unchanged (an unlabelled pull
+    stored the raw text)."""
+    if label is None:
+        return text
+    values = dict(parse_entries(text))
+    if label not in values:
+        raise ValueError("label %s not in the vault file" % label)
+    return values[label]
+
+
+def apply_patch_command(namespace, secret, key, value, context=None):
+    """``(kubectl argv, stdin body)`` that sets only ``data[key]`` of an existing
+    Secret: a JSON merge patch replaces or adds that one key, keeps every other key,
+    and fails NotFound instead of creating a Secret. The value travels only in the
+    body (stdin), never on argv."""
+    argv = (["--context", context] if context else []) + [
+        "-n", namespace, "patch", "secret", secret,
+        "--type=merge", "--patch-file", "/dev/stdin",
+    ]
+    encoded = base64.b64encode(value.encode("utf-8")).decode("ascii")
+    return argv, json.dumps({"data": {key: encoded}})

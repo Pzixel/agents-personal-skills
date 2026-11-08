@@ -1,3 +1,5 @@
+import base64
+import json
 import os
 import sys
 import unittest
@@ -157,6 +159,31 @@ class AccessGateTest(unittest.TestCase):
         self.assertIsNotNone(self.violation("Grep", {"pattern": "x", "path": "/Users/someone"}))
         self.assertIsNotNone(self.violation("Glob", {"pattern": "**/*.txt"}, cwd="/Users/someone"))
         self.assertIsNone(self.violation("Grep", {"pattern": "x", "path": "/Users/someone/Documents"}))
+
+
+class ApplyValueTest(unittest.TestCase):
+    def test_labelled_pull_file_writes_bare_value(self):
+        self.assertEqual(vault_policy.apply_value("SECRET_KEY\n%s\n" % KEY_A, "SECRET_KEY"), KEY_A)
+
+    def test_identifier_label_addresses_its_entry(self):
+        ident = "AKIAEXAMPLEEXAMPLE12"
+        self.assertEqual(vault_policy.apply_value("Access:id\n%s\n" % ident, "Access:id"), ident)
+
+    def test_unlabelled_file_writes_raw_text_unchanged(self):
+        text = "Workspace keys\nBilling\n%s\n" % KEY_A
+        self.assertEqual(vault_policy.apply_value(text, None), text)
+
+    def test_label_absent_from_file_is_refused(self):
+        with self.assertRaises(ValueError):
+            vault_policy.apply_value("Billing\n%s\n" % KEY_A, "SECRET_KEY")
+
+
+class ApplyPatchCommandTest(unittest.TestCase):
+    def test_patch_sets_only_the_key_and_keeps_value_off_argv(self):
+        argv, body = vault_policy.apply_patch_command("default", "backend-env", "SECRET_KEY", KEY_A, "prod")
+        self.assertEqual(argv, ["--context", "prod", "-n", "default", "patch", "secret", "backend-env",
+                                "--type=merge", "--patch-file", "/dev/stdin"])
+        self.assertEqual(json.loads(body), {"data": {"SECRET_KEY": base64.b64encode(KEY_A.encode()).decode()}})
 
 
 if __name__ == "__main__":
