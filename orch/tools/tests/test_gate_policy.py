@@ -1259,6 +1259,7 @@ _PLAN = (
     "# contradiction: none\n"
     "# prod_position: rows deleted, acme has 120 of 9.1M, SELECT count(*) 10:02Z\n"
     "# way_back: COPY from tmp/orders-acme.csv, 2 min\n"
+    "# effect_read: dry run on a scratch copy: DELETE 120, other tenants' rows unchanged\n"
     "psql -c \"DELETE FROM orders WHERE tenant = 'acme'\"\n"
 )
 _PLAN_HASH = "a" * 64
@@ -1289,6 +1290,40 @@ class DestructiveDecisionTest(unittest.TestCase):
 
     def test_kubectl_delete_by_other_label_asks(self):
         self.assertEqual(_destructive("kubectl delete pods -l app=api")["decision"], "ask")
+
+    def test_secretctl_apply_k8s_is_a_secret_write(self):
+        # CASE-72 L1504: the wrapper wrote a live Secret and passed unclassed.
+        result = _destructive(
+            "~/.claude/tools/secretctl apply-k8s backend/encryption-key-new -n default backend-env "
+            "SEQUENCERS_ENCRYPTION_READ_KEY --confirm")
+        self.assertEqual((result["decision"], result["class"]), ("deny", "impossible"))
+        self.assertIn("writes a live Secret", result["reason"])
+        self.assertIn("# effect_read", result["reason"])
+
+    def test_wrappers_carry_the_gate_of_the_command_after_dashes(self):
+        for wrapper in (
+            "~/.claude/tools/secretctl run backend/x LBL --",
+            "secretctl each backend/x --env V --",
+            "secretctl capture backend/x --",
+            "~/.claude/tools/check-run --",
+            "~/.claude/tools/wait-for --every 30 --max 60 --",
+        ):
+            result = _destructive(wrapper + " kubectl -n default delete secret backend-env")
+            self.assertEqual((result["decision"], result["class"]), ("deny", "impossible"), wrapper)
+
+    def test_wrapped_kill_probe_with_redirect_is_a_read(self):
+        self.assertEqual(_destructive("wait-for --every 5 --max 60 -- kill -0 12345 2>/dev/null")["decision"], "allow")
+
+    def test_wrapped_reads_stay_unclassed(self):
+        for cmd in (
+            "secretctl run backend/x LBL -- curl -H \"X: $SECRET_VALUE\" https://example.com",
+            "secretctl list backend/x",
+            "~/.claude/tools/secretctl apply-k8s --help",
+            "secretctl pull-k8s backend/x -n default backend-env KEY",
+            "check-run -- python3 -m pytest -q",
+            "wait-for --every 30 --max 60 -- kubectl -n default get pods",
+        ):
+            self.assertEqual(_destructive(cmd)["decision"], "allow", cmd)
 
     def test_kubectl_delete_secret_is_denied(self):
         self.assertEqual(_destructive("kubectl delete secret/db-creds -n prod")["decision"], "deny")
@@ -1373,7 +1408,7 @@ class DestructiveDecisionTest(unittest.TestCase):
         )
 
     def test_plan_missing_any_header_is_denied_naming_it(self):
-        for line in _PLAN.splitlines()[:6]:
+        for line in _PLAN.splitlines()[:len(gate_policy._PLAN_HEADERS)]:
             header = line.split(":")[0] + ":"
             text = _PLAN.replace(line + "\n", "")
             result = _destructive(_PLAN_CMD, plan_text=text, plan_hash=_PLAN_HASH)

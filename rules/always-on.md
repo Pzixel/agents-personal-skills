@@ -26,6 +26,8 @@ Generic agent rules measured useful as always-on text (evidence: `ORIGINS.md`, "
 - A cause given for a number (why it is low, high, or differs) is a claim of its own: reproducing the number does not verify it. State a cause as fact only after a check that rules out the alternatives; otherwise write it as an unchecked hypothesis with the check that decides it.
 - A load-bearing premise is verified in the code of the layer the question is about: a question about a screen is answered from the screen's code, about a service from that service; an adjacent layer is named as a proxy, never passed off as the answer.
 - Parallel opinions (designers, reviewers, graders) are independent only when their briefs start from different premises; a shared skeleton in the brief predetermines convergence, and that convergence is not evidence.
+- A write to a production object goes out only after a read of what the command does to the whole object, not only to the field it means to change: the code down to the write call, or the same command on a disposable object of the same shape, a server dry-run or a diff, with the whole resulting object compared to the current one; a usage line, a hook's recommendation or a tool's standing are not that read, and a wrapper that performs the write carries the gate of the raw command.
+- A warning from the owner after an incident narrows the care taken, not the authorized outcome: the remaining authorized steps run, and what is left for the owner is reported at the end as a list, not as a blocker; a halt I impose on myself names the missing permission or the unsafe condition it waits on, or it is not a halt.
 
 ## Measurement
 

@@ -17,7 +17,7 @@ Before any code, create `<repo>/orch-notes/` (`<repo>` is the checkout you edit;
 - the `check:` line — the command that proves the acceptance criteria; take it from the prompt, or choose one when the prompt names none and say so;
 - one `risk:` line for every decision that is expensive to reverse, each with the reason it is expensive. Expensive means: where state lives, the layout of persisted data, a contract between services or a public API, atomicity and failure handling, a new dependency, anything that needs a migration or a coordinated release. A decision that an edit and a re-run undo is not a risk; take it and record it in the reply.
 
-Read the code the task points at before writing the spec. A decision is a risk only when a code path, a contract sentence or a production fact makes its case reachable; name that in the `risk:` line.
+Read the code the task points at before writing the spec. A statement about production's current state (in SPEC, DESIGN, a PR body or the reply) carries its read (command, value, time) or is labelled `claimed`; the orchestrator relays a `claimed` statement only as a hypothesis. A decision is a risk only when a code path, a contract sentence or a production fact makes its case reachable; name that in the `risk:` line.
 
 ## Design note, when a risk exists or the prompt says `design: required`
 

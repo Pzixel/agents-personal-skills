@@ -313,13 +313,10 @@ def next_step(days, against=None):
             print("delta only-replay", rows[key][0], *key, reason)
 
 
-def merge_gate(days):
-    """Replay gate_policy.merge_gate_decision over every Bash call of the last ``days``
-    days, main sessions (delegate=False) and subagents/agent-*.jsonl (delegate=True,
-    type from the sibling .meta.json). Prints per caller type allowed / refused by
-    fields / refused as delegate / delegate fall-through (the phrase without a
-    landing at command position, sent to the field check), each delegate refusal
-    and each fall-through row."""
+def _bash_calls(days):
+    """Every Bash call of the last ``days`` days: (stamp, session prefix, caller type, delegate, command),
+    main sessions (delegate=False) and subagents/agent-*.jsonl (delegate=True, type from the sibling
+    .meta.json)."""
     cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=days)
     mains = main_transcripts(days)
     files = [(path, "main", False) for path in mains]
@@ -333,8 +330,6 @@ def merge_gate(days):
             except (OSError, ValueError):
                 kind = "unknown"
             files.append((sub, kind, True))
-    counts = collections.defaultdict(collections.Counter)
-    refusals, fell = [], []
     for path, kind, delegate in files:
         session = re.search(r"([0-9a-f]{8})[0-9a-f-]*(?:\.jsonl|/subagents)", path)
         sid = session.group(1) if session else os.path.basename(path)
@@ -343,21 +338,31 @@ def merge_gate(days):
             if entry.get("type") != "assistant" or ts < cutoff.strftime("%Y-%m-%dT%H:%M:%S"):
                 continue
             for b in transcript.blocks_of(entry):
-                if b.get("type") != "tool_use" or b.get("name") != "Bash":
-                    continue
-                cmd = str((b.get("input") or {}).get("command") or "")
-                d = g.merge_gate_decision(cmd, None, delegate)
-                row = (ts[:19], sid, kind, cmd.replace("\n", " ")[:100])
-                if d["decision"] == "allow":
-                    counts[kind]["allowed"] += 1
-                elif d.get("kind") == "delegate":
-                    counts[kind]["refused-as-delegate"] += 1
-                    refusals.append(row)
-                else:
-                    counts[kind]["refused-by-fields"] += 1
-                if delegate and g._MERGE_RE.search(cmd) and not g.is_landing(cmd):
-                    counts[kind]["fell-through"] += 1
-                    fell.append(row)
+                if b.get("type") == "tool_use" and b.get("name") == "Bash":
+                    yield ts, sid, kind, delegate, str((b.get("input") or {}).get("command") or "")
+
+
+def merge_gate(days):
+    """Replay gate_policy.merge_gate_decision over every Bash call of the last ``days``
+    days (``_bash_calls``). Prints per caller type allowed / refused by
+    fields / refused as delegate / delegate fall-through (the phrase without a
+    landing at command position, sent to the field check), each delegate refusal
+    and each fall-through row."""
+    counts = collections.defaultdict(collections.Counter)
+    refusals, fell = [], []
+    for ts, sid, kind, delegate, cmd in _bash_calls(days):
+        d = g.merge_gate_decision(cmd, None, delegate)
+        row = (ts[:19], sid, kind, cmd.replace("\n", " ")[:100])
+        if d["decision"] == "allow":
+            counts[kind]["allowed"] += 1
+        elif d.get("kind") == "delegate":
+            counts[kind]["refused-as-delegate"] += 1
+            refusals.append(row)
+        else:
+            counts[kind]["refused-by-fields"] += 1
+        if delegate and g._MERGE_RE.search(cmd) and not g.is_landing(cmd):
+            counts[kind]["fell-through"] += 1
+            fell.append(row)
     cols = ("allowed", "refused-by-fields", "refused-as-delegate", "fell-through")
     print("caller type | " + " | ".join(cols))
     for kind in sorted(counts, key=lambda k: (k != "main", k)):
@@ -370,6 +375,65 @@ def merge_gate(days):
     print("\ndelegate rows sent to the field check (time, session, caller type, command[:100]):")
     for row in sorted(fell):
         print(" | ".join(row))
+
+
+# CASE-72 L1504: the secretctl apply-k8s call that pruned 58 of 100 backend-env keys.
+_SECRET_WRITE_WITNESS = ("beb0e057", "2026-11-08T00:13:38")
+_SECRET_WRITE_TEXT_RE = re.compile(r"secretctl\b[^\n]*\bapply-k8s\b|kubectl\b[^\n]*\bsecrets?\b", re.I)
+
+
+def secret_write(days):
+    """Replay the deny-destructive decision over every Bash call of the last ``days`` days that names a
+    Secret through kubectl or runs secretctl apply-k8s (or that the head policy denies with the Secret-write
+    reason); list each with its decision, fires per day and the CASE-72 witness."""
+    params = g.load_params()
+    rows = []
+    for ts, sid, kind, delegate, cmd in _bash_calls(days):
+        if not _SECRET_WRITE_TEXT_RE.search(cmd) and "secretctl" not in cmd:
+            continue
+        d = g.destructive_decision(cmd, "", None, "", params, "", None, False, None)
+        secret_hit = g._SECRET_WRITE_REASON in d.get("reason", "")
+        if secret_hit or _SECRET_WRITE_TEXT_RE.search(cmd):
+            rows.append((ts[:19], sid, kind, d["decision"] + "/" + d["class"], secret_hit, cmd.replace("\n", " ")[:140]))
+    rows.sort()
+    fires = [r for r in rows if r[4]]
+    print("calls naming a Secret or secretctl apply-k8s", len(rows), "Secret-write fires", len(fires),
+          "fires/day %.2f" % (len(fires) / days))
+    print("fires per day:", dict(sorted(collections.Counter(r[0][:10] for r in fires).items())))
+    for r in rows:
+        print("fire" if r[4] else "pass", *r[:4], r[5])
+    session, stamp = _SECRET_WRITE_WITNESS
+    hit = [r for r in rows if r[1] == session and r[0] == stamp]
+    print("witness", session, stamp, "expected fire", "actual", ("fire" if hit[0][4] else "pass " + hit[0][3]) if hit else "not found")
+
+
+def wrapper_tails(days, base_path):
+    """Every Bash call running a wrapper of ``g._WRAPPER_TOOLS`` with `--` in the last ``days`` days, decided
+    by the gate_policy at ``base_path`` and by the head; the changed decisions grouped by (base -> head, reason
+    head), each listed."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("gate_policy_base", base_path)
+    base = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(base)
+    params = g.load_params()
+    wrapped = re.compile(r"(?:^|[\s;&|(/])(?:%s)\b[^\n]*\s--(?:\s|$)" % "|".join(map(re.escape, g._WRAPPER_TOOLS)))
+    total, changed = 0, collections.defaultdict(list)
+    for ts, sid, kind, delegate, cmd in _bash_calls(days):
+        if not wrapped.search(cmd):
+            continue
+        total += 1
+        b = base.destructive_decision(cmd, "", None, "", params, "", None, False, None)
+        h = g.destructive_decision(cmd, "", None, "", params, "", None, False, None)
+        if (b["decision"], b["class"]) != (h["decision"], h["class"]):
+            key = "%s/%s -> %s/%s | %s" % (b["decision"], b["class"], h["decision"], h["class"],
+                                           h["reason"].split(";")[0].split(":")[0][:70])
+            changed[key].append((ts[:19], sid, kind, cmd.replace("\n", " ")[:140]))
+    print("wrapped calls", total, "changed", sum(map(len, changed.values())))
+    for key, rows in sorted(changed.items(), key=lambda kv: -len(kv[1])):
+        print("group", len(rows), key)
+    for key, rows in sorted(changed.items()):
+        for row in sorted(rows):
+            print("  ", key.split(" | ")[0], *row)
 
 
 # Witness stop of CASE-69: (session prefix, stop minute UTC, expected judge answer).
@@ -581,6 +645,10 @@ def main():
         against = args[args.index("--against") + 1] if "--against" in args else None
         days = int(args[0]) if args and args[0].isdigit() else 14
         return next_step(days, against)
+    if sys.argv[1] == "secret-write":
+        return secret_write(int(sys.argv[2]) if len(sys.argv) > 2 else 28)
+    if sys.argv[1] == "wrapper-tails":
+        return wrapper_tails(int(sys.argv[2]), sys.argv[sys.argv.index("--policy") + 1])
     if sys.argv[1] == "merge-gate":
         return merge_gate(int(sys.argv[2]) if len(sys.argv) > 2 else 28)
     if sys.argv[1] == "background-watch":

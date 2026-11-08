@@ -42,8 +42,9 @@ def main():
     if reason:
         print(
             "Refused by secret-vault gate: %s. Secret values never enter a transcript. "
-            "Use `~/.claude/tools/secretctl` (list / run / each / import / pull-k8s / merge / "
-            "apply-k8s) to use them without printing, and continue the task." % reason,
+            "Use `~/.claude/tools/secretctl` (list / run / each / import / pull-k8s / merge) to use them "
+            "without printing, and continue the task; a write to a live Secret (`apply-k8s` included) "
+            "goes through a destructive plan." % reason,
             file=sys.stderr,
         )
         return 2

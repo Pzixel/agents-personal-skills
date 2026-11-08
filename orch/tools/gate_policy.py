@@ -2938,8 +2938,12 @@ _PLAN_MARKER_RE = re.compile(
     r"^\s*(?:bash|sh|zsh)\s+(\S+)\s+#\s*DESTRUCTIVE_PLAN\s+sha256=([0-9a-fA-F]{64})\s*$"
 )
 _PLAN_HEADERS = (
-    "# scope:", "# undo:", "# count:", "# contradiction:", "# prod_position:", "# way_back:"
+    "# scope:", "# undo:", "# count:", "# contradiction:", "# prod_position:", "# way_back:",
+    "# effect_read:",
 )
+_PLAN_HEADER_LIST = " / ".join(h.rstrip(":") for h in _PLAN_HEADERS)
+# One reason for every command that writes a live Secret, whatever program carries the write.
+_SECRET_WRITE_REASON = "the command writes a live Secret: the previous value cannot be restored"
 _PLAN_INDIRECT_RE = re.compile(r"^\s*(?:(?:source|\.|exec|eval)\s|(?:bash|sh|zsh)\s+\S)")
 _SEGMENT_PUNCT = frozenset(";&|()\n`{}")
 _HEREDOC_RE = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
@@ -3351,7 +3355,7 @@ def _kubectl_class(args, cfg, ctx):
     if names_secret or (
         verb in ("apply", "create", "replace") and _SECRET_MANIFEST_RE.search(ctx["text"])
     ):
-        return [("impossible", "kubectl writes a Secret: the previous value cannot be restored")]
+        return [("impossible", _SECRET_WRITE_REASON)]
     phrase = " ".join(words[:2]) if " ".join(words[:2]) in _KUBECTL_CHEAP_UNDO else verb
     undo = _KUBECTL_CHEAP_UNDO.get(phrase)
     if undo and (
@@ -3764,6 +3768,7 @@ def _kill_own_job(args):
     command: a %N job spec, $! or a name bound to it. A process group
     (a negative pid) never passes."""
     probe, operands, i = False, [], 0
+    args = [a for a in args if not _REDIRECT.match(a)]  # `2>/dev/null` is the shell's, not an operand
     if args[:1] == ["-0"] or args[:2] in (["-s", "0"], ["-n", "0"]):
         probe, i = True, 1 if args[:1] == ["-0"] else 2
     elif args[:1] in (["-s"], ["-n"]):
@@ -3864,6 +3869,17 @@ def _classify_tokens(tokens, cfg, ctx):
         return _git_class(args, cfg, ctx)
     if program == "kubectl":
         return _kubectl_class(args, cfg, ctx)
+    if program in _WRAPPER_TOOLS:
+        # A wrapper carries the gate of the command it runs: `secretctl apply-k8s` writes a live
+        # Secret itself; `secretctl run/each/capture`, `check-run` and `wait-for` run the local
+        # command after `--`, classed like a bare segment (same directory and bindings).
+        if program == "secretctl" and args[:1] == ["apply-k8s"] and not {"-h", "--help"} & set(args):
+            return [("impossible", _SECRET_WRITE_REASON)]
+        if "--" not in args:
+            return []
+        inner = args[args.index("--") + 1:]
+        raw = ctx.get("raw", tokens)
+        return _classify_tokens(inner, cfg, dict(ctx, raw=raw[len(raw) - len(inner):]))
     if program == "docker":
         rest = args[_after_options(args, _DOCKER_GLOBAL_VALUE_FLAGS):]
         if rest[:1] == ["compose"]:
@@ -4356,10 +4372,10 @@ def _command_decision(command, cfg, cwd):
         return {"decision": "allow", "class": "none", "reason": ""}
     cls, reason = max(found, key=lambda hit: _SEVERITY[hit[0]])
     if cls == "approval":
-        reason += ": batch it into a plan script (# scope / # undo / # count / # contradiction / # prod_position / # way_back) run from the main session"
+        reason += ": batch it into a plan script (" + _PLAN_HEADER_LIST + ") run from the main session"
     elif cls == "impossible":
         reason += ("; if the step is needed, write a plan script stating exactly what it does"
-                   " (# scope / # undo: none / # count / # contradiction / # prod_position / # way_back),"
+                   " (" + _PLAN_HEADER_LIST.replace("# undo", "# undo: none") + "),"
                    " give the owner its path and ask for the line APPROVE <sha256>, then run it from the main"
                    " session as bash <plan>  # DESTRUCTIVE_PLAN sha256=<hex>")
     return {"decision": _DECISION[cls], "class": cls, "reason": reason}
@@ -4370,7 +4386,8 @@ def _command_decision(command, cfg, cwd):
 # repository; rows are dicts {ts (ISO UTC), duration_ms, agent_type, key} for
 # a long command, plus {ack, command} on an acknowledgement row (duration 0).
 
-_LOOP_PREFIX_TOOLS = ("check-run", "wait-for", "secretctl")
+# Tools that run the command after `--`: the destructive gate classes that command, loop-cost keys on it.
+_WRAPPER_TOOLS = ("check-run", "wait-for", "secretctl")
 # Heads that never carry a command's wait: navigation, shell builtins and the
 # small file and text tools that edit or inspect around the real run.
 _LOOP_SKIP_HEADS = frozenset({
@@ -4440,7 +4457,7 @@ def _loop_heads(command, depth=0):
         if seg.split()[0] in ("for", "select"):
             continue
         tokens = _loop_unwrap_runners(_tokens_after_keywords(seg))
-        if tokens and os.path.basename(tokens[0]) in _LOOP_PREFIX_TOOLS and "--" in tokens:
+        if tokens and os.path.basename(tokens[0]) in _WRAPPER_TOOLS and "--" in tokens:
             tokens = _loop_unwrap_runners(_unwrap(tokens[tokens.index("--") + 1:]))
         prog = _program(tokens)
         if not prog or prog in _LOOP_SKIP_HEADS or prog in _NEUTRAL_TOOLS:

@@ -1,0 +1,11 @@
+mode	stamp	session	verdict	label	note
+secret-write	2026-10-12T17:54:54	3ada6453	fire	true	$S apply-k8s <vault-name> ... --confirm (live write, base allowed)
+secret-write	2026-10-21T12:30:55	214bf5f4	fire	true	secretctl apply-k8s admin-api-token --confirm (base allowed)
+secret-write	2026-10-21T12:30:57	214bf5f4	fire	true	same, retry (base allowed)
+secret-write	2026-10-21T12:31:00	214bf5f4	fire	true	same, retry (base allowed)
+secret-write	2026-10-21T13:19:56	214bf5f4	fire	true	secretctl run -- kubectl patch secret admin-api-token (base allowed)
+secret-write	2026-10-21T13:21:27	214bf5f4	fire	true	secretctl capture ...; secretctl run -- kubectl patch secret (base allowed)
+secret-write	2026-10-21T17:51:32	b8a8dd40	fire	true	secretctl run -- kubectl patch secret <name> (base allowed)
+secret-write	2026-11-08T00:13:38	beb0e057	fire	true	CASE-72 L1504 witness (base allowed)
+secret-write	2026-11-08T00:15:15	beb0e057	fire	true	kubectl patch secret backend-env (base denied too)
+secret-write	2026-11-08T00:37:27	8f487a6e	fire	true	backticks in a double-quoted commit message run kubectl patch secret as a substitution (base denied too)

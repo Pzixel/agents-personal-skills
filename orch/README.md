@@ -120,7 +120,7 @@ Hooks enforce the gates; an agent obeys a refusal's message and never works arou
   runs without a prompt; Flux reconcile/suspend/resume is unclassed and runs. `approval` (a live write whose
   undo is not mechanical: SQL writes, `kubectl apply/delete/patch`) goes into
   one plan script with `# scope / # undo / # count / # contradiction / # prod_position /
-  # way_back` headers, run from the main session as
+  # way_back / # effect_read` headers, run from the main session as
   `bash <abs path>  # DESTRUCTIVE_PLAN sha256=<hash>`; one approval per batch: the owner's
   approval of the plan, the permission prompt, or `APPROVE <hash>` where the session
   cannot prompt. `impossible` (no undo: DROP/TRUNCATE, Secret

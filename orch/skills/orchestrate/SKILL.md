@@ -73,12 +73,15 @@ Re-check <old head>..<new head> in <ws> against <notes>/review-verified.md. Each
 ```
 A new finding with file:line and how it was verified counts as verified and goes back to step 5.
 7. Report to the user:
+A builder's statement about production's current state labelled `claimed` (or carrying no read) is relayed in this report only as a hypothesis with the read that decides it.
+
 ```
 Result: <branch, head, check result>
 Original scenario: <the observation on the real path: command or query, value, time; by default the pure function the result is computed by, run read-only on today's production rows, now; a scheduled event is awaited only as the rare exception, with the WAIT_SHOWS proof (the fact no pure function on stored data answers, and why the refactor that would is impossible or beyond the budget); or "not verified">
 Cost: <sum of the agents' reply usage, or "not shown">
 Blockers/majors: <verified by cross-check> -> <open after recheck>
 Unverified: <each path or claim no run has executed>
+Rollout: <after a rollout, every pod not Running on the new image, each with its log tail and its last success before the rollout (e.g. a CronJob's lastSuccessfulTime), read by this session or its watcher; a pod is "not ours" only on those two reads, never on a delegate's or PR body's "fails today"; or "not read">
 questions[]: <for the user only>
 ```
 8. Land, `ship` and `proof` alike, run by the main session only (merge-gate refuses a landing from any delegate): push the branch; open a PR to the default branch whose body carries the decisions and rejected alternatives from SPEC/DESIGN (or the proof run record) and the check output; wait for CI per Waiting (`wait-for --fail-on 1 -- gh pr checks <n>` or a Monitor) until green; merge with the merge-gate fields `CHECK_RAN`, `PROD_POSITION`, `WAY_BACK`, `WORSE_FOR`, plus `ALWAYS_ON` when an always-on rules file changed; then remove the worktree and delete the branch locally and remotely (rule: AGENTS.md git section). A repository without a PR flow (agents-personal-skills) gets a fast-forward push to master after the same reviews, with the same fields.
@@ -102,4 +105,4 @@ Run the condition once in the foreground first (`wait-for` exits 2 on a broken c
 
 ## Destructive commands
 
-A production write the hook classes `approval` or `impossible` is batched into one plan script with the six header lines of the details "Destructive" section (`rules/always-on-claude.details.md`) and run from the main session only as `bash <plan>  # DESTRUCTIVE_PLAN sha256=<hex>`, after the owner's approval of the plan: the permission prompt, or `APPROVE <hash>` where the session cannot prompt (give the owner the plan path and its hash; one run per approval). A command without undo runs only from an approved plan that states what it does. An agent removes its own scratch (inside a worktree, `<repo>/tmp`, `/tmp`) with `~/.claude/tools/rm-own -r <path>`, which checks the real path; it never asks the owner to clean up. An agent stops its own leftover local processes (dev servers, debug binaries, port-forwards) with `~/.claude/tools/kill-own -f '<pattern>'` or `~/.claude/tools/kill-own <pid>` (`--list` finds them); it never asks the owner to kill them. Classes and thresholds: `destructive` in `tools/orchestrate-params.json`.
+A production write the hook classes `approval` or `impossible` is batched into one plan script with the header lines of the details "Destructive" section (`rules/always-on-claude.details.md`) and run from the main session only as `bash <plan>  # DESTRUCTIVE_PLAN sha256=<hex>`, after the owner's approval of the plan: the permission prompt, or `APPROVE <hash>` where the session cannot prompt (give the owner the plan path and its hash; one run per approval). A command without undo runs only from an approved plan that states what it does. An agent removes its own scratch (inside a worktree, `<repo>/tmp`, `/tmp`) with `~/.claude/tools/rm-own -r <path>`, which checks the real path; it never asks the owner to clean up. An agent stops its own leftover local processes (dev servers, debug binaries, port-forwards) with `~/.claude/tools/kill-own -f '<pattern>'` or `~/.claude/tools/kill-own <pid>` (`--list` finds them); it never asks the owner to kill them. Classes and thresholds: `destructive` in `tools/orchestrate-params.json`.

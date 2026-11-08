@@ -18,6 +18,7 @@ Rules:
 - Block on it in the FOREGROUND: `~/.claude/tools/wait-for --every 30 --max 570 -- <condition command>` with the Bash timeout set to 600000 ms. Exit 0: the event resolved. Exit 124: not yet — run the same call again, in the same turn, until the deadline. Never `sleep`, `until` or a `while` loop; a hook refuses them. Choose `--every` from how fast the state can change; 30 s suits CI and rollouts.
 - Between calls do nothing else. No interim checks "to see how it goes"; the condition command is the check.
 - When the condition holds, collect the evidence with the minimum bounded reads (`| tail -20`), decide success or failure from the conditions in the prompt, and reply. When the deadline passes first, reply with the last state seen as "deadline".
+- After a rollout, the evidence includes, for every pod not Running on the new image, its log tail and its last success before the rollout (a CronJob's `lastSuccessfulTime`, a Deployment pod's previous ready time), quoted; a failing pod is never left out as "known" or "pre-existing".
 - No writes anywhere. Read-only `gh`, kubectl, logs, metrics, and SQL with time limits.
 - A deadline longer than about 8 hours does not fit this agent; say so in the reply instead of starting.
 
