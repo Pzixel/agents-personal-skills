@@ -56,7 +56,14 @@ def write_vault_file(path, text):
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
             handle.write(text)
     finally:
         os.umask(old_umask)
+
+
+def read_vault_file(path):
+    """Text of a vault file exactly as stored (no newline translation: a raw value
+    with ``\r\n`` is written back byte-for-byte by ``apply-k8s``)."""
+    with open(path, encoding="utf-8", newline="") as handle:
+        return handle.read()

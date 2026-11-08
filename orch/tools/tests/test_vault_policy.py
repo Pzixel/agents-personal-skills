@@ -2,11 +2,13 @@ import base64
 import json
 import os
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
 
 import gate_policy  # noqa: E402
+import vault_files  # noqa: E402
 import vault_policy  # noqa: E402
 
 # Shaped like a client API key (68 standard-base64 chars), not a real one.
@@ -178,10 +180,24 @@ class ApplyValueTest(unittest.TestCase):
             vault_policy.apply_value("Billing\n%s\n" % KEY_A, "SECRET_KEY")
 
 
+class RawRoundTripTest(unittest.TestCase):
+    def test_crlf_raw_file_is_applied_byte_for_byte(self):
+        text = "Billing\r\n%s\r\n" % KEY_A
+        with tempfile.TemporaryDirectory() as vault:
+            path = vault_files.vault_file_path(vault, "example/raw")
+            vault_files.write_vault_file(path, text)
+            self.assertEqual(vault_policy.apply_value(vault_files.read_vault_file(path), None), text)
+
+
 class ApplyPatchCommandTest(unittest.TestCase):
+    def test_without_context_uses_the_current_one(self):
+        argv, _body = vault_policy.apply_patch_command("example-ns", "example-env", "SECRET_KEY", KEY_A)
+        self.assertEqual(argv, ["-n", "example-ns", "patch", "secret", "example-env",
+                                "--type=merge", "--patch-file", "/dev/stdin"])
+
     def test_patch_sets_only_the_key_and_keeps_value_off_argv(self):
-        argv, body = vault_policy.apply_patch_command("default", "backend-env", "SECRET_KEY", KEY_A, "prod")
-        self.assertEqual(argv, ["--context", "prod", "-n", "default", "patch", "secret", "backend-env",
+        argv, body = vault_policy.apply_patch_command("example-ns", "example-env", "SECRET_KEY", KEY_A, "example-ctx")
+        self.assertEqual(argv, ["--context", "example-ctx", "-n", "example-ns", "patch", "secret", "example-env",
                                 "--type=merge", "--patch-file", "/dev/stdin"])
         self.assertEqual(json.loads(body), {"data": {"SECRET_KEY": base64.b64encode(KEY_A.encode()).decode()}})
 

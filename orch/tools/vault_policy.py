@@ -274,8 +274,13 @@ def apply_value(text, label):
         return text
     values = dict(parse_entries(text))
     if label not in values:
-        raise ValueError("label %s not in the vault file" % label)
+        raise ValueError("no label %r in the vault file (labels: %s)" % (label, "; ".join(values)))
     return values[label]
+
+
+def kubectl_context(context):
+    """kubectl arguments selecting ``context``; none for the current one."""
+    return ["--context", context] if context else []
 
 
 def apply_patch_command(namespace, secret, key, value, context=None):
@@ -283,7 +288,7 @@ def apply_patch_command(namespace, secret, key, value, context=None):
     Secret: a JSON merge patch replaces or adds that one key, keeps every other key,
     and fails NotFound instead of creating a Secret. The value travels only in the
     body (stdin), never on argv."""
-    argv = (["--context", context] if context else []) + [
+    argv = kubectl_context(context) + [
         "-n", namespace, "patch", "secret", secret,
         "--type=merge", "--patch-file", "/dev/stdin",
     ]
