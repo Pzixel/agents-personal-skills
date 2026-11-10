@@ -1375,12 +1375,114 @@ def _existing_value(text):
     return _plan_label(text)[0] == "existing" and bool(plan_head_lines(text)["existing"])
 
 
-def ask_existing_decision(tool_input):
-    """AskUserQuestion gate: None when `metadata.source` starts with `existing: n/a` or a line of some
+_ASK_SPEND_REASON = (
+    "Refused by ask-existing-gate (spend rule): this question asks the owner to approve spending company money"
+    " inside a question about something else, or without the spend stated. Ask the spend as its own question: one"
+    " question in the call, whose stem has a line `Spend: <sum>, ceiling <max>; account: <where it is paid from>,"
+    " left <balance after>; later: <renewals, monthly fees, or none>`, and `metadata.source: \"existing: n/a\"`."
+    " Past the ceiling, stop and ask again. If the question spends nothing of ours, reword the stem or option so"
+    " it says who pays or that nothing is bought; never write a `Spend:` line for a spend that does not exist."
+    " Then call AskUserQuestion again."
+)
+
+# A wide prefilter: a currency amount or a pay/buy word family (RU/EN, nouns included) at a word start.
+# Negation is not read: «не больше 507 USD» is a ceiling. The model judge decides.
+_SPEND_WORD_RE = re.compile(
+    r"(?<![^\W\d_])(?:куп|покуп|оплат|оплач|заплат|платн|плат[иеяю]|подписк|продл|трат|потрат|стоим|стоит|бюджет"
+    r"|buy|bought|purchas|pay|paid|cost|charg|subscri|renew|budget|spend|billing)",
+    re.I,
+)
+_CURRENCY_RE = re.compile(r"[$€₽]\s?\d|\d[\d\s.,]*\s?(?:usd|eur|руб|долл|[$€₽])", re.I)
+_SPEND_LINE_RE = re.compile(
+    r"^\s*\**Spend:\**\s*(?=[^\n]*\d)[^\n]*\bceiling\s+\S[^\n]*\baccount:\s*\S[^\n]*\bleft\s+\S[^\n]*\blater:\s*\S",
+    re.I | re.M,
+)
+
+SPEND_JUDGE_PROMPT = (
+    "Below is a question an AI agent asks its owner, with its options, as JSON. Answer one question: does the"
+    " question stem or any option, if chosen, make our company pay money (a purchase, a paid run, a subscription,"
+    " a paid API, model or labelling job)? Not a spend of ours: a client's payment, invoice or subscription; a"
+    " purchase made in the past or already running; a statement that something needs payment without proposing"
+    " that we pay; tokens, time, CPU or disk of what we already have with no new charge in money. Answer true"
+    " only when the words themselves propose that we pay; do not infer a charge the text does not state."
+    ' Respond with JSON only: {{"spend": true|false, "sentence": "<the words that commit the money, or empty>"}}.'
+    "\n\nQUESTION:\n{question}"
+)
+
+
+def _ask_texts(tool_input):
+    """Every stem, option label and option description of an AskUserQuestion input."""
+    questions = tool_input.get("questions") if isinstance(tool_input, dict) else None
+    texts = []
+    for q in questions if isinstance(questions, list) else []:
+        if not isinstance(q, dict):
+            continue
+        texts.append(q.get("question"))
+        for o in q.get("options") if isinstance(q.get("options"), list) else []:
+            if isinstance(o, dict):
+                texts += [o.get("label"), o.get("description")]
+    return [t for t in texts if isinstance(t, str) and t.strip()]
+
+
+def spend_candidate(tool_input):
+    """The question may commit money: some text holds a currency amount or a pay/buy word."""
+    return any(_CURRENCY_RE.search(t) or _SPEND_WORD_RE.search(t) for t in _ask_texts(tool_input))
+
+
+def spend_judge_prompt(tool_input):
+    questions = [
+        {"question": q.get("question"), "options": [
+            {"label": o.get("label"), "description": o.get("description")}
+            for o in (q.get("options") or []) if isinstance(o, dict)]}
+        for q in tool_input.get("questions") or [] if isinstance(q, dict)]
+    return SPEND_JUDGE_PROMPT.format(question=json.dumps(questions, ensure_ascii=False, indent=1))
+
+
+def _judge_object(cli_stdout):
+    """The JSON object a `claude -p --output-format json` run answered, or None."""
+    try:
+        envelope = json.loads(cli_stdout)
+    except ValueError:
+        return None
+    if not isinstance(envelope, dict) or envelope.get("is_error") or not isinstance(envelope.get("result"), str):
+        return None
+    result = envelope["result"].strip()
+    fenced = _JSON_FENCE_RE.match(result)
+    try:
+        verdict = json.loads(fenced.group(1) if fenced else result)
+    except ValueError:
+        return None
+    return verdict if isinstance(verdict, dict) else None
+
+
+def parse_spend_verdict(cli_stdout):
+    """{"spend": bool, "sentence": str} from the spend judge's output, or None (the gate then fails open)."""
+    verdict = _judge_object(cli_stdout)
+    if verdict is None or not isinstance(verdict.get("spend"), bool):
+        return None
+    return {"spend": verdict["spend"], "sentence": str(verdict.get("sentence") or "")}
+
+
+def spend_stated(tool_input):
+    """The call is one question whose stem carries a full `Spend:` line."""
+    questions = tool_input.get("questions") if isinstance(tool_input, dict) else None
+    if not isinstance(questions, list) or len(questions) != 1 or not isinstance(questions[0], dict):
+        return False
+    stem = questions[0].get("question")
+    return isinstance(stem, str) and bool(_SPEND_LINE_RE.search(stem))
+
+
+def ask_existing_decision(tool_input, spend=None):
+    """AskUserQuestion gate, one refusal at a time. Spend rule first: when the judge ``spend`` verdict
+    (``parse_spend_verdict``; None when not judged or failed: fail open) says the question commits our
+    money and the call is not one question with a full `Spend:` stem line, the spend refusal. Then the
+    `Existing:` rule: None when `metadata.source` starts with `existing: n/a` or a line of some
     question stem starts with a non-empty `Existing:`; else the measured refusal. A citation only in
     metadata does not pass: the owner never sees metadata. Fails open (None) on an input with no
     non-empty string stem: a harness shape change must not block every question to the owner."""
     tool_input = tool_input if isinstance(tool_input, dict) else {}
+    if isinstance(spend, dict) and spend.get("spend") is True and not spend_stated(tool_input):
+        return _ASK_SPEND_REASON
     metadata = tool_input.get("metadata")
     source = metadata.get("source") if isinstance(metadata, dict) else None
     if isinstance(source, str) and re.match(r"existing:\s*n/a\b", source.strip(), re.I):
@@ -2880,21 +2982,8 @@ def parse_judge_verdict(cli_stdout):
     """Verdict from `claude -p --output-format json` output:
     {"handoff", "sentence", "deferral", "deferral_sentence", "next_step", "next_step_sentence"}, or None when the run
     failed or the result is not exactly one verdict object (the hook then fails open)."""
-    try:
-        envelope = json.loads(cli_stdout)
-    except ValueError:
-        return None
-    if not isinstance(envelope, dict) or envelope.get("is_error") or not isinstance(envelope.get("result"), str):
-        return None
-    result = envelope["result"].strip()
-    fenced = _JSON_FENCE_RE.match(result)
-    if fenced:
-        result = fenced.group(1)
-    try:
-        verdict = json.loads(result)
-    except ValueError:
-        return None
-    if not isinstance(verdict, dict) or not all(
+    verdict = _judge_object(cli_stdout)
+    if verdict is None or not all(
         isinstance(verdict.get(k), bool) for k in ("handoff", "deferral", "next_step")
     ):
         return None

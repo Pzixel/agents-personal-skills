@@ -2321,5 +2321,75 @@ class AskExistingDecisionTest(unittest.TestCase):
             self.assertEqual(reason is None, passes, tool_input)
 
 
+SPEND_LINE = ("Spend: 467 USD, ceiling 507 USD; account: company registrar, left 1200 USD;"
+              " later: renewal 12 USD per domain per year")
+
+
+class AskSpendRuleTest(unittest.TestCase):
+    """Money is spent only on the owner's answer to a question whose subject is the spend."""
+
+    def call(self, *stems, options=(), source="existing: n/a"):
+        return {"questions": [{"question": s, "options": list(options)} for s in stems],
+                "metadata": {"source": source}}
+
+    def decide(self, tool_input, spend):
+        return gate_policy.ask_existing_decision(tool_input, {"spend": spend, "sentence": ""})
+
+    def test_judged_spend_needs_one_question_with_a_full_spend_line(self):
+        for stems, refused in (
+            (("Recreate the inboxes?",), True),
+            (("Buy 39 domains?\n" + SPEND_LINE,), False),
+            (("**Spend:** 467 USD, ceiling 507 USD; account: registrar, left 1200 USD; later: none\nBuy?",), False),
+            (("Buy 39 domains?\n" + SPEND_LINE, "And which workspace?"), True),
+            (("Buy 39 domains?\nSpend: 467 USD, ceiling 507 USD",), True),
+            (("Buy 39 domains?\nSpend: 467 USD, ceiling 507 USD; account: registrar, left 1200 USD",), True),
+            (("Buy?\nSpend: some money, ceiling high; account: registrar, left a lot; later: none",), True),
+            (("Buy? Spend is left to the account later: ceiling 5",), True),
+            (("Buy?\nWe noted " + SPEND_LINE,), True),
+        ):
+            reason = self.decide(self.call(*stems), True)
+            self.assertEqual(reason is not None and "(spend rule)" in reason, refused, stems)
+
+    def test_spend_rule_goes_first_and_the_existing_rule_still_runs(self):
+        bare = self.call("Buy 39 domains?", source="")
+        self.assertIn("(spend rule)", self.decide(bare, True))
+        stated = self.call("Buy 39 domains?\n" + SPEND_LINE, source="")
+        self.assertTrue(self.decide(stated, True).startswith("Refused by ask-existing-gate: a question"))
+
+    def test_no_spend_verdict_leaves_the_existing_rule_alone(self):
+        tool_input = self.call("Which count?", source="")
+        for verdict in (None, {"spend": False, "sentence": ""}):
+            self.assertEqual(gate_policy.ask_existing_decision(tool_input, verdict),
+                             gate_policy.ask_existing_decision(tool_input))
+        self.assertIsNone(self.decide(self.call("Recreate the inboxes?"), False))
+
+    def test_prefilter_reads_stems_and_options_in_both_languages(self):
+        for stem, options, hit in (
+            ("Recreate the inboxes?", [{"label": "Yes", "description": "покупаем 39 доменов"}], True),
+            ("Что дальше?", [{"label": "Заново", "description": "повторная покупка 39 доменов"}], True),
+            ("Что дальше?", [{"label": "Сами", "description": "мы оплачиваем сами"}], True),
+            ("Label the rest?", [{"label": "Yes", "description": "about $80 of model runs"}], True),
+            ("Label the rest?", [{"label": "Yes", "description": "around 80 EUR"}], True),
+            ("Order mailboxes?", [{"label": "Yes", "description": "we pay for each order"}], True),
+            ("Which total goes on the chart?", [{"label": "Sent", "description": "rows of 3 days"}], False),
+            ("Перенести 13 доменов?", [{"label": "Да", "description": "переносим без ящиков"}], False),
+        ):
+            got = gate_policy.spend_candidate({"questions": [{"question": stem, "options": options}]})
+            self.assertEqual(got, hit, (stem, options))
+
+    def test_spend_verdict_parse(self):
+        def envelope(result, is_error=False):
+            return json.dumps({"is_error": is_error, "result": result})
+        for stdout, verdict in (
+            (envelope('{"spend": true, "sentence": "buy domains"}'), {"spend": True, "sentence": "buy domains"}),
+            (envelope('```json\n{"spend": false}\n```'), {"spend": False, "sentence": ""}),
+            (envelope('{"spend": "yes"}'), None),
+            (envelope('{"handoff": true, "deferral": false, "next_step": false}'), None),
+            (envelope('{"spend": true}', is_error=True), None),
+            ("not json", None),
+        ):
+            self.assertEqual(gate_policy.parse_spend_verdict(stdout), verdict, stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

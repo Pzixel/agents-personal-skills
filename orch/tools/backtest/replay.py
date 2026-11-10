@@ -608,6 +608,100 @@ def judge_control(days, cap, policy_path, out, run_tag=""):
     print("judged stops", len(stops), "->", out)
 
 
+def _ask_calls(days):
+    """(session, line, stamp, project, tool_input) of every AskUserQuestion call of the owner sessions in
+    the window, one per tool_use id."""
+    cut = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=days)).isoformat()
+    seen = set()
+    for path in main_transcripts(days, _SUBJECT_DIR_RE):
+        project = os.path.basename(os.path.dirname(path))
+        with open(path, errors="replace") as fh:
+            for number, line in enumerate(fh, 1):
+                if '"AskUserQuestion"' not in line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except ValueError:
+                    continue
+                stamp = str(entry.get("timestamp") or "")
+                content = (entry.get("message") or {}).get("content")
+                for block in content if isinstance(content, list) and stamp >= cut else []:
+                    if (isinstance(block, dict) and block.get("type") == "tool_use"
+                            and block.get("name") == "AskUserQuestion" and block.get("id") not in seen):
+                        seen.add(block.get("id"))
+                        yield os.path.basename(path)[:8], number, stamp, project, block.get("input") or {}
+
+
+def _spend_judge(tool_input, run_tag=""):
+    """The hook's spend judge on one input, cached on disk by sha256(prompt, run_tag): the verdict dict,
+    or the runner's error string."""
+    import hashlib
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "hooks"))
+    import model_judge
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("ask_gate", os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "..", "..", "hooks", "ask-existing-gate.py"))
+    hook = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(hook)
+    prompt = g.spend_judge_prompt(tool_input)
+    path = os.path.join(_CACHE_DIR, "spend-" + hashlib.sha256((run_tag + "\x00" + prompt).encode()).hexdigest())
+    if os.path.isfile(path):
+        with open(path) as fh:
+            return json.load(fh)
+    verdict, error = model_judge.run(hook.JUDGE_ARGS, prompt, hook.JUDGE_TIMEOUT_S, hook.JUDGE_ENV,
+                                     g.parse_spend_verdict)
+    if verdict is None:
+        return error
+    os.makedirs(_CACHE_DIR, exist_ok=True)
+    with open(path, "w") as fh:
+        json.dump(verdict, fh)
+    return verdict
+
+
+def ask_spend(days, out, judge=False):
+    """Replay the spend rule over every AskUserQuestion call of the window: prefilter hits, and with
+    ``judge`` the hook's judge and decision on each hit. One TSV row per prefilter hit (fires and
+    non-fires, amount or not) for hand labels; totals and fires per day per project on stdout."""
+    from concurrent.futures import ThreadPoolExecutor
+    calls = list(_ask_calls(days))
+    hits = [c for c in calls if g.spend_candidate(c[4])]
+    verdicts = list(ThreadPoolExecutor(8).map(lambda c: _spend_judge(c[4]), hits)) if judge else [None] * len(hits)
+    fires, failed, per_project = 0, 0, collections.Counter()
+    with open(out, "w") as fh:
+        fh.write("session\tline\tstamp\tproject\tamount\tverdict\tfired\tsentence\ttext\n")
+        for call, verdict in zip(hits, verdicts):
+            ok = isinstance(verdict, dict)
+            failed += judge and not ok
+            fired = g.ask_existing_decision(call[4], verdict if ok else None) == g._ASK_SPEND_REASON
+            fires += fired
+            per_project[call[3]] += fired
+            text = " ".join(" | ".join(g._ask_texts(call[4])).split())
+            amount = any(g._CURRENCY_RE.search(t) for t in g._ask_texts(call[4]))
+            fh.write("\t".join([call[0], str(call[1]), call[2][:19], call[3], str(amount).lower(),
+                                str(verdict["spend"]).lower() if ok else str(verdict), str(fired).lower(),
+                                " ".join(verdict["sentence"].split()) if ok else "", text[:600]]) + "\n")
+    print("calls", len(calls), "prefilter", len(hits), "judge failed", failed, "fires", fires,
+          "fires/day %.2f" % (fires / float(days)), "->", out)
+    for project, n in per_project.most_common():
+        if n:
+            print("  ", project, n)
+
+
+def ask_spend_pins(spec_path, k=3):
+    """Judge each pinned input ``k`` times with fresh draws: spec rows are JSON lines
+    {"name", "expect": "fire"|"pass", "input"}; prints the decision per draw."""
+    with open(spec_path) as fh:
+        pins = [json.loads(line) for line in fh if line.strip()]
+    for pin in pins:
+        got = []
+        for draw in range(k):
+            verdict = _spend_judge(pin["input"], run_tag="pin-%d" % draw)
+            ok = isinstance(verdict, dict)
+            reason = g.ask_existing_decision(pin["input"], verdict if ok else None)
+            got.append("fire" if reason == g._ASK_SPEND_REASON else ("pass" if ok else "error:" + str(verdict)))
+        print(pin["name"], "expect", pin["expect"], "got", " ".join(got))
+
+
 def judge_diff(a, b):
     """Per-stop differences of the four booleans between two judge-control TSVs."""
     def load_tsv(path):
@@ -638,6 +732,11 @@ def main():
         opt = {k: args[args.index(k) + 1] for k in ("--cap", "--policy", "--out", "--run") if k in args}
         return judge_control(int(args[0]) if args and args[0].isdigit() else 14, int(opt.get("--cap", 300)),
                              opt.get("--policy", g.__file__), opt["--out"], opt.get("--run", ""))
+    if sys.argv[1] == "ask-spend":
+        args = sys.argv[2:]
+        return ask_spend(int(args[0]), args[1], "--judge" in args)
+    if sys.argv[1] == "ask-spend-pins":
+        return ask_spend_pins(sys.argv[2], int(sys.argv[3]) if len(sys.argv) > 3 else 3)
     if sys.argv[1] == "judge-diff":
         return judge_diff(sys.argv[2], sys.argv[3])
     if sys.argv[1] == "next-step":

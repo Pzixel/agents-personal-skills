@@ -1,7 +1,9 @@
 import json
+import os
 import pathlib
 import subprocess
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
@@ -24,6 +26,19 @@ class AskExistingHookTest(unittest.TestCase):
         tool_input = {"questions": [{"question": "Which count?", "options": []}]}
         out = run_hook(self.payload(tool_input))
         self.assertEqual((out.returncode, out.stderr), (2, gate_policy.ask_existing_decision(tool_input) + "\n"))
+
+    def test_spend_question_passes_and_is_logged_when_the_judge_cannot_run(self):
+        tool_input = {"questions": [{"question": "Buy 39 domains for 507 USD?", "options": []}],
+                      "metadata": {"source": "existing: n/a"}}
+        with tempfile.TemporaryDirectory() as home:
+            os.makedirs(os.path.join(home, ".claude"))
+            env = dict(os.environ, HOME=home, PATH=os.path.dirname(sys.executable))
+            out = subprocess.run([sys.executable, str(HOOK)], input=self.payload(tool_input), capture_output=True,
+                                 text=True, timeout=20, env=env)
+            with open(os.path.join(home, ".claude", "ask-existing-gate-log.jsonl")) as fh:
+                row = json.loads(fh.read())
+        self.assertEqual(out.returncode, 0)
+        self.assertEqual((row["judged"], row["fired"], row["error"]), (False, False, "FileNotFoundError"))
 
     def test_input_that_is_not_json_passes(self):
         self.assertEqual(run_hook("not json").returncode, 0)

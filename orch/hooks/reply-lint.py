@@ -30,9 +30,7 @@ decisions handed to the owner, about 170 h).
 import datetime
 import json
 import os
-import subprocess
 import sys
-import tempfile
 import time
 
 _PLUGIN_TOOLS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tools")
@@ -42,6 +40,7 @@ TOOLS_DIR = (
 sys.path.insert(0, TOOLS_DIR)
 
 import gate_policy  # noqa: E402
+import model_judge  # noqa: E402
 import transcript as transcript_scan  # noqa: E402
 
 LOG_PATH = os.path.expanduser("~/.claude/reply-lint-log.jsonl")
@@ -70,18 +69,8 @@ def candidates(text, transcript_path):
 
 def judge(text, next_step="", lever="", timed_step=""):
     """(verdict or None, error or None) from the nested small-model judge."""
-    try:
-        run = subprocess.run(
-            JUDGE_ARGS + [gate_policy.judge_prompt(text, next_step, lever, timed_step=timed_step)],
-            capture_output=True, text=True, timeout=JUDGE_TIMEOUT_S,
-            cwd=tempfile.gettempdir(), env=dict(os.environ, **{JUDGE_ENV: "1"}),
-        )
-    except Exception as exc:
-        return None, type(exc).__name__
-    if run.returncode != 0:
-        return None, "exit %d" % run.returncode
-    verdict = gate_policy.parse_judge_verdict(run.stdout)
-    return verdict, None if verdict else "unparsable: " + run.stdout[-200:]
+    prompt = gate_policy.judge_prompt(text, next_step, lever, timed_step=timed_step)
+    return model_judge.run(JUDGE_ARGS, prompt, JUDGE_TIMEOUT_S, JUDGE_ENV, gate_policy.parse_judge_verdict)
 
 
 def last_assistant_text(transcript_path):
