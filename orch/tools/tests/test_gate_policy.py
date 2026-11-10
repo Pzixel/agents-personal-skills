@@ -978,31 +978,57 @@ class LandingTargetTest(unittest.TestCase):
 
 
 class PlanOpeningLinesTest(unittest.TestCase):
+    E = "Existing: decisions/x.md:3 as is\n"
+
     def test_opening_lines_are_read_through_markdown(self):
         self.assertEqual(
-            gate_policy.plan_head_lines("# Title\n\n**Task:** сделать X\n- **Done when:** вижу Y у клиента\n"),
-            {"task": "сделать X", "done_when": "вижу Y у клиента"})
+            gate_policy.plan_head_lines("# Title\n\n**Task:** сделать X\n- **Done when:** вижу Y у клиента\n"
+                                        "**Existing:** `a.md:1` as is\n"),
+            {"task": "сделать X", "done_when": "вижу Y у клиента", "existing": "`a.md:1` as is"})
 
     def test_each_missing_or_empty_line_is_named(self):
         for text, missing in (
-            ("# T\nTask: x\n", "`Done when:"),
-            ("# T\nDone when: y\n", "`Task:"),
-            ("# T\n**Task:** x\n**Done when:**\n", "`Done when:"),
-            ("# T\nTask: [what is made]\nDone when: y\n", "`Task:"),
-            ("# T\nTask: x\nDone when: <value>\n", "`Done when:"),
-            ("# T\nTask: **x**\nDone when: y\n", None),
+            ("# T\nTask: x\n" + self.E, "`Done when:"),
+            ("# T\nDone when: y\n" + self.E, "`Task:"),
+            ("# T\nTask: x\nDone when: y\n", "`Existing:"),
+            ("# T\n**Task:** x\n**Done when:**\n" + self.E, "`Done when:"),
+            ("# T\nTask: [what is made]\nDone when: y\n" + self.E, "`Task:"),
+            ("# T\nTask: x\nDone when: y\nExisting: <value>\n", "`Existing:"),
+            ("# T\nTask: **x**\nDone when: y\n" + self.E, None),
         ):
             reason = gate_policy.plan_lines_decision(text)
             if missing is None:
                 self.assertIsNone(reason, text)
                 continue
-            self.assertIn(missing, reason, text)
-            self.assertNotIn("`Task:" if missing == "`Done when:" else "`Done when:", reason.split("Missing or empty:")[1].split("Keep the labels")[0], text)
+            named = reason.split("Missing or empty:")[1].split("Keep the labels")[0]
+            for label in ("`Task:", "`Done when:", "`Existing:"):
+                self.assertEqual("a line " + label in named, label == missing, (text, label))
 
-    def test_lines_count_only_within_the_first_six_non_blank_lines(self):
-        head = "# T\na\nb\nc\nTask: x\n"
-        self.assertIsNone(gate_policy.plan_lines_decision(head + "\nDone when: y\n"))
-        self.assertIn("`Done when:", gate_policy.plan_lines_decision(head + "d\nDone when: y\n"))
+    def test_a_list_under_a_label_is_its_value_and_not_a_head_line(self):
+        plan = ("# T\nExisting:\n\n- **hRR** `decisions/a.md:4` as is\n  - code `ui/model.ts:9`\n- RR as is\n"
+                "\nTask: x\nDone when: y\n- seen on the screen\n- by the owner\nNotes: z\n")
+        self.assertIsNone(gate_policy.plan_lines_decision(plan))
+        self.assertIn("ui/model.ts:9", gate_policy.plan_head_lines(plan)["existing"])
+
+    def test_a_label_with_only_a_list_after_two_blank_lines_is_empty(self):
+        plan = "# T\nTask: x\nDone when: y\nExisting:\n\n\n- decisions/a.md:4 as is\n"
+        self.assertIn("`Existing:", gate_policy.plan_lines_decision(plan))
+
+    def test_head_lines_are_counted_within_six(self):
+        head = "# T\na\nb\nTask: x\nDone when: y\n"
+        self.assertIsNone(gate_policy.plan_lines_decision(head + "\nExisting: z\n"))
+        self.assertIn("`Existing:", gate_policy.plan_lines_decision(head + "c\nExisting: z\n"))
+
+    def test_a_wrapped_unindented_line_is_a_head_line(self):
+        head = "# T\nTask: x\nwrapped\nDone when: y\nwrapped\nwrapped\n"
+        self.assertIn("`Existing:", gate_policy.plan_lines_decision(head + "Existing: z\n"))
+
+    def test_plan_skill_carries_the_gate_property_text(self):
+        prop = gate_policy._PLAN_LINE_PROPERTY["existing"][1]
+        core = prop[prop.index("`Existing:` says"):prop.index(" The value may be")]
+        skill = open(os.path.join(os.path.dirname(__file__), "..", "..", "..",
+                                  "superpowers-writing-plans-psilon", "SKILL.md")).read()
+        self.assertIn(" ".join(core.split()), " ".join(skill.split()))
 
 
 class ReplyLintDecisionTest(unittest.TestCase):

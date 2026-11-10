@@ -115,7 +115,7 @@ class PlanSimplifyHookTest(unittest.TestCase):
         """Writes like the harness: a new file replaces the old inode."""
         plan = self.plans / name
         draft = self.plans / (name + ".tmp")
-        draft.write_text("Task: t\nDone when: d\n" + " ".join(["word"] * (words - 5)))
+        draft.write_text("Task: t\nDone when: d\nExisting: none, read a.md\n" + " ".join(["word"] * (words - 9)))
         os.replace(draft, plan)
         line = {"type": "assistant", "message": {"content": [
             {"type": "tool_use", "name": "Write", "input": {"file_path": str(plan)}}]}}
@@ -192,7 +192,13 @@ class PlanSimplifyHookTest(unittest.TestCase):
 
     def test_plan_text_with_opening_lines_and_no_plan_file_passes(self):
         self.transcript.write_text("")
-        self.assertEqual(self.run_hook("# Plan\nTask: x\nDone when: y\n").returncode, 0)
+        self.assertEqual(self.run_hook("# Plan\nTask: x\nDone when: y\nExisting: a.md:1 as is\n").returncode, 0)
+
+    def test_plan_text_without_existing_line_is_refused_naming_it(self):
+        self.transcript.write_text("")
+        result = self.run_hook("# Plan\nTask: x\nDone when: y\n")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("`Existing:` says", result.stderr)
 
     def test_plan_file_without_opening_lines_is_refused(self):
         plan = self.plans / "bare.md"

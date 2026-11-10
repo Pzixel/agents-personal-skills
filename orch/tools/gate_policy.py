@@ -1290,43 +1290,79 @@ def design_gate_target(tool, tool_input, recipient_type=None, recipient_prompt="
     return os.path.join(match.group(1), "orch-notes", "DESIGN.md"), kind
 
 
-# The two opening lines of a plan the owner approves. The labels are the contract between the plan skill
+# The three opening lines of a plan the owner approves. The labels are the contract between the plan skill
 # and this gate; the values are in whatever language the owner reads.
 PLAN_HEAD_LINES = 6
 _PLAN_MARKS = "*_`>#- \t"
-_PLAN_LABELS = {"task": "task", "done when": "done_when"}
 _PLACEHOLDER_RE = re.compile(r"^(?:\[[^\]]*\]|<[^>]*>)$")
+_CONTINUATION_RE = re.compile(r"^(?:\s+\S|[-*+] |\d+[.)] )")
 _PLAN_LINES_REASON = (
-    "Refused by plan-simplify-gate: the plan must open, within its first %d non-blank lines, with two plain "
-    "lines the owner reads before approving. Missing or empty: {missing} Keep the labels exactly as written, "
-    "in English; write the content in the language of your replies to the owner. A value that is only markdown marks or wholly a bracketed placeholder counts as empty. Then call ExitPlanMode again."
+    "Refused by plan-simplify-gate: the plan must open, within its first %d head lines (non-blank lines that "
+    "are not the list or indented lines under a label), with three plain lines the owner reads before "
+    "approving. Missing or empty: {missing} Keep the labels exactly as written, in English; write the content "
+    "in the language of your replies to the owner. A value that is only markdown marks or wholly a bracketed "
+    "placeholder counts as empty. Then call ExitPlanMode again."
 ) % PLAN_HEAD_LINES
+# key -> (label, property the refusal names); the plan skill carries the same property text.
 _PLAN_LINE_PROPERTY = {
-    "task": "a line `Task:` followed by what is made and what the requester will do with the result;",
-    "done_when": "a line `Done when:` followed by the one observation, at whoever uses the result, "
-                 "that shows the result does that job;",
+    "task": ("task", "a line `Task:` followed by what is made and what the requester will do with the result;"),
+    "done_when": ("done when", "a line `Done when:` followed by the one observation, at whoever uses the "
+                               "result, that shows the result does that job;"),
+    "existing": ("existing", "a line `Existing:` under `Done when:`. `Existing:` says what the project already "
+                 "has for each thing this plan defines, counts or builds (a term, a metric, a mechanism, a "
+                 "screen). Start from the word as the owner and the screens use it, not from a name coined in "
+                 "this plan. Find where the project fixes it: the decision or semantics record that the "
+                 "repository's AGENTS.md names, searched by the owner's word and by the data source, then the "
+                 "code that shows it; cite path:line. Then one of: `as is`; `changed for all: <every place that "
+                 "changes, in this plan>`; `new and distinct: <a name that does not contain the old one>, "
+                 "differs by <the fact, with a number>`. A meaning changed only inside the new work is none of "
+                 "the three. `Existing: none` only with the words searched and the files read. The value may be "
+                 "a list under the label."),
 }
+_PLAN_LABELS = {label: key for key, (label, _) in _PLAN_LINE_PROPERTY.items()}
+
+
+def _plan_label(line):
+    label, sep, value = line.strip().lstrip(_PLAN_MARKS).partition(":")
+    key = _PLAN_LABELS.get(label.strip(_PLAN_MARKS).strip().lower()) if sep else None
+    return key, value
 
 
 def plan_head_lines(text):
-    """{"task", "done_when"} values from the opening non-blank lines of a plan; "" when absent, when only
-    markdown marks remain, or when the value is wholly a placeholder (`[...]`, `<...>`). Marks around the
-    label are ignored; the value loses only the label's closing emphasis and keeps everything else."""
-    found = {"task": "", "done_when": ""}
-    lines = [ln for ln in (text or "").splitlines() if ln.strip()]
-    for line in lines[:PLAN_HEAD_LINES]:
-        label, sep, value = line.strip().lstrip(_PLAN_MARKS).partition(":")
-        key = _PLAN_LABELS.get(label.strip(_PLAN_MARKS).strip().lower())
-        bare = value.strip(_PLAN_MARKS).strip()
-        if sep and key and not found[key] and bare and not _PLACEHOLDER_RE.match(value.strip(" *_`")):
-            found[key] = value.lstrip("*_").strip()
-    return found
+    """{label key: value} from the opening head lines of a plan. A label's value is the rest of its line plus
+    its continuation: list items or indented lines directly under it (after at most one blank line), up to a
+    blank line, a heading or another label; continuation lines are not head lines. A value is "" when absent,
+    when only markdown marks remain, or when the line is wholly a placeholder (`[...]`, `<...>`) with no
+    continuation. Marks around the label are ignored; the value loses only the label's closing emphasis."""
+    found = {key: "" for key in _PLAN_LINE_PROPERTY}
+    head, current, blanks, cont = 0, None, 0, False
+    for line in (text or "").splitlines():
+        if not line.strip():
+            blanks += 1
+            if cont or blanks > 1:
+                current = None
+            continue
+        key, value = _plan_label(line)
+        if current and not key and not line.lstrip().startswith("#") and _CONTINUATION_RE.match(line):
+            found[current] += "\n" + line.strip()
+            cont, blanks = True, 0
+            continue
+        head += 1
+        if head > PLAN_HEAD_LINES:
+            break
+        current, cont, blanks = None, False, 0
+        if key and not found[key]:
+            bare = value.strip(_PLAN_MARKS).strip()
+            placeholder = bare and _PLACEHOLDER_RE.match(value.strip(" *_`"))
+            found[key] = "" if placeholder else (value.lstrip("*_").strip() if bare else " ")
+            current = key
+    return {key: v.strip() if v.strip(_PLAN_MARKS + "\n").strip() else "" for key, v in found.items()}
 
 
 def plan_lines_decision(text):
     """Refusal naming each missing opening line with its property, or None."""
     found = plan_head_lines(text)
-    missing = [_PLAN_LINE_PROPERTY[k] for k in ("task", "done_when") if not found[k]]
+    missing = [prop for key, (_, prop) in _PLAN_LINE_PROPERTY.items() if not found[key]]
     return _PLAN_LINES_REASON.format(missing=" ".join(missing)) if missing else None
 
 

@@ -18,7 +18,7 @@ findings. A design lens agent is a depth-1 agent whose first user message
 contains the full DESIGN.md path and the literal `/simplify`.
 
 ExitPlanMode: first the plan text (``tool_input.plan``, judged before any transcript read; else the
-plan file) must open with the `Task:` and `Done when:` lines (gate_policy.plan_lines_decision); no text passes. Then the plan is the last `plans/<name>.md` the
+plan file) must open with the `Task:`, `Done when:` and `Existing:` lines (gate_policy.plan_lines_decision); no text passes. Then the plan is the last `plans/<name>.md` the
 session wrote (Write/Edit/MultiEdit file_path; `-agent-*.md` drafts and
 `.simplify.md` findings excluded); the findings must postdate its st_birthtime,
 since the plan is reworked from them. Lens agents are the session's subagent
