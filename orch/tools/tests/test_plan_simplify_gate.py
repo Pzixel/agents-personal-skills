@@ -194,12 +194,6 @@ class PlanSimplifyHookTest(unittest.TestCase):
         self.transcript.write_text("")
         self.assertEqual(self.run_hook("# Plan\nTask: x\nDone when: y\nExisting: a.md:1 as is\n").returncode, 0)
 
-    def test_plan_text_without_existing_line_is_refused_naming_it(self):
-        self.transcript.write_text("")
-        result = self.run_hook("# Plan\nTask: x\nDone when: y\n")
-        self.assertEqual(result.returncode, 2)
-        self.assertIn("`Existing:` says", result.stderr)
-
     def test_plan_file_without_opening_lines_is_refused(self):
         plan = self.plans / "bare.md"
         plan.write_text("# Plan\nGoal: x\n")

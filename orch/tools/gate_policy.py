@@ -1343,7 +1343,7 @@ def plan_head_lines(text):
                 current = None
             continue
         key, value = _plan_label(line)
-        if current and not key and not line.lstrip().startswith("#") and _CONTINUATION_RE.match(line):
+        if current and not key and _CONTINUATION_RE.match(line):
             found[current] += "\n" + line.strip()
             cont, blanks = True, 0
             continue
@@ -1354,7 +1354,7 @@ def plan_head_lines(text):
         if key and not found[key]:
             bare = value.strip(_PLAN_MARKS).strip()
             placeholder = bare and _PLACEHOLDER_RE.match(value.strip(" *_`"))
-            found[key] = "" if placeholder else (value.lstrip("*_").strip() if bare else " ")
+            found[key] = "" if placeholder else (value.lstrip("*_").strip() if bare else "")
             current = key
     return {key: v.strip() if v.strip(_PLAN_MARKS + "\n").strip() else "" for key, v in found.items()}
 

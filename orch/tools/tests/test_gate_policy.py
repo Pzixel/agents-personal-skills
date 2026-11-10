@@ -1019,6 +1019,23 @@ class PlanOpeningLinesTest(unittest.TestCase):
         self.assertIsNone(gate_policy.plan_lines_decision(head + "\nExisting: z\n"))
         self.assertIn("`Existing:", gate_policy.plan_lines_decision(head + "c\nExisting: z\n"))
 
+    def test_value_rule_rows(self):
+        tail = "Done when: y\nExisting: a.md:1 as is\n"
+        for text, missing in (
+            ("# T\nExisting:\n- a.md:1 as is\n\n  - late\nTask: x\nDone when: y\n", None),
+            ("# T\nTask: x\nDone when: y\nExisting:\n- a.md:1\n\na\nb\nc\nd\n", None),
+            ("# T\nTask:\n- a\n\n- b\n- c\n- d\n- e\n" + tail, "`Done when:"),
+            ("# T\nTask: x\nDone when: y\nExisting:\n1. a.md:1 as is\n2. b.md:2 as is\nc\nd\n", None),
+            ("# T\nTask: x\nDone when: y\nExisting: [record]\n- a.md:1 as is\n", None),
+            ("# T\n**Task:**\nTask: x\n" + tail, None),
+            ("# T\nTask: x\nDone when: y\nExisting:\n  # a.md:1 as is\n", None),
+        ):
+            reason = gate_policy.plan_lines_decision(text)
+            if missing is None:
+                self.assertIsNone(reason, text)
+            else:
+                self.assertIn("a line " + missing, reason, text)
+
     def test_a_wrapped_unindented_line_is_a_head_line(self):
         head = "# T\nTask: x\nwrapped\nDone when: y\nwrapped\nwrapped\n"
         self.assertIn("`Existing:", gate_policy.plan_lines_decision(head + "Existing: z\n"))
