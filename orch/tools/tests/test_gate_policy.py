@@ -2346,6 +2346,15 @@ class AskSpendRuleTest(unittest.TestCase):
             (("Buy?\nSpend: some money, ceiling high; account: registrar, left a lot; later: none",), True),
             (("Buy? Spend is left to the account later: ceiling 5",), True),
             (("Buy?\nWe noted " + SPEND_LINE,), True),
+            (("Buy?\nSpend: unknown, ceiling 5; account: registrar, left 40 USD; later: none",), True),
+            (("Buy?\nSpend: ceiling is not known 5; account: ?, left ?; later: ?",), True),
+            (("Buy?\nSpend: 467 USD, ceiling <max>; account: <where it is paid from>, left <balance after>;"
+              " later: <renewals, monthly fees, or none>",), True),
+            (("Buy?\nSpend: 467 USD, ceiling 507 USD; account: registrar, left ?; later: none",), True),
+            (("Buy?\nSpend: 467 USD, ceiling 507 USD; account: none, left 40 USD; later: none",), True),
+            (("Buy?\nSpend: 467 USD, ceiling 507 USD, account: registrar, left 40 USD, later: none",), False),
+            (("Buy?\nSpend: 467 USD, ceiling 507 USD; account: registrar; card 2, left 40 USD;"
+              " later: renewal 12 USD a year; no monthly fee",), False),
         ):
             reason = self.decide(self.call(*stems), True)
             self.assertEqual(reason is not None and "(spend rule)" in reason, refused, stems)
@@ -2371,8 +2380,32 @@ class AskSpendRuleTest(unittest.TestCase):
             ("Label the rest?", [{"label": "Yes", "description": "about $80 of model runs"}], True),
             ("Label the rest?", [{"label": "Yes", "description": "around 80 EUR"}], True),
             ("Order mailboxes?", [{"label": "Yes", "description": "we pay for each order"}], True),
+            ("Закупаем 39 доменов заново?", [], True),
+            ("Что дальше?", [{"label": "Докупить", "description": "докупить 20 ящиков"}], True),
+            ("Приобретаем лицензию?", [], True),
+            ("Арендуем второй сервер?", [], True),
+            ("Что дальше?", [{"label": "Pro", "description": "берём тариф Pro"}], True),
+            ("Расход на домены до 500, ок?", [], True),
+            ("Плата за домены раз в год, продолжаем?", [], True),
+            ("Переходим на хост базы побольше (примерно втрое дороже)?",
+             [{"label": "Да, хост побольше", "description": "переезд в выходные"}], True),
+            ("Register 39 domains again?", [], True),
+            ("Заказать 10 прокси?", [], True),
+            ("Кто заказчик отчёта?", [{"label": "Отдел продаж", "description": "регистрируем хук в настройках"}],
+             False),
+            ("Register the hook in settings?", [{"label": "Yes", "description": "расход памяти вырастет на 5 %"}],
+             False),
+            ("Order 39 domains at the registrar?", [], True),
+            ("Go?", [{"label": "Yes", "description": "rent one more server"}], True),
+            ("Go?", [{"label": "Yes", "description": "a fee of 12 per domain"}], True),
+            ("It is 500 dollars, go?", [], True),
+            ("USD 507 for the domains, go?", [], True),
+            ("£400 for the licence?", [], True),
             ("Which total goes on the chart?", [{"label": "Sent", "description": "rows of 3 days"}], False),
             ("Перенести 13 доменов?", [{"label": "Да", "description": "переносим без ящиков"}], False),
+            ("Почему числа расходятся?", [{"label": "Сверить", "description": "сначала доказываю причину"}], False),
+            ("Keep the order of rows?", [{"label": "Yes", "description": "at least in order to compare, please"}],
+             False),
         ):
             got = gate_policy.spend_candidate({"questions": [{"question": stem, "options": options}]})
             self.assertEqual(got, hit, (stem, options))

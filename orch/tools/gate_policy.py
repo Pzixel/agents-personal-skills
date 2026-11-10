@@ -1381,30 +1381,49 @@ _ASK_SPEND_REASON = (
     " question in the call, whose stem has a line `Spend: <sum>, ceiling <max>; account: <where it is paid from>,"
     " left <balance after>; later: <renewals, monthly fees, or none>`, and `metadata.source: \"existing: n/a\"`."
     " Past the ceiling, stop and ask again. If the question spends nothing of ours, reword the stem or option so"
-    " it says who pays or that nothing is bought; never write a `Spend:` line for a spend that does not exist."
+    " it says who pays or that nothing is bought (a model, labelling or eval run on the agent's own login or"
+    " subscription charges nothing: say so); never write a `Spend:` line for a spend that does not exist."
     " Then call AskUserQuestion again."
 )
 
-# A wide prefilter: a currency amount or a pay/buy word family (RU/EN, nouns included) at a word start.
-# Negation is not read: «не больше 507 USD» is a ceiling. The model judge decides.
+# A wide prefilter: a currency amount or a pay/buy/rent/price word family (RU/EN, prefixed verbs and nouns
+# included) at a word start. Negation is not read: «не больше 507 USD» is a ceiling. The model judge decides.
 _SPEND_WORD_RE = re.compile(
-    r"(?<![^\W\d_])(?:куп|покуп|оплат|оплач|заплат|платн|плат[иеяю]|подписк|продл|трат|потрат|стоим|стоит|бюджет"
-    r"|buy|bought|purchas|pay|paid|cost|charg|subscri|renew|budget|spend|billing)",
+    r"(?<![^\W\d_])(?:(?:за|до|при|вы|пере|по)?куп|(?:о|до|за|у|пере)?плат[аиеяюч]|оплач|платн|плат[её]ж"
+    r"|подписк|продл|(?:по|за)?трат|стоим|стоит|бюджет|приобре|аренд|тариф|ценник|заказ(?!чик)|зарегистрир\w*\s+(?:\d|домен)|регистрир\w*\s+(?:\d|домен)"
+    r"|пополн(?:ить|им|яем|ение|ения)(?![^\W\d_])|расход(?:а|ы|ов|у|ом|е)?\s+(?:на\s|в\s+(?:день|месяц|год)|денег|\d)|дороже|дешевле|подорож"
+    r"|цен(?:а|е|у|ы|ой)(?![^\W\d_])"
+    r"|buy|bought|purchas|pay|paid|cost|charg|subscri|renew|budget|spend|billing|rent|leased?(?![^\W\d_])|tariff|upgrad"
+    r"|order(?:ed|ing)?\s+(?:\d|new|more|extra|another|an?\s)|register(?:s|ed|ing)?\s+(?:(?:an?|the|new|more|our)\s+)?(?:\d|domains?(?![^\W\d_]))|(?:fees?|price|pricing|pricier|cheaper|expensive|top[- ]?up)"
+    r"(?![^\W\d_]))",
     re.I,
 )
-_CURRENCY_RE = re.compile(r"[$€₽]\s?\d|\d[\d\s.,]*\s?(?:usd|eur|руб|долл|[$€₽])", re.I)
+_CURRENCY_RE = re.compile(
+    r"[$€₽£]\s?\d|(?<![^\W\d_])(?:usd|eur|gbp|rub)\s?\d"
+    r"|\d[\d\s.,]*\s?(?:[kк]\s?)?(?:usd|eur|gbp|руб|долл|dollar|euro|евро|pound|бакс|[$€₽£])",
+    re.I,
+)
+# One `Spend:` line, each slot with a value: sum and ceiling hold a number; account, left and later hold
+# text that is not a bracketed template value or a stand-in for one.
 _SPEND_LINE_RE = re.compile(
-    r"^\s*\**Spend:\**\s*(?=[^\n]*\d)[^\n]*\bceiling\s+\S[^\n]*\baccount:\s*\S[^\n]*\bleft\s+\S[^\n]*\blater:\s*\S",
+    r"^\s*\**Spend:\**\s*(?P<sum>.*?)[,;]\s*ceiling\s+(?P<ceiling>.*?)[,;]\s*account:\s*(?P<account>.*?)[,;]"
+    r"\s*left\s+(?P<left>.*?)[,;]\s*later:\s*(?P<later>.*?)\s*$",
     re.I | re.M,
 )
+_SPEND_EMPTY_RE = re.compile(r"^(?:<[^>]*>|\?+|-+|unknown|tbd|n/?a|неизвестно)?$", re.I)
+_SPEND_NO_ACCOUNT_RE = re.compile(r"^(?:none|нет)$", re.I)
 
 SPEND_JUDGE_PROMPT = (
     "Below is a question an AI agent asks its owner, with its options, as JSON. Answer one question: does the"
-    " question stem or any option, if chosen, make our company pay money (a purchase, a paid run, a subscription,"
-    " a paid API, model or labelling job)? Not a spend of ours: a client's payment, invoice or subscription; a"
-    " purchase made in the past or already running; a statement that something needs payment without proposing"
-    " that we pay; tokens, time, CPU or disk of what we already have with no new charge in money. Answer true"
-    " only when the words themselves propose that we pay; do not infer a charge the text does not state."
+    " question stem or any option, if chosen, make our company pay money that is actually charged (a purchase,"
+    " a rent or a higher tariff, a paid outside service, a model call billed to a metered API key)? Not a spend"
+    " of ours: a client's payment, invoice or subscription; a purchase made in the past or already running; a"
+    " statement that something needs payment without proposing that we pay; tokens, time, CPU or disk of what"
+    " we already have with no new charge in money. A model, labelling, eval or replay run is a spend only when"
+    " the text says it is billed to a metered API key or a paid outside service; when the text names no payer,"
+    " or names the agent's CLI, login or subscription, its dollar figure is consumption of an already paid"
+    " subscription, not a spend. Answer true only when the words themselves propose that we pay; do not infer a"
+    " charge the text does not state."
     ' Respond with JSON only: {{"spend": true|false, "sentence": "<the words that commit the money, or empty>"}}.'
     "\n\nQUESTION:\n{question}"
 )
@@ -1464,12 +1483,17 @@ def parse_spend_verdict(cli_stdout):
 
 
 def spend_stated(tool_input):
-    """The call is one question whose stem carries a full `Spend:` line."""
+    """The call is one question whose stem carries a `Spend:` line with every slot filled."""
     questions = tool_input.get("questions") if isinstance(tool_input, dict) else None
     if not isinstance(questions, list) or len(questions) != 1 or not isinstance(questions[0], dict):
         return False
     stem = questions[0].get("question")
-    return isinstance(stem, str) and bool(_SPEND_LINE_RE.search(stem))
+    for line in _SPEND_LINE_RE.finditer(stem if isinstance(stem, str) else ""):
+        slots = {k: v.strip(" *_`.") for k, v in line.groupdict().items()}
+        if (all(not _SPEND_EMPTY_RE.match(v) for v in slots.values()) and not _SPEND_NO_ACCOUNT_RE.match(slots["account"])
+                and all(re.search(r"\d", slots[k]) for k in ("sum", "ceiling"))):
+            return True
+    return False
 
 
 def ask_existing_decision(tool_input, spend=None):

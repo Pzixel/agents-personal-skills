@@ -6,6 +6,8 @@ usage: python3 replay.py <loop.tsv> <control.jsonl> [variants]
        python3 replay.py next-step [days] [--against <backtest stops.tsv>]
        python3 replay.py merge-gate [days]
        python3 replay.py lever [days] [--judge] [--cap N]
+       python3 replay.py ask-spend [days] [--judge] [--out <tsv>]   (default 28 days, ask-spend.tsv)
+       python3 replay.py ask-spend-pins <pins.jsonl> [k]
 
 loop.tsv: start_utc, duration_s, agent, agent_type, command (one looping
 session, all rows one repository). control.jsonl: rows of extract.py (every
@@ -658,30 +660,43 @@ def _spend_judge(tool_input, run_tag=""):
     return verdict
 
 
+# Wider than the prefilter on purpose: a number next to something we could pay for. A call it catches and
+# the prefilter does not gets a row with prefilter=false, so a spend outside the prefilter is visible.
+_WIDE_SPEND_RE = re.compile(
+    r"\d[^|]{0,40}(?:домен|ящик|сервер|диск|прокси|лиценз|тариф|domain|mailbox|inbox|server|disk|prox|licen|seat"
+    r"|vcpu)|(?:домен|ящик|сервер|диск|прокси|лиценз|domain|mailbox|server|disk|seat|vcpu)[^|]{0,40}\d",
+    re.I,
+)
+
+
 def ask_spend(days, out, judge=False):
     """Replay the spend rule over every AskUserQuestion call of the window: prefilter hits, and with
     ``judge`` the hook's judge and decision on each hit. One TSV row per prefilter hit (fires and
-    non-fires, amount or not) for hand labels; totals and fires per day per project on stdout."""
+    non-fires, amount or not) and per call only the wide scan catches, for hand labels; totals and fires
+    per day per project on stdout."""
     from concurrent.futures import ThreadPoolExecutor
     calls = list(_ask_calls(days))
     hits = [c for c in calls if g.spend_candidate(c[4])]
+    wide = [c for c in calls if not g.spend_candidate(c[4])
+            and any(_WIDE_SPEND_RE.search(t) for t in g._ask_texts(c[4]))]
     verdicts = list(ThreadPoolExecutor(8).map(lambda c: _spend_judge(c[4]), hits)) if judge else [None] * len(hits)
     fires, failed, per_project = 0, 0, collections.Counter()
     with open(out, "w") as fh:
-        fh.write("session\tline\tstamp\tproject\tamount\tverdict\tfired\tsentence\ttext\n")
-        for call, verdict in zip(hits, verdicts):
+        fh.write("session\tline\tstamp\tproject\tprefilter\tamount\tverdict\tfired\tsentence\ttext\n")
+        for call, verdict in list(zip(hits, verdicts)) + [(c, "-") for c in wide]:
             ok = isinstance(verdict, dict)
-            failed += judge and not ok
+            failed += judge and verdict != "-" and not ok
             fired = g.ask_existing_decision(call[4], verdict if ok else None) == g._ASK_SPEND_REASON
             fires += fired
             per_project[call[3]] += fired
             text = " ".join(" | ".join(g._ask_texts(call[4])).split())
             amount = any(g._CURRENCY_RE.search(t) for t in g._ask_texts(call[4]))
-            fh.write("\t".join([call[0], str(call[1]), call[2][:19], call[3], str(amount).lower(),
-                                str(verdict["spend"]).lower() if ok else str(verdict), str(fired).lower(),
-                                " ".join(verdict["sentence"].split()) if ok else "", text[:600]]) + "\n")
-    print("calls", len(calls), "prefilter", len(hits), "judge failed", failed, "fires", fires,
-          "fires/day %.2f" % (fires / float(days)), "->", out)
+            cells = [call[0], str(call[1]), call[2][:19], call[3], str(verdict != "-").lower(), str(amount).lower(),
+                     str(verdict["spend"]).lower() if ok else str(verdict), str(fired).lower(),
+                     verdict["sentence"] if ok else "", text[:600]]
+            fh.write("\t".join(" ".join(c.split()) for c in cells) + "\n")
+    print("calls", len(calls), "prefilter", len(hits), "wide only", len(wide), "judge failed", failed,
+          "fires", fires, "fires/day %.2f" % (fires / float(days)), "->", out)
     for project, n in per_project.most_common():
         if n:
             print("  ", project, n)
@@ -734,7 +749,10 @@ def main():
                              opt.get("--policy", g.__file__), opt["--out"], opt.get("--run", ""))
     if sys.argv[1] == "ask-spend":
         args = sys.argv[2:]
-        return ask_spend(int(args[0]), args[1], "--judge" in args)
+        if "--out" in args and args.index("--out") + 1 >= len(args):
+            sys.exit("usage: python3 replay.py ask-spend [days] [--judge] [--out <tsv>]")
+        out = args[args.index("--out") + 1] if "--out" in args else "ask-spend.tsv"
+        return ask_spend(int(args[0]) if args and args[0].isdigit() else 28, out, "--judge" in args)
     if sys.argv[1] == "ask-spend-pins":
         return ask_spend_pins(sys.argv[2], int(sys.argv[3]) if len(sys.argv) > 3 else 3)
     if sys.argv[1] == "judge-diff":
