@@ -1290,6 +1290,46 @@ def design_gate_target(tool, tool_input, recipient_type=None, recipient_prompt="
     return os.path.join(match.group(1), "orch-notes", "DESIGN.md"), kind
 
 
+# The two opening lines of a plan the owner approves. The labels are the contract between the plan skill
+# and this gate; the values are in whatever language the owner reads.
+PLAN_HEAD_LINES = 6
+_PLAN_MARKS = "*_`>#- \t"
+_PLAN_LABELS = {"task": "task", "done when": "done_when"}
+_PLACEHOLDER_RE = re.compile(r"^(?:\[[^\]]*\]|<[^>]*>)$")
+_PLAN_LINES_REASON = (
+    "Refused by plan-simplify-gate: the plan must open, within its first %d non-blank lines, with two plain "
+    "lines the owner reads before approving. Missing or empty: {missing} Keep the labels exactly as written, "
+    "in English; write the content in the language of your replies to the owner. A value that is only markdown marks or wholly a bracketed placeholder counts as empty. Then call ExitPlanMode again."
+) % PLAN_HEAD_LINES
+_PLAN_LINE_PROPERTY = {
+    "task": "a line `Task:` followed by what is made and what the requester will do with the result;",
+    "done_when": "a line `Done when:` followed by the one observation, at whoever uses the result, "
+                 "that shows the result does that job;",
+}
+
+
+def plan_head_lines(text):
+    """{"task", "done_when"} values from the opening non-blank lines of a plan; "" when absent, when only
+    markdown marks remain, or when the value is wholly a placeholder (`[...]`, `<...>`). Marks around the
+    label are ignored; the value loses only the label's closing emphasis and keeps everything else."""
+    found = {"task": "", "done_when": ""}
+    lines = [ln for ln in (text or "").splitlines() if ln.strip()]
+    for line in lines[:PLAN_HEAD_LINES]:
+        label, sep, value = line.strip().lstrip(_PLAN_MARKS).partition(":")
+        key = _PLAN_LABELS.get(label.strip(_PLAN_MARKS).strip().lower())
+        bare = value.strip(_PLAN_MARKS).strip()
+        if sep and key and not found[key] and bare and not _PLACEHOLDER_RE.match(value.strip(" *_`")):
+            found[key] = value.lstrip("*_").strip()
+    return found
+
+
+def plan_lines_decision(text):
+    """Refusal naming each missing opening line with its property, or None."""
+    found = plan_head_lines(text)
+    missing = [_PLAN_LINE_PROPERTY[k] for k in ("task", "done_when") if not found[k]]
+    return _PLAN_LINES_REASON.format(missing=" ".join(missing)) if missing else None
+
+
 def plan_simplify_decision(plan, words, plan_changed, review_mtime, agents_seen, params=None, kind="plan"):
     """Simplify gate over observed facts: a refusal message, or None.
 

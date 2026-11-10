@@ -977,6 +977,34 @@ class LandingTargetTest(unittest.TestCase):
             self.assertEqual((got["dir"], got["branch"], got["pr"]), want, cmd)
 
 
+class PlanOpeningLinesTest(unittest.TestCase):
+    def test_opening_lines_are_read_through_markdown(self):
+        self.assertEqual(
+            gate_policy.plan_head_lines("# Title\n\n**Task:** сделать X\n- **Done when:** вижу Y у клиента\n"),
+            {"task": "сделать X", "done_when": "вижу Y у клиента"})
+
+    def test_each_missing_or_empty_line_is_named(self):
+        for text, missing in (
+            ("# T\nTask: x\n", "`Done when:"),
+            ("# T\nDone when: y\n", "`Task:"),
+            ("# T\n**Task:** x\n**Done when:**\n", "`Done when:"),
+            ("# T\nTask: [what is made]\nDone when: y\n", "`Task:"),
+            ("# T\nTask: x\nDone when: <value>\n", "`Done when:"),
+            ("# T\nTask: **x**\nDone when: y\n", None),
+        ):
+            reason = gate_policy.plan_lines_decision(text)
+            if missing is None:
+                self.assertIsNone(reason, text)
+                continue
+            self.assertIn(missing, reason, text)
+            self.assertNotIn("`Task:" if missing == "`Done when:" else "`Done when:", reason.split("Missing or empty:")[1].split("Keep the labels")[0], text)
+
+    def test_lines_count_only_within_the_first_six_non_blank_lines(self):
+        head = "# T\na\nb\nc\nTask: x\n"
+        self.assertIsNone(gate_policy.plan_lines_decision(head + "\nDone when: y\n"))
+        self.assertIn("`Done when:", gate_policy.plan_lines_decision(head + "d\nDone when: y\n"))
+
+
 class ReplyLintDecisionTest(unittest.TestCase):
     def _d(self, text):
         return gate_policy.reply_lint_decision(text, False)["decision"]

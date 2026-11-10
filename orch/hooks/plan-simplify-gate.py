@@ -17,7 +17,8 @@ one and passes although the builder edited DESIGN.md while applying the
 findings. A design lens agent is a depth-1 agent whose first user message
 contains the full DESIGN.md path and the literal `/simplify`.
 
-ExitPlanMode: the plan is the last `plans/<name>.md` the
+ExitPlanMode: first the plan text (``tool_input.plan``, judged before any transcript read; else the
+plan file) must open with the `Task:` and `Done when:` lines (gate_policy.plan_lines_decision); no text passes. Then the plan is the last `plans/<name>.md` the
 session wrote (Write/Edit/MultiEdit file_path; `-agent-*.md` drafts and
 `.simplify.md` findings excluded); the findings must postdate its st_birthtime,
 since the plan is reworked from them. Lens agents are the session's subagent
@@ -105,13 +106,25 @@ def recipient(subagents, agent_id):
 
 def main():
     payload = json.load(sys.stdin)
+    tool, tool_input = payload.get("tool_name"), payload.get("tool_input") or {}
+    if tool == "ExitPlanMode" and tool_input.get("plan"):
+        lines_reason = gate_policy.plan_lines_decision(tool_input["plan"])
+        if lines_reason:
+            print(lines_reason, file=sys.stderr)
+            return 2
     transcript, session_id = payload.get("transcript_path"), payload.get("session_id")
     if not transcript or not session_id:
         return 0
     subagents = os.path.join(os.path.dirname(transcript), session_id, "subagents")
-    tool, tool_input = payload.get("tool_name"), payload.get("tool_input") or {}
     if tool == "ExitPlanMode":
         plan, kind = last_plan_written(transcript), "plan"
+        lines_reason = None
+        if not tool_input.get("plan") and plan and os.path.exists(plan):
+            with open(plan) as fh:
+                lines_reason = gate_policy.plan_lines_decision(fh.read())
+        if lines_reason:
+            print(lines_reason, file=sys.stderr)
+            return 2
     else:
         facts = recipient(subagents, tool_input.get("to")) if tool == "SendMessage" else (None, "")
         plan, kind = gate_policy.design_gate_target(tool, tool_input, *facts) or (None, None)

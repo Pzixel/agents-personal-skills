@@ -115,7 +115,7 @@ class PlanSimplifyHookTest(unittest.TestCase):
         """Writes like the harness: a new file replaces the old inode."""
         plan = self.plans / name
         draft = self.plans / (name + ".tmp")
-        draft.write_text(" ".join(["word"] * words))
+        draft.write_text("Task: t\nDone when: d\n" + " ".join(["word"] * (words - 5)))
         os.replace(draft, plan)
         line = {"type": "assistant", "message": {"content": [
             {"type": "tool_use", "name": "Write", "input": {"file_path": str(plan)}}]}}
@@ -130,8 +130,9 @@ class PlanSimplifyHookTest(unittest.TestCase):
         path.write_text(json.dumps({"type": "user", "message": {"role": "user", "content": prompt}}) + "\n")
         (self.subagents / ("agent-a%d.meta.json" % self.agents)).write_text(json.dumps({"spawnDepth": depth}))
 
-    def run_hook(self):
-        payload = {"session_id": "sess", "transcript_path": str(self.transcript), "tool_name": "ExitPlanMode"}
+    def run_hook(self, plan_text=""):
+        payload = {"session_id": "sess", "transcript_path": str(self.transcript), "tool_name": "ExitPlanMode",
+                   "tool_input": {"plan": plan_text}}
         return subprocess.run(["python3", str(HOOK)], input=json.dumps(payload), capture_output=True, text=True)
 
     def test_small_plan_with_fresh_review_passes(self):
@@ -182,6 +183,31 @@ class PlanSimplifyHookTest(unittest.TestCase):
         plan = self.write_plan("review-agent-flow.md", 1300)
         self.add_agent("lens: reuse. Plan: %s" % plan)
         self.assertEqual(self.run_hook().returncode, 2)
+
+    def test_plan_text_without_opening_lines_is_refused_before_review(self):
+        self.write_plan("small.md", 200)
+        result = self.run_hook("# Plan\nGoal: x\n")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("Done when", result.stderr)
+
+    def test_plan_text_with_opening_lines_and_no_plan_file_passes(self):
+        self.transcript.write_text("")
+        self.assertEqual(self.run_hook("# Plan\nTask: x\nDone when: y\n").returncode, 0)
+
+    def test_plan_file_without_opening_lines_is_refused(self):
+        plan = self.plans / "bare.md"
+        plan.write_text("# Plan\nGoal: x\n")
+        self.transcript.write_text(json.dumps({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "name": "Write", "input": {"file_path": str(plan)}}]}}) + "\n")
+        result = self.run_hook()
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("`Task:", result.stderr)
+
+    def test_plan_text_is_judged_without_a_transcript(self):
+        payload = {"tool_name": "ExitPlanMode", "tool_input": {"plan": "# Plan\nGoal: x\n"}}
+        result = subprocess.run(["python3", str(HOOK)], input=json.dumps(payload), capture_output=True, text=True)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("`Done when:", result.stderr)
 
     def test_session_without_a_plan_passes(self):
         self.transcript.write_text("")
