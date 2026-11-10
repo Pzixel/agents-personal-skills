@@ -1366,6 +1366,37 @@ def plan_lines_decision(text):
     return _PLAN_LINES_REASON.format(missing=" ".join(missing)) if missing else None
 
 
+# Measured refusal (retro-evals runs/case76-askq/refusal.txt, CASE-76): replays 0/3 -> 2/3; keep it verbatim.
+_ASK_EXISTING_REASON = "Refused by ask-existing-gate: a question to the owner that offers how to define, count or label something, or which mechanism to build or use, must say in its stem what the project already has for it: a line `Existing: <path:line> <the meaning or mechanism in force, in the owner's words>`, found in the decision or semantics record the repository's AGENTS.md names and in the code that shows it. The option that keeps it unchanged comes first. An option that departs from it is one of: `changed for all` (it names every place that changes) or `new and distinct` (a name that does not contain the old one, and the fact, with a number, by which it differs); a meaning changed only inside the new work is not offered. A question that offers nothing of that kind (a confirmation, a permission, a priority) carries `metadata.source: \"existing: n/a\"` instead. Then call AskUserQuestion again."
+
+
+def _existing_value(text):
+    """Non-empty `Existing:` value of text that starts with the label, by the plan gate's value rule."""
+    return _plan_label(text)[0] == "existing" and bool(plan_head_lines(text)["existing"])
+
+
+def ask_existing_decision(tool_input):
+    """AskUserQuestion gate: None when `metadata.source` starts with `existing: n/a` or a line of some
+    question stem starts with a non-empty `Existing:`; else the measured refusal. A citation only in
+    metadata does not pass: the owner never sees metadata. Fails open (None) on an input with no
+    non-empty string stem: a harness shape change must not block every question to the owner."""
+    tool_input = tool_input if isinstance(tool_input, dict) else {}
+    metadata = tool_input.get("metadata")
+    source = metadata.get("source") if isinstance(metadata, dict) else None
+    if isinstance(source, str) and re.match(r"existing:\s*n/a\b", source.strip(), re.I):
+        return None
+    questions = tool_input.get("questions")
+    stems = [q.get("question") for q in questions if isinstance(q, dict)] if isinstance(questions, list) else []
+    stems = [s for s in stems if isinstance(s, str) and s.strip()]
+    if not stems:
+        return None
+    for stem in stems:
+        lines = stem.splitlines()
+        if any(_existing_value("\n".join(lines[i:])) for i in range(len(lines))):
+            return None
+    return _ASK_EXISTING_REASON
+
+
 def plan_simplify_decision(plan, words, plan_changed, review_mtime, agents_seen, params=None, kind="plan"):
     """Simplify gate over observed facts: a refusal message, or None.
 

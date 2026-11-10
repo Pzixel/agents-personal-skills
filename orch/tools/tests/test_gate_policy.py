@@ -2277,5 +2277,49 @@ class ApprovalSpellingAndParseTest(unittest.TestCase):
                 self.assertEqual(gate_policy.approved_hashes(prompt), expected)
 
 
+class AskExistingDecisionTest(unittest.TestCase):
+    def ask(self, *stems, source=None):
+        tool_input = {"questions": [{"question": q, "options": []} for q in stems]}
+        if source is not None:
+            tool_input["metadata"] = {"source": source}
+        return gate_policy.ask_existing_decision(tool_input)
+
+    def test_table(self):
+        for stems, source, passes in (
+            (("Which total goes on the chart?",), None, False),
+            (("Existing: docs/s.md:384 the total as defined there. Which total goes on the chart?",), None, True),
+            (("Which total goes on the chart?\nExisting: docs/s.md:384 the total as defined there",), None, True),
+            (("Ship it?", "Existing: docs/s.md:9 the total as is. Which count?"), None, True),
+            (("Existing:\n- docs/s.md:9 the total as is\nWhich count?",), None, True),
+            (("Existing:\n    docs/s.md:9 the total as is\nWhich count?",), None, True),
+            (("Existing:\ndocs/s.md:9 the total as is\nWhich count?",), None, False),
+            (("Existing:",), None, False),
+            (("**Existing:** **",), None, False),
+            (("Existing: <path:line>",), None, False),
+            (("Which count? See Existing: docs/s.md:9",), None, False),
+            (("Ship it?",), "existing: n/a", True),
+            (("Ship it?",), "Existing: N/A confirmation", True),
+            (("Which count?",), "existing: docs/s.md:382-386", False),
+            (("Ship it?",), "existing:", False),
+            (("Ship it?",), "", False),
+        ):
+            reason = self.ask(*stems, source=source)
+            self.assertEqual(reason is None, passes, (stems, source))
+            if not passes:
+                self.assertTrue(reason.startswith("Refused by ask-existing-gate:"))
+
+    def test_input_without_a_stem_passes(self):
+        for tool_input, passes in (
+            ({}, True),
+            ({"questions": []}, True),
+            ({"questions": [{"text": "Which count?"}]}, True),
+            ({"questions": [{"question": None}]}, True),
+            ({"questions": [{"question": ""}]}, True),
+            ({"questions": [{"question": ""}, {"question": "Which count?"}]}, False),
+        ):
+            reason = gate_policy.ask_existing_decision(tool_input)
+            self.assertEqual(reason is None, passes, tool_input)
+
+
 if __name__ == "__main__":
     unittest.main()
