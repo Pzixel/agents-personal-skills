@@ -3160,7 +3160,8 @@ def redact_secrets(text, known_tokens=()):
 # --- destructive policy (hooks/deny-destructive.py) -------------------------
 
 _PLAN_MARKER_RE = re.compile(
-    r"^\s*(?:bash|sh|zsh)\s+(\S+)\s+#\s*DESTRUCTIVE_PLAN\s+sha256=([0-9a-fA-F]{64})\s*$"
+    r"^[ \t]*(?:bash|sh|zsh)[ \t]+((?:~/)?[^\s'\"`$\\;&|<>(){}\[\]*?!#~^]+)[ \t]+#[ \t]*DESTRUCTIVE_PLAN[ \t]+"
+    r"sha256=([0-9a-fA-F]{64})[ \t]*$"
 )
 _PLAN_HEADERS = (
     "# scope:", "# undo:", "# count:", "# contradiction:", "# prod_position:", "# way_back:",
@@ -3276,9 +3277,35 @@ _DOCKER_VALUE_FLAGS = frozenset({"-u", "--user", "-e", "--env", "-w", "--workdir
 
 
 def plan_marker(command):
-    """(path, sha256 hex) when the whole command runs a destructive plan, else None."""
-    m = _PLAN_MARKER_RE.match(command or "")
+    """(path, sha256 hex) when the whole command runs a destructive plan, else None.
+    The command is one plan line; whole-line shell comments (the `# OUTCOMES:`
+    and `# LOOP_COST:` lines other gates demand) may stand before and after it.
+    Only spaces and tabs count as blank, as in the shell; the path holds no quote,
+    backtick, whitespace or shell metacharacter, so no quote can carry a later line."""
+    lines = [l for l in (command or "").split("\n")
+             if l.strip(" \t") and not l.lstrip(" \t").startswith("#")]
+    m = _PLAN_MARKER_RE.match(lines[0]) if len(lines) == 1 else None
     return (m.group(1), m.group(2).lower()) if m else None
+
+
+_SUBAGENT_PLAN_DENY = "only the main session runs a destructive plan: return the plan path to main"
+_PLAN_TOKEN = "DESTRUCTIVE_PLAN"
+_PLAN_FORM_DENY = {"decision": "deny", "class": "approval", "reason": (
+    "a command that carries the plan marker runs only in the exact form: one line"
+    " `bash <absolute plan path>  # DESTRUCTIVE_PLAN sha256=<64 hex>`, optionally with whole-line"
+    " `#` comments before or after it (# OUTCOMES:, # LOOP_COST:); run_in_background is accepted;"
+    " a `cd`, arguments and output redirects go into the plan file"
+)}
+
+
+def _off_form_plan_launch(command):
+    """The plan token stands in a shell comment outside heredoc bodies while the
+    command is not the accepted plan form: a launch the approval check would miss.
+    A mention (quoted, or in a heredoc body) is not one."""
+    if _PLAN_TOKEN not in command or plan_marker(command):
+        return False
+    script = _split_heredocs(command)[0]
+    return script.count(_PLAN_TOKEN) > _strip_comments(script).count(_PLAN_TOKEN)
 
 
 def _segments_meta(command):
@@ -4425,7 +4452,7 @@ def _plan_decision(path, marker_hash, agent_type, plan_text, plan_hash, cfg):
         return {"decision": "deny", "class": "approval", "reason": reason}
 
     if agent_type:
-        return deny("only the main session runs a destructive plan: return the plan path to main")
+        return deny(_SUBAGENT_PLAN_DENY)
     if not path.startswith(("/", "~/")):
         return deny("plan path must be absolute")
     if plan_text is None:
@@ -4553,6 +4580,8 @@ def _destructive_decision(
                 "reason": "command too long for the destructive gate"}
     if _writes_approvals(command or "", cfg):
         return dict(_APPROVALS_DENY)
+    if _off_form_plan_launch(command or ""):
+        return dict(_PLAN_FORM_DENY, reason=_SUBAGENT_PLAN_DENY) if agent_type else dict(_PLAN_FORM_DENY)
     marker = plan_marker(command)
     if marker:
         result = _plan_decision(marker[0], marker[1], agent_type, plan_text, plan_hash, cfg)
@@ -4562,7 +4591,8 @@ def _destructive_decision(
         if result["decision"] == "ask" and permission_mode == "bypassPermissions" and not cfg["ask_in_bypass"]:
             return {"decision": "deny", "class": "approval", "reason": (
                 "this session cannot prompt; give the owner the plan path " + marker[0] + " to read and ask them to reply "
-                "with the line: APPROVE " + marker[1] + "\nthen run the same command again"
+                "with the line: APPROVE " + marker[1] + "\nthen run the same command again; the approval is spent when this"
+                " gate allows, before the other gates answer, so a background run carries its # OUTCOMES: line first"
             )}
     else:
         result = dict(_command_decision(command or "", cfg, os.path.realpath(cwd) if cwd else ""),

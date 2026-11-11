@@ -122,7 +122,9 @@ Hooks enforce the gates; an agent obeys a refusal's message and never works arou
   undo is not mechanical: SQL writes, `kubectl apply/delete/patch`) goes into
   one plan script with `# scope / # undo / # count / # contradiction / # prod_position /
   # way_back / # effect_read` headers, run from the main session as
-  `bash <abs path>  # DESTRUCTIVE_PLAN sha256=<hash>`; one approval per batch: the owner's
+  `bash <abs path>  # DESTRUCTIVE_PLAN sha256=<hash>` (that one line plus whole-line `#`
+  comments; a command whose top level carries the marker in comment position either is
+  that form or is refused); one approval per batch: the owner's
   approval of the plan, the permission prompt, or `APPROVE <hash>` where the session
   cannot prompt. `impossible` (no undo: DROP/TRUNCATE, Secret
   replace, namespace/PVC delete, force push, rm outside `ours`) is refused as a bare

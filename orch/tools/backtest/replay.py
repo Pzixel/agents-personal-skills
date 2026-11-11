@@ -5,6 +5,8 @@ usage: python3 replay.py <loop.tsv> <control.jsonl> [variants]
        python3 replay.py background-watch [days]
        python3 replay.py next-step [days] [--against <backtest stops.tsv>]
        python3 replay.py merge-gate [days]
+       python3 replay.py plan-form <days> --policy <base gate_policy.py> [--labels <risk-labels.tsv>]
+            (--policy: gate_policy.py inside a checkout of the base, e.g. a git worktree; a lone copy fails to load)
        python3 replay.py lever [days] [--judge] [--cap N]
        python3 replay.py ask-spend [days] [--judge] [--out <tsv>]   (default 28 days, ask-spend.tsv)
        python3 replay.py ask-spend-pins <pins.jsonl> [k]
@@ -315,10 +317,9 @@ def next_step(days, against=None):
             print("delta only-replay", rows[key][0], *key, reason)
 
 
-def _bash_calls(days):
-    """Every Bash call of the last ``days`` days: (stamp, session prefix, caller type, delegate, command),
-    main sessions (delegate=False) and subagents/agent-*.jsonl (delegate=True, type from the sibling
-    .meta.json)."""
+def _transcript_files(days):
+    """(path, caller type, delegate) of every main transcript of the last ``days`` days and its subagents
+    (type from the sibling .meta.json)."""
     cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=days)
     mains = main_transcripts(days)
     files = [(path, "main", False) for path in mains]
@@ -332,16 +333,45 @@ def _bash_calls(days):
             except (OSError, ValueError):
                 kind = "unknown"
             files.append((sub, kind, True))
-    for path, kind, delegate in files:
-        session = re.search(r"([0-9a-f]{8})[0-9a-f-]*(?:\.jsonl|/subagents)", path)
-        sid = session.group(1) if session else os.path.basename(path)
-        for _, entry in transcript.entries_of(path):
-            ts = entry.get("timestamp") or ""
-            if entry.get("type") != "assistant" or ts < cutoff.strftime("%Y-%m-%dT%H:%M:%S"):
-                continue
-            for b in transcript.blocks_of(entry):
-                if b.get("type") == "tool_use" and b.get("name") == "Bash":
-                    yield ts, sid, kind, delegate, str((b.get("input") or {}).get("command") or "")
+    return files
+
+
+def _session_prefix(path):
+    session = re.search(r"([0-9a-f]{8})[0-9a-f-]*(?:\.jsonl|/subagents)", path)
+    return session.group(1) if session else os.path.basename(path)
+
+
+def _entries_since(path, days):
+    cut = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%S")
+    for _, entry in transcript.entries_of(path):
+        ts = entry.get("timestamp") or ""
+        if ts >= cut:
+            yield ts, entry
+
+
+def _bash_blocks(entry):
+    if entry.get("type") != "assistant":
+        return
+    for b in transcript.blocks_of(entry):
+        if b.get("type") == "tool_use" and b.get("name") == "Bash":
+            yield b.get("id"), str((b.get("input") or {}).get("command") or "")
+
+
+def _user_text(entry):
+    content = (entry.get("message") or {}).get("content")
+    if isinstance(content, str):
+        return content
+    return "\n".join(str(b.get("text") or "") for b in content or [] if isinstance(b, dict) and b.get("type") == "text")
+
+
+def _bash_calls(days):
+    """Every Bash call of the last ``days`` days: (stamp, session prefix, caller type, delegate, command),
+    main sessions (delegate=False) and subagents/agent-*.jsonl (delegate=True)."""
+    for path, kind, delegate in _transcript_files(days):
+        sid = _session_prefix(path)
+        for ts, entry in _entries_since(path, days):
+            for _, cmd in _bash_blocks(entry):
+                yield ts, sid, kind, delegate, cmd
 
 
 def merge_gate(days):
@@ -409,14 +439,19 @@ def secret_write(days):
     print("witness", session, stamp, "expected fire", "actual", ("fire" if hit[0][4] else "pass " + hit[0][3]) if hit else "not found")
 
 
-def wrapper_tails(days, base_path):
-    """Every Bash call running a wrapper of ``g._WRAPPER_TOOLS`` with `--` in the last ``days`` days, decided
-    by the gate_policy at ``base_path`` and by the head; the changed decisions grouped by (base -> head, reason
-    head), each listed."""
+def _load_base(base_path):
     import importlib.util
     spec = importlib.util.spec_from_file_location("gate_policy_base", base_path)
     base = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(base)
+    return base
+
+
+def wrapper_tails(days, base_path):
+    """Every Bash call running a wrapper of ``g._WRAPPER_TOOLS`` with `--` in the last ``days`` days, decided
+    by the gate_policy at ``base_path`` and by the head; the changed decisions grouped by (base -> head, reason
+    head), each listed."""
+    base = _load_base(base_path)
     params = g.load_params()
     wrapped = re.compile(r"(?:^|[\s;&|(/])(?:%s)\b[^\n]*\s--(?:\s|$)" % "|".join(map(re.escape, g._WRAPPER_TOOLS)))
     total, changed = 0, collections.defaultdict(list)
@@ -436,6 +471,103 @@ def wrapper_tails(days, base_path):
     for key, rows in sorted(changed.items()):
         for row in sorted(rows):
             print("  ", key.split(" | ")[0], *row)
+
+
+_APPROVE_LINE = re.compile(r"^\s*APPROVE\s+([0-9a-fA-F]{64})\s*$", re.M)
+_HASH_LITERAL = re.compile(r"sha256=([0-9a-fA-F]{64})\b")
+# Arguments: a word after `(bash|sh|zsh) <path>` on the marker line that is not a redirect, operator or comment.
+_PLAN_ARGS = re.compile(r"(?:^|[\s;&|(])(?:bash|sh|zsh)\s+\S+\s+(?![#>&|;<]|\d*>)\S")
+# The marker line as the base regex read it (any \\s, any non-blank path): the narrowed path class must keep them.
+_LOOSE_PLAN_LINE = re.compile(r"^\s*(?:bash|sh|zsh)\s+\S+\s+#\s*DESTRUCTIVE_PLAN\s+sha256=[0-9a-fA-F]{64}\s*$")
+# Arguments of a wrapper launch (python3 -c '...execvp("bash", ...)' <plan>.sh b): a word after a shell-file
+# word on the marker line that is not a redirect, operator or comment.
+_FILE_ARGS = re.compile(r"\S\.(?:sh|zsh|bash)\s+(?![#>&|;<]|\d*>)\S")
+_SHELL_FILE = re.compile(r"(?:^|[\s;&|({])(?:bash|sh|zsh)\s+(?:-[a-z]+\s+)*([^\s;&|<>'\"-][^\s;&|<>'\"]*)")
+
+
+def plan_form(days, base_path, labels=None):
+    """Every distinct Bash call (by tool_use id; a session copy repeats ids) carrying the plan token in the last
+    ``days`` days, base vs head: counts of exact-form, off-form launch and mention rows, and of changed rows per
+    kind. No plan text is passed, so the replay shows the form rule, not the approval compare. For off-form
+    launches it also prints: an earlier typed `APPROVE` of the same hash in the session (yes / none / non-literal
+    hash), arguments by ``_PLAN_ARGS`` and the launches with no shell-runs-a-file match on the marker line;
+    token-less runs (main session) of a file the session launched with the token; and, with ``labels``
+    (risk-labels.tsv: session, plan_path_tail, effect), the IRREVERSIBLE plans launched only off the form."""
+    base = _load_base(base_path)
+    params = g.load_params()
+    counts, changed, approve, seen = collections.Counter(), collections.Counter(), collections.Counter(), set()
+    args = loose = narrowed_out = 0
+    no_shell = collections.Counter()
+    plan_files, plain_runs, launches = collections.defaultdict(set), [], collections.defaultdict(list)
+    for path, kind, delegate in _transcript_files(days):
+        sid = _session_prefix(path)
+        approved = set()
+        for ts, entry in _entries_since(path, days):
+            if entry.get("type") == "user" and not delegate:
+                approved.update(h.lower() for h in _APPROVE_LINE.findall(_user_text(entry)))
+                continue
+            for bid, cmd in _bash_blocks(entry):
+                if bid in seen:
+                    continue
+                seen.add(bid)
+                if g._PLAN_TOKEN not in cmd:
+                    if not delegate and ".sh" in cmd:
+                        plain_runs.append((sid, ts, cmd))
+                    continue
+                shape = "exact" if g.plan_marker(cmd) else ("launch" if g._off_form_plan_launch(cmd) else "mention")
+                counts[shape] += 1
+                script = g._strip_comments(g._split_heredocs(cmd)[0])
+                names = {os.path.basename(m.strip("\"'")) for m in _SHELL_FILE.findall(script)}
+                if shape != "mention" and not delegate:
+                    plan_files[sid].update(n for n in names if n.endswith((".sh", ".zsh", ".bash")))
+                if shape != "mention":
+                    launches[sid].append((shape, cmd))
+                for line in cmd.split("\n"):
+                    if _LOOSE_PLAN_LINE.match(line):
+                        loose += 1
+                        narrowed_out += not g._PLAN_MARKER_RE.match(line)
+                if shape == "launch":
+                    line = next((l for l in cmd.split("\n") if g._PLAN_TOKEN in l), "")
+                    h = _HASH_LITERAL.search(line)
+                    approve["non-literal hash" if not h else "yes" if h.group(1).lower() in approved else "none"] += 1
+                    args += bool(_PLAN_ARGS.search(line.split("#")[0] + " #"))
+                    if not _SHELL_FILE.search(line.split("#")[0]):
+                        wrapped_args = bool(_FILE_ARGS.search(line.split("#")[0]))
+                        no_shell["with arguments" if wrapped_args else "without"] += 1
+                        print("no shell-file on the marker line", "with arguments" if wrapped_args else "without",
+                              ts[:19], sid, cmd.replace("\n", " ")[:140])
+                who = kind if delegate else ""
+                b = base.destructive_decision(cmd, who, None, "", params, "", None, False, None)
+                hd = g.destructive_decision(cmd, who, None, "", params, "", None, False, None)
+                if (b["decision"], b["class"]) != (hd["decision"], hd["class"]):
+                    key = (shape, b["decision"] + "/" + b["class"], hd["decision"] + "/" + hd["class"])
+                    changed[key] += 1
+                    print("changed", *key, ts[:19], sid, kind, cmd.replace("\n", " ")[:140])
+    print("token calls", dict(counts), "changed", sum(changed.values()))
+    for key, n in sorted(changed.items()):
+        print("group", n, *key)
+    print("plan lines in the base regex shape", loose, "not matching the head marker regex", narrowed_out)
+    print("off-form launches: earlier typed APPROVE of the same hash", dict(approve))
+    print("off-form launches with arguments (regex on the marker line)", args,
+          "| no shell-runs-a-file match on the marker line", dict(no_shell),
+          "| with arguments in total", args + no_shell["with arguments"])
+    def runs_plan(sid, cmd):
+        script = g._strip_comments(g._split_heredocs(cmd)[0])
+        for name in plan_files[sid]:
+            m = re.search(r"(?:^|[\s;&|({])(?:(?:/\S*/)?(?:bash|sh|zsh)|source|\.)\s+(?:-[a-z]+\s+)*(?!-)[^\s;&|<>]*"
+                          + re.escape(name) + r"(?=[\s;&|<>\"']|$)", script)
+            if m and not re.search(r"(?:bash|sh|zsh)\s+-n\b", m.group(0)):
+                return True
+        return False
+    plain = [(sid, ts) for sid, ts, cmd in plain_runs if runs_plan(sid, cmd)]
+    print("token-less runs of a file launched with the token", len(plain), *("%s %s" % (s, t[:19]) for s, t in plain))
+    if labels:
+        with open(labels) as fh:
+            rows = [r for r in csv.DictReader(fh, delimiter="\t") if r["effect"] == "IRREVERSIBLE"]
+        for r in rows:
+            shapes = sorted({s for s, cmd in launches[r["session"]] if r["plan_path_tail"] in cmd})
+            print("irreversible", r["session"], r["plan_path_tail"], "launch shapes", shapes or ["not found"],
+                  "ONLY OFF-FORM" if shapes == ["launch"] else "")
 
 
 # Witness stop of CASE-69: (session prefix, stop minute UTC, expected judge answer).
@@ -764,6 +896,9 @@ def main():
         return next_step(days, against)
     if sys.argv[1] == "secret-write":
         return secret_write(int(sys.argv[2]) if len(sys.argv) > 2 else 28)
+    if sys.argv[1] == "plan-form":
+        labels = sys.argv[sys.argv.index("--labels") + 1] if "--labels" in sys.argv else None
+        return plan_form(int(sys.argv[2]), sys.argv[sys.argv.index("--policy") + 1], labels)
     if sys.argv[1] == "wrapper-tails":
         return wrapper_tails(int(sys.argv[2]), sys.argv[sys.argv.index("--policy") + 1])
     if sys.argv[1] == "merge-gate":

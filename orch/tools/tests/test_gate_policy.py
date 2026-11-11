@@ -1493,10 +1493,11 @@ class DestructiveDecisionTest(unittest.TestCase):
     def test_marker_words_inside_grep_are_not_an_override(self):
         for command in (
             'grep -rn "DESTRUCTIVE_OK" orch',
-            "echo bash x.sh  # DESTRUCTIVE_PLAN sha256=" + _PLAN_HASH,
+            'echo "bash x.sh  # DESTRUCTIVE_PLAN sha256=' + _PLAN_HASH + '"',
         ):
             with self.subTest(command=command):
                 self.assertEqual(_destructive(command)["class"], "none")
+
 
     def test_ask_in_bypass_true_keeps_ask(self):
         result = gate_policy.destructive_decision(
@@ -1743,6 +1744,87 @@ def _at(command, cwd, sql_file_texts=None):
     return gate_policy.destructive_decision(
         command, "", None, None, sql_file_texts=sql_file_texts, cwd=cwd
     )["decision"]
+
+
+# Real launch shapes of 28 days of transcripts, paths made neutral: each carries the
+# marker in a shell comment but is not the accepted form, so the approval was never looked up.
+_H = _PLAN_HASH
+_OFF_FORM_LAUNCHES = (
+    "bash /w/plan.sh pilot > tmp/p.out 2>&1; echo \"exit=$?\" >> tmp/p.out  # DESTRUCTIVE_PLAN sha256=" + _H
+    + "\n# OUTCOMES: exit 0 -> measure; error -> read log",
+    "cd /w/repo && bash /w/plan.sh  # DESTRUCTIVE_PLAN sha256=" + _H,
+    "bash /w/plan.sh 2>&1 | tail -4  # DESTRUCTIVE_PLAN sha256=" + _H,
+    "bash /w/plan.sh  # DESTRUCTIVE_PLAN sha256=" + _H + "\necho \"exit=$?\"; date -u +%H:%M:%S",
+    "date -u +%H:%M:%S && bash tmp/plan.sh  # DESTRUCTIVE_PLAN sha256=" + _H,
+    "bash /w/plan.sh  # DESTRUCTIVE_PLAN sha256=$(shasum -a 256 /w/plan.sh | cut -c1-64)",
+    "zsh /w/plan.sh 2>&1 | tail -5  # DESTRUCTIVE_PLAN sha256=" + _H,
+    "echo bash x.sh  # DESTRUCTIVE_PLAN sha256=" + _H,
+)
+_PLAN_MENTIONS = (
+    'grep -rn "DESTRUCTIVE_PLAN" orch/tools',
+    "cat > tmp/notes.md <<'EOF'\nrun it as bash /w/plan.sh  # DESTRUCTIVE_PLAN sha256=" + _H + "\nEOF",
+    "printf '%s\\n' 'bash /w/plan.sh  # DESTRUCTIVE_PLAN sha256=" + _H + "' > tmp/form.txt",
+    "git commit -qm \"gate: refuse launches like bash p.sh > out  # DESTRUCTIVE_PLAN sha256=<hex>\"",
+)
+# Lines a shell does not read as a comment or a plain path, though Python's str.strip() or \\S would:
+# each wraps an approved exact-form line, so reaching allow would run text the hash does not cover.
+_NOT_SHELL_BLANK = ("\xa0", "\x0b", "\x0c", "\r", "\x1c", "\u2003")
+
+
+class PlanFormTest(unittest.TestCase):
+    def test_off_form_launch_is_refused_with_the_accepted_form(self):
+        for command in _OFF_FORM_LAUNCHES:
+            with self.subTest(command=command):
+                result = _destructive(command)
+                self.assertEqual((result["decision"], result["class"]), ("deny", "approval"))
+                self.assertIn("bash <absolute plan path>  # DESTRUCTIVE_PLAN sha256=<64 hex>", result["reason"])
+
+    def test_mention_of_the_marker_is_not_a_launch(self):
+        for command in _PLAN_MENTIONS:
+            with self.subTest(command=command):
+                self.assertEqual(_destructive(command)["decision"], "allow")
+
+    def test_exact_form_with_comment_lines_reaches_the_approval(self):
+        command = ("# LOOP_COST: one-off approved run, no incremental form\n" + _PLAN_CMD
+                   + "\n\t# OUTCOMES: exit 0 -> verify and report; non-zero -> read the log and undo")
+        for background in (False, True):
+            with self.subTest(background=background):
+                self.assertEqual(gate_policy.outcomes_decision(command, background)["decision"], "allow")
+                self.assertEqual(
+                    gate_policy.destructive_decision(command, "", _PLAN, _PLAN_HASH, approved=True)["decision"],
+                    "allow")
+                self.assertEqual(
+                    gate_policy.destructive_decision(command, "", _PLAN, "b" * 64, approved=True)["decision"],
+                    "deny")
+
+    def test_comment_line_led_by_a_non_shell_blank_is_not_a_comment(self):
+        for lead in _NOT_SHELL_BLANK:
+            command = _PLAN_CMD + "\n" + lead + "#x; rm -rf /srv/data"
+            with self.subTest(lead=repr(lead)):
+                self.assertNotEqual(
+                    gate_policy.destructive_decision(command, "", _PLAN, _PLAN_HASH, approved=True)["decision"],
+                    "allow")
+
+    def test_shell_syntax_in_the_plan_path_is_not_the_form(self):
+        for path in ("/tmp/plan.sh'", '/tmp/plan.sh"', "/tmp/pl`id`an.sh", "/tmp/plan.sh;id", "/tmp/plan.sh&id",
+                     "/tmp/plan.sh|sh", "/tmp/plan.sh$(id)", "/tmp/plan.sh>out", "~/plan.sh;id"):
+            command = "bash " + path + "  # DESTRUCTIVE_PLAN sha256=" + _PLAN_HASH + "\n# '\" ; rm -rf /srv/data"
+            with self.subTest(path=path):
+                self.assertNotEqual(
+                    gate_policy.destructive_decision(command, "", _PLAN, _PLAN_HASH, approved=True)["decision"],
+                    "allow")
+
+    def test_home_relative_plan_path_reaches_the_hash_compare(self):
+        command = "bash ~/plan.sh  # DESTRUCTIVE_PLAN sha256=" + _PLAN_HASH
+        self.assertEqual(gate_policy.destructive_decision(command, "", _PLAN, _PLAN_HASH, approved=True)["decision"],
+                         "allow")
+        self.assertEqual(gate_policy.destructive_decision(command, "", _PLAN, "b" * 64, approved=True)["decision"],
+                         "deny")
+
+    def test_off_form_launch_from_a_subagent_gets_the_subagent_refusal(self):
+        result = _destructive(_OFF_FORM_LAUNCHES[1], "builder")
+        self.assertEqual(result["decision"], "deny")
+        self.assertIn("only the main session runs a destructive plan", result["reason"])
 
 
 class DestructiveWorkingDirectoryTest(unittest.TestCase):
