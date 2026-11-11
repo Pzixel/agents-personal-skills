@@ -13,9 +13,11 @@ decision 2026-11-12.
 
 ## Why
 
-Measured from Claude Code transcripts, 303 interactive main sessions,
-2026-10-12..11-11, list prices (retro-evals `tmp/mbo/`: `extract.py`, `analyze.py`,
-`context_cost.py`, `RESULT.txt`, `RESULT-context.txt`):
+Measured from Claude Code transcripts, 304 interactive main sessions,
+2026-10-12..11-11, list prices (retro-evals `runs/main-budget-gate/`, commit
+de2dd30a: `extract.py`, `analyze.py`, `context_cost.py`, `carry.py`, `reconcile.py`,
+`RESULT.txt`, `RESULT-context.txt`, `RESULT-carry.txt`, `RESULT-reconcile.txt`,
+`denials-per-session.json`, `denials-with-next-call.txt`):
 
 - Hands-on main-session calls above 80k context cost $1,989 in the month.
 - By length of series (hands-on calls between two boundaries): series of 1-8 calls
@@ -23,15 +25,17 @@ Measured from Claude Code transcripts, 303 interactive main sessions,
   ($141; 120 series, 3,060 calls). A read agent breaks even at about 6 main calls
   (`orch:prod-probe` 5.8, `orch:scout` 6.6), so the short series, where most of the
   money is, are not cheaper delegated.
-- Replay of the deny rule on that history (a model, not the deployed hook: it
-  counts denied attempts and overridden calls alike, tools outside the hook's
-  matcher, and 364 calls from 2026-10-24..25 when the plugin was off) stops 899
-  calls in 91 sessions, worth $70. The hook log holds 119 overrides at that position.
+- Replay of the deny rule on that history (a model, not the deployed hook) stops
+  899 calls in 91 sessions, worth $70. By `reconcile.py` (`RESULT-reconcile.txt`):
+  364 on 2026-10-24..25 when the orch plugin was not loaded, 242 not Bash without
+  the marker (mostly tools outside the hook's matcher), 179 Bash without the marker
+  (denied or let through), 114 with the marker. The hook log holds 119 overrides at
+  that position.
 - Against that: the override log holds 969 overrides in the month, 850 of them on
   calls the gate would not have denied (window below 16 or context at most 80k;
   recounted from `~/.claude/main-budget-overrides.jsonl` on 2026-11-12). Denials:
   178 tool results carrying the deny text in the main transcripts of 46 of the 51
-  sessions that used the marker; the other 5 sessions' transcripts (127 overrides,
+  sessions that used the marker (`denials-per-session.json`); the other 5 sessions' transcripts (127 overrides,
   all 2026-10-12) are gone, and sessions that never used the marker were not counted.
 
 The deny bought at most $70 a month and cost about a thousand marker lines and ~180
@@ -53,14 +57,17 @@ stops (RESULT.txt section E):
 | all four, limit 30 | 204, 22.7 % | 5 | $15 |
 
 Each keeps the deny, the marker and its noise for a few tens of dollars. Removing the
-whole hook lost too: the reminder is cheap and keeps nudging toward batching.
+whole hook was not chosen: the reminder stays; its effect on batching is not measured.
 
 ## What can get worse, and how to recount
 
 The cost that grows if sessions stop batching is the long series: series longer than
 16 hands-on calls, 120 series, 3,060 calls, $141 of $1,989 per 31 days. The reminder
-now also fires on the calls that were denied or overridden before, up to about 1,180
-more reminders per 31 days. Recount in retro-evals: `python3 tmp/mbo/extract.py`,
-then `python3 tmp/mbo/analyze.py tmp/mbo/calls.jsonl` (section D, buckets 17 and
-above). Re-adding a deny needs a new measurement showing the long-series cost well
+now also fires on calls that were denied or overridden before: an estimate, not a
+bound, of about 1,180 more reminders per 31 days (899 replayed stops plus 281 logged
+marker calls at window 4-15); 242 of the 899 are tools outside the hook's matcher and
+get no reminder, and calls that followed a former deny are not counted. Recount from
+the retro-evals root: `python3 -I runs/main-budget-gate/extract.py tmp/mbo/calls.jsonl
+&& python3 runs/main-budget-gate/analyze.py tmp/mbo/calls.jsonl` (calls.jsonl is
+about 26 MB and not committed; RESULT.txt section D, buckets 17 and above). Re-adding a deny needs a new measurement showing the long-series cost well
 above this baseline.
