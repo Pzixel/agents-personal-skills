@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""PreToolUse hook (matcher Bash|Read|Grep|Glob|Edit|Write|NotebookEdit): throttle hands-on tool calls
-in the MAIN session once its context is expensive, so reading gets batched or
-delegated instead of paid for at full context.
+"""PreToolUse hook (matcher Bash|Read|Grep|Glob|Edit|Write|NotebookEdit): remind the
+MAIN session, once its context is expensive and a window holds several hands-on
+calls, to batch or delegate the rest. It never refuses a call.
 
 Subagents are exempt (they are budgeted by agent-turn-budget.sh), which is also
 why the subagent-transcript resolution is unnecessary here: when agent_type is
@@ -12,7 +12,6 @@ only (never the whole file -- transcripts reach 100+ MB) and forwards facts.
 Fails open on absolutely any error.
 """
 
-import datetime
 import json
 import os
 import sys
@@ -25,22 +24,12 @@ TOOLS_DIR = (
     _PLUGIN_TOOLS if os.path.isdir(_PLUGIN_TOOLS) else os.path.expanduser("~/.claude/tools")
 )
 STATE_DIR = os.path.expanduser("~/.claude")
-OVERRIDE_LOG = os.path.join(STATE_DIR, "main-budget-overrides.jsonl")
 SKILL_LOG = os.path.join(STATE_DIR, "skill-load-log.jsonl")
 # A session's skill loads are recent: the last ~1300 records cover them.
 SKILL_LOG_TAIL_BYTES = 256_000
 # Spawning and bookkeeping tools are not hands-on work; hand edits are.
 SKIP_TOOLS = frozenset({"Agent", "TodoWrite", "Task", "SendMessage"})
 SPAWN_TOOLS = frozenset({"Agent", "Task"})
-
-
-def account_of(transcript_path):
-    configured = os.environ.get("CLAUDE_CONFIG_DIR", "")
-    if configured:
-        return "work" if configured.rstrip("/").endswith("/work") else "default"
-    if "/.claude-accounts/work/" in (transcript_path or ""):
-        return "work"
-    return "default"
 
 
 def tail_lines(path, max_bytes=TAIL_BYTES):
@@ -152,24 +141,6 @@ def hands_on_calls(entries, boundary, classify):
     return count
 
 
-def log_override(payload, ctx_tokens, window_calls, command, transcript_path, reason):
-    try:
-        record = {
-            "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            "account": account_of(transcript_path),
-            "session_id": payload.get("session_id") or "",
-            "tool_name": payload.get("tool_name") or "",
-            "ctx_tokens": ctx_tokens,
-            "window_calls": window_calls,
-            "reason": reason,
-            "command": command[:300],
-        }
-        with open(OVERRIDE_LOG, "a") as fh:
-            fh.write(json.dumps(record) + "\n")
-    except BaseException:
-        pass
-
-
 def emit(obj):
     sys.stdout.write(json.dumps({"hookSpecificOutput": obj}))
 
@@ -206,19 +177,8 @@ def main():
         loaded_skills=loaded_skills(payload.get("session_id") or ""),
         params=params,
     )
-    verdict = decision.get("decision")
-    if verdict == "deny":
-        emit(
-            {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": "deny",
-                "permissionDecisionReason": decision.get("reason", ""),
-            }
-        )
-    elif verdict == "remind":
+    if decision.get("decision") == "remind":
         emit({"hookEventName": "PreToolUse", "additionalContext": decision.get("message", "")})
-    elif verdict == "override":
-        log_override(payload, ctx_tokens, window_calls, cmd_or_path, transcript_path, decision["reason"])
 
 
 try:

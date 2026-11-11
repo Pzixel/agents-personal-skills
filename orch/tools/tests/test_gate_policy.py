@@ -70,7 +70,7 @@ class MainBudgetSessionTest(unittest.TestCase):
             gate_policy.budget_decision(
                 "", 100000, 16, "/Users/x/plans/handoff-1.md", tool_name="Edit"
             )["decision"],
-            "deny",
+            "remind",
         )
 
 
@@ -137,14 +137,9 @@ class BudgetDecisionTest(unittest.TestCase):
             gate_policy.budget_decision("", 200000, 7, "git diff")["decision"], "remind"
         )
 
-    def test_sixteenth_hands_on_call_is_denied(self):
+    def test_hands_on_call_past_any_count_is_reminded_never_denied(self):
         self.assertEqual(
-            gate_policy.budget_decision("", 200000, 16, "cat src/app.py")["decision"], "deny"
-        )
-
-    def test_fifteenth_hands_on_call_is_reminded_not_denied(self):
-        self.assertEqual(
-            gate_policy.budget_decision("", 200000, 15, "cat src/app.py")["decision"], "remind"
+            gate_policy.budget_decision("", 200000, 50, "cat src/app.py")["decision"], "remind"
         )
 
     def test_fourth_hands_on_call_reminds(self):
@@ -157,34 +152,26 @@ class BudgetDecisionTest(unittest.TestCase):
             gate_policy.budget_decision("", 200000, 3, "cat src/app.py")["decision"], "allow"
         )
 
-    def test_override_marker_line_bypasses_the_budget_with_its_reason(self):
-        self.assertEqual(
-            gate_policy.budget_decision(
-                "", 200000, 20, "# MAIN_BUDGET_OVERRIDE: delivery setup for slices\ncat src/app.py"
-            ),
-            {"decision": "override", "reason": "delivery setup for slices"},
-        )
-
 
 class OverrideMarkerTest(unittest.TestCase):
     CASES = [
-        ("colon form", "MAIN_BUDGET_OVERRIDE: reads for the retro", "reads for the retro"),
-        ("equals with quotes", 'MAIN_BUDGET_OVERRIDE="reads for the retro report"\nls', "reads for the retro report"),
-        ("equals with quotes then a command", 'MAIN_BUDGET_OVERRIDE="reads for the retro report" cat a', "reads for the retro report"),
-        ("unquoted equals form", "MAIN_BUDGET_OVERRIDE=reads cat src/app.py", None),
-        ("trailing comment after a command", "cat x # MAIN_BUDGET_OVERRIDE: reason text", None),
-        ("leading hash", "cat a\n  # MAIN_BUDGET_OVERRIDE: delivery setup for slices", "delivery setup for slices"),
-        ("inside a grep argument", "rtk grep MAIN_BUDGET_OVERRIDE ~/.claude/x.jsonl", None),
-        ("inside an echo string", 'echo "MAIN_BUDGET_OVERRIDE: delivery setup for slices"', None),
-        ("reason under the minimum", "# MAIN_BUDGET_OVERRIDE: ok", None),
-        ("other marker name", "NO_POLL_OVERRIDE: waiting on a deploy", None),
+        ("colon form", "NO_POLL_OVERRIDE: reads for the retro", "reads for the retro"),
+        ("equals with quotes", 'NO_POLL_OVERRIDE="reads for the retro report"\nls', "reads for the retro report"),
+        ("equals with quotes then a command", 'NO_POLL_OVERRIDE="reads for the retro report" cat a', "reads for the retro report"),
+        ("unquoted equals form", "NO_POLL_OVERRIDE=reads cat src/app.py", None),
+        ("trailing comment after a command", "cat x # NO_POLL_OVERRIDE: reason text", None),
+        ("leading hash", "cat a\n  # NO_POLL_OVERRIDE: delivery setup for slices", "delivery setup for slices"),
+        ("inside a grep argument", "rtk grep NO_POLL_OVERRIDE ~/.claude/x.jsonl", None),
+        ("inside an echo string", 'echo "NO_POLL_OVERRIDE: delivery setup for slices"', None),
+        ("reason under the minimum", "# NO_POLL_OVERRIDE: ok", None),
+        ("other marker name", "LOOP_COST: waiting on a deploy", None),
     ]
 
     def test_cases(self):
         for label, text, expected in self.CASES:
             with self.subTest(label):
                 self.assertEqual(
-                    gate_policy.override_marker(text, "MAIN_BUDGET_OVERRIDE"), expected
+                    gate_policy.override_marker(text, "NO_POLL_OVERRIDE"), expected
                 )
 
 

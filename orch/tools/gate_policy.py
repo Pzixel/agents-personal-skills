@@ -859,18 +859,6 @@ def sleeping_stop_decision(
     return {"decision": "block", "reason": _SLEEPING_STOP_REASON.format(tasks=tasks)}
 
 
-_BUDGET_DENY = (
-    "Main-session hands-on budget spent for this window ({calls} calls at {ctx}k "
-    "context). Combine the remaining reads into ONE call -- issue the tool calls in "
-    "parallel in a single message, or run one composite shell command -- or hand the "
-    "reading to an `orch:scout` or `orch:prod-probe` subagent that carries a cheap context and "
-    "reports back a summary. Validation and delivery commands (git status, git diff "
-    "--stat, gh pr checks without --watch, gh pr create/merge/view, git push/fetch/pull, "
-    "git worktree, scout, wait-for, usage-audit, reading handoff/report markdown) "
-    "are free and never counted. If this specific call really must happen here, re-run "
-    "it with `MAIN_BUDGET_OVERRIDE: <reason>` in the command."
-)
-
 _BUDGET_REMIND = (
     "Budget: you are at {calls} hands-on calls in this window at {ctx}k context -- "
     "batch the rest into one message or delegate them to a subagent."
@@ -984,16 +972,14 @@ def budget_decision(
     agent_type, ctx_tokens, window_calls, cmd_or_path,
     tool_name="Bash", loaded_skills=(), params=None,
 ):
-    """Throttle hands-on main-session tool calls once the context is expensive.
+    """Remind the main session to batch or delegate hands-on tool calls once
+    its context is expensive; never refuses a call.
 
     ``loaded_skills`` are the skills this session loaded; a session running a
-    ``main_only_skills`` skill works in main by design and is never throttled.
+    ``main_only_skills`` skill works in main by design and is never reminded.
     """
     if agent_type:
         return {"decision": "allow"}
-    reason = override_marker(cmd_or_path, "MAIN_BUDGET_OVERRIDE", params)
-    if reason:
-        return {"decision": "override", "reason": reason}
     p = _merged_params(params)
     main_only = [s for s in loaded_skills or () if s in p["main_only_skills"]]
     if main_only:
@@ -1002,13 +988,8 @@ def budget_decision(
         return {"decision": "allow"}
     if tool_call_class(tool_name, cmd_or_path, p) in (EXEMPT, WAIT_FOR):
         return {"decision": "allow"}
-    ctx_k = int(round(ctx_tokens / 1000.0))
-    if window_calls >= 16:
-        return {
-            "decision": "deny",
-            "reason": _BUDGET_DENY.format(calls=window_calls, ctx=ctx_k),
-        }
     if window_calls >= 4:
+        ctx_k = int(round(ctx_tokens / 1000.0))
         return {
             "decision": "remind",
             "message": _BUDGET_REMIND.format(calls=window_calls, ctx=ctx_k),
