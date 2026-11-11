@@ -62,7 +62,7 @@ CHECKLISTS = [
     (
         r"(статус|что сделано|как успехи|как дела|чего жд|что происходит|status\b)",
         "Status format: 1) goal metric now vs target, measured when and how; 2) what changed since the last status, with evidence; "
-        "3) the one blocker, whether it is a real dependency, and the resume signal; 4) next step. No narrative, no owner decisions.",
+        "3) the one blocker, whether it is a real dependency, and the resume signal; 4) next step. Full sentences, no account of the process, no owner decisions.",
     ),
     (
         r"(^/loop|^/goal|продолжай|автоном|не останов|пока я не|loop\b|goal\b)",
