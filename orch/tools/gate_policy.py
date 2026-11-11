@@ -2524,8 +2524,11 @@ REPLY_LINT_MARKER = "reply-lint:"
 _CLAIM_REASON = (
     REPLY_LINT_MARKER + " the reply claims completion without its observation. Attach "
     "the observation that proves it (command or query, value, time) labelled "
-    "measured / observed / assumed, on one sampled real artifact of the original "
-    "scenario; or write 'not verified'. A number from the owner, a client, memory or "
+    "measured / observed, on one sampled real artifact of the original scenario; a "
+    "raw read (rows or command output, not a number computed from them) made by a "
+    "delegate or earlier in this session is cited with its provenance "
+    "(who or which command, value, time); or withdraw the completion claim and state what is not known and what "
+    "blocks its read. A number from the owner, a client, memory or "
     "a delegate is a claim until reproduced from the primary source. Append only the missing part; do not "
     "repeat the reply."
 )

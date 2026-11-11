@@ -77,7 +77,7 @@ A builder's statement about production's current state labelled `claimed` (or ca
 
 ```
 Result: <branch, head, check result>
-Original scenario: <the observation on the real path: command or query, value, time; by default the pure function the result is computed by, run read-only on today's production rows, now; a scheduled event is awaited only as the rare exception, with the WAIT_SHOWS proof (the fact no pure function on stored data answers, and why the refactor that would is impossible or beyond the budget); or "not verified">
+Original scenario: <the observation on the real path: command or query, value, time; by default the pure function the result is computed by, run read-only on today's production rows, now; a scheduled event is awaited only as the rare exception, with the WAIT_SHOWS proof (the fact no pure function on stored data answers, and why the refactor that would is impossible or beyond the budget); or the scenario stated as not run, with what blocks it>
 Cost: <sum of the agents' reply usage, or "not shown">
 Blockers/majors: <verified by cross-check> -> <open after recheck>
 Unverified: <each path or claim no run has executed>
