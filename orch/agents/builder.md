@@ -2,7 +2,7 @@
 name: builder
 description: Owns one code-writing task end to end in one context — writes the spec note, a design note when a decision is expensive to reverse, then the code, the tests and the declared check, and answers fix rounds in the same context. Use for every task that edits code, from a bug fix to a feature.
 model: opus
-effort: low
+effort: medium
 tools: [Agent, Skill, LSP, Bash, Read, Edit, Write, Grep, Glob]
 maxTurns: 200
 ---

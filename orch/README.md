@@ -1,7 +1,7 @@
 # orch — a measured build-and-review flow for Claude Code
 
 A local Claude Code plugin. For every code change beyond one line, the `/orch:orchestrate`
-skill has one Opus session (`orch:builder`, effort `low`) write a short spec, build the change
+skill has one Opus session (`orch:builder`, effort `medium`) write a short spec, build the change
 and run its declared check; two independent reviewers (Fable; Opus for a small task) review it, a third reviewer
 cross-checks their findings in the tree, the same builder fixes the verified findings (at most
 two rounds), and one reviewer rechecks each fix. Hooks enforce the flow's gates (see Files). Why this shape: `evals/REPORT-2026-09.md` and the research
