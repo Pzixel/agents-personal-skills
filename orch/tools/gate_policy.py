@@ -2533,6 +2533,21 @@ _TIMED_STEP_REASON = (
     "yours runs before the owner's word at that time. Append only the missing part; do not repeat the reply."
 )
 
+_PROVEN_FORM = "`Proven: <cause> — <command or query>, <time> → <quoted fragment>; explains <X> of <Y>`"
+_FACT_EXITS = (
+    "move the cause below the first line as a labelled hypothesis with the read that decides it, open with "
+    "`Unknown: <the read that decides it> — blocked by <...>` when that read has not run, or open with "
+    + _PROVEN_FORM + " when a read proves it. Send the corrected opening: the first line and what moves below it."
+)
+_FACT_CAUSE_REASON = (
+    REPLY_LINT_MARKER + " the typed `Fact:` first line states a cause (\"{word}\"), and `Fact:` carries only what "
+    "its quoted fragment says: " + _FACT_EXITS
+)
+_PROVEN_FORM_REASON = (
+    REPLY_LINT_MARKER + " the `Proven:` first line lacks its full form " + _PROVEN_FORM + " (X and Y as counts): "
+    "complete it from the read that proves the cause, or " + _FACT_EXITS
+)
+
 _LEVER_REASON = (
     REPLY_LINT_MARKER + " a lever that makes a step faster is listed before the read of who consumes that "
     "step's result; name the consumer (from its own code or manifest) and whether the step is needed, or list "
@@ -2592,8 +2607,10 @@ _FENCE_RE = re.compile(r"```.*?```", re.DOTALL)
 _URL_RE = re.compile(r"https?://\S+")
 _ABS_PATH_RE = re.compile(r"(?<![\w/])(?:~|/[\w.@-]+)(?:/[\w.@-]+)+/?")
 # A next-step label at a line start (list markers and bold allowed before it) ...
+# A label at a line start: list or blockquote markers, then an optional bold or italic opener.
+_LINE_LABEL_PREFIX = r"^[ \t]*(?:(?:[-*+>]|\d+[.)])[ \t]+)*(?:\*\*|__|\*|_)?[ \t]*"
 _NEXT_STEP_LABEL_RE = re.compile(
-    r"^[ \t]*(?:(?:[-*+>]|\d+[.)])[ \t]+)*(?:\*\*|__|\*|_)?[ \t]*"
+    _LINE_LABEL_PREFIX +
     r"(?:следующ(?:ий|ие)\s+шаг|что\s+сделаю\s+дальше|дальше:|далее:|что\s+дальше"
     r"|next\s+steps?\b|what\s+i\s+will\s+do\s+next)",
     re.IGNORECASE | re.MULTILINE,
@@ -2715,6 +2732,70 @@ def timed_step_sentence(reply):
         return ""
     start, end = span
     return re.sub(r"\s+", " ", original[start:end]).strip()
+
+
+# -- fact-cause rule: a typed `Fact:` first line states no cause; a cause opens only as `Proven:` (CASE-81) --
+
+_TYPED_FIRST_LINE_RE = re.compile(
+    _LINE_LABEL_PREFIX + r"(fact|факт|proven|доказано)[ \t]*(?:\*\*|__|\*|_)?[ \t]*:(?:[ \t]*(?:\*\*|__))?",
+    re.IGNORECASE,
+)
+# Words that say what held, limited, stopped, caused or enabled something: causal connectives and verb
+# forms (past tense, not reflexive) that real typed lines carried. Data the rule matches, kept byte-for-byte.
+_CAUSE_WORD_RE = re.compile(
+    r"(?<![\w-])(?:из-за|потому\s*,?\s*что|так\s+как|поскольку|причин\w*|because|due\s+to|caus(?:e|ed|es|ing)|reasons?"
+    r"|(?:с|у)?держ(?:ал|ала|ало|али|ивал|ивала|ивало|ивали)|ограничива(?:л|ла|ло|ли)"
+    r"|останавлива(?:л|ла|ло|ли)|останови(?:л|ла|ло|ли)|освободи(?:л|ла|ло|ли)|(?:с|у)?реза(?:л|ла|ло|ли))(?![\w-])",
+    re.IGNORECASE,
+)
+# A negation right before the cause word, at most one word between and never across a comma.
+_NEGATION_BEFORE_RE = re.compile(r"(?:(?<![\w-])(?:не|ни|not|never|no)|n't)\s+(?:[^\s,;.]+\s+)?$", re.IGNORECASE)
+_NEGATION_AFTER_RE = re.compile(r"\s+(?:не|not)(?![\w-])", re.IGNORECASE)
+# "держали не X, а Y" / "held not by X but by Y": the contrast names the cause.
+_CONTRAST_RE = re.compile(r",\s+а\s|\sbut\s", re.IGNORECASE)
+_SENTENCE_STOP_RE = re.compile(r"[.;!?]")
+_ANSWER_CUT_RE = re.compile(r"[ \t][—–][ \t]|→")
+_BACKTICK_SPAN_RE = re.compile(r"`[^`]*(?:`|$)")
+_COUNT = r"(\d{1,3}(?:[ ,.]\d{3})+|\d+)"
+_PROVEN_FORM_RE = re.compile(
+    r"\S.*?[ \t][—–][ \t].*?`[^`]+`.*?\d{1,2}:\d{2}.*?→.*?`[^`]+`.*?;[ \t]*(?:explains|объясняет)[ \t]+"
+    + _COUNT + r"[ \t]+(?:of|из)[ \t]+" + _COUNT + r"(?![\w])",
+    re.IGNORECASE,
+)
+PROVEN_FORM_MISSING = "proven-form"
+
+
+def _asserted_cause(answer):
+    """The first cause word of ``answer`` that is not negated, else ""."""
+    for match in _CAUSE_WORD_RE.finditer(answer):
+        if _NEGATION_BEFORE_RE.search(answer[: match.start()]):
+            continue
+        if _NEGATION_AFTER_RE.match(answer, match.end()):
+            stop = _SENTENCE_STOP_RE.search(answer, match.end())
+            if not _CONTRAST_RE.search(answer[match.end(): stop.start() if stop else len(answer)]):
+                continue
+        return match.group(0)
+    return ""
+
+
+def fact_line_cause(reply):
+    """The fact-cause rule: for a first non-empty line typed `Fact:` / `Факт:`, the first non-negated cause
+    word of its answer part (backticked spans removed, cut at the first spaced dash or arrow); for a line typed
+    `Proven:` / `Доказано:` without its full form (cause, dash, backticked command, time, arrow, backticked
+    fragment, `; explains X of Y` with counts X <= Y), ``PROVEN_FORM_MISSING``; "" otherwise. Any other first
+    line is out of scope."""
+    line = next((ln for ln in (reply or "").splitlines() if ln.strip()), "")
+    label = _TYPED_FIRST_LINE_RE.match(line)
+    if not label:
+        return ""
+    rest = line[label.end():]
+    if label.group(1).lower() in ("proven", "доказано"):
+        form = _PROVEN_FORM_RE.match(rest.strip())
+        if form and int(re.sub(r"\D", "", form.group(1))) <= int(re.sub(r"\D", "", form.group(2))):
+            return ""
+        return PROVEN_FORM_MISSING
+    answer = _ANSWER_CUT_RE.split(_BACKTICK_SPAN_RE.sub(" ", rest), 1)[0]
+    return _asserted_cause(answer)
 
 
 def live_clocks(facts):
@@ -3019,7 +3100,8 @@ def reply_lint_decision(last_assistant_text, stop_hook_active, verdict=None, nex
     finds the step could start now; ``next-step`` then replaces ``deferral``; or, for a
     lever candidate (``lever``), the judge finds a lever listed with no consumer read; or, for a timed-step
     candidate (``timed_step`` = ``timed_step_sentence`` of a reply whose session holds no live clock,
-    ``live_clocks``), the judge finds an own step at a time not yet arrived. Rules add up.
+    ``live_clocks``), the judge finds an own step at a time not yet arrived; or ``fact_line_cause`` finds a
+    cause in a typed `Fact:` first line or a `Proven:` line without its form (``fact-cause``, no judge). Rules add up.
     ``rules`` names every rule that fired. A hand-off does not fire when ``pinned_while_working``: the
     session has a non-empty open-question file and live work (``live_mechanisms`` or ``live_clocks``),
     so its question is already raised and pinned while work that does not wait on it runs (CASE-80).
@@ -3044,6 +3126,11 @@ def reply_lint_decision(last_assistant_text, stop_hook_active, verdict=None, nex
     if timed_step and verdict and verdict.get("timed_step"):
         sentence = verdict.get("timed_step_sentence") or timed_step
         fired.append(("timed-step", _TIMED_STEP_REASON.format(sentence=sentence.replace('"', "'"))))
+    cause = fact_line_cause(text)
+    if cause == PROVEN_FORM_MISSING:
+        fired.append(("fact-cause", _PROVEN_FORM_REASON))
+    elif cause:
+        fired.append(("fact-cause", _FACT_CAUSE_REASON.format(word=cause.replace('"', "'"))))
     if not fired:
         return {"decision": "allow", "rules": []}
     return {"decision": "block", "rules": [r for r, _ in fired], "reason": " ".join(m for _, m in fired)}

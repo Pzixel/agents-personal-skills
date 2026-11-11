@@ -1152,6 +1152,61 @@ class ReplyLintDecisionTest(unittest.TestCase):
         self.assertEqual(decision["decision"], "allow")
 
 
+class FactCauseRuleTest(unittest.TestCase):
+    """A typed `Fact:` first line states no cause; a cause opens only in the full `Proven:` form (CASE-81)."""
+
+    ROW_33 = ("Факт: 9–10 ноября отправку держали не сами лимиты и не delivery_mix. Лимиты новых до 14:54 11 ноября "
+              "в сумме давали 3 500 в день, а ушло 449–1 511. Источник: `history.py logs --service gateway --since "
+              "2026-11-11T14:39Z --until 2026-11-11T14:55Z` → `\"maxNewLeadsPerDayByEsp\":{\"old\":{\"gsuite\":1450,…}` "
+              "(google), 1250 (other), 800 (outlook).")
+    PROVEN = ("Proven: sending was held by the per-provider caps — `history.py logs --service gateway`, 15:18Z → "
+              "`old 1450`; explains 3,384 of 3,384")
+
+    def _rules(self, text, stop_hook_active=False):
+        return gate_policy.reply_lint_decision(text, stop_hook_active)["rules"]
+
+    def test_cause_in_the_answer_of_a_typed_fact_line_is_returned(self):
+        for line in ("Факт: 9–10 ноября отправку держали лимиты по провайдерам — `q`, 15:18Z → `x`",
+                     "**Факт:** отправку сдерживали лимиты, а не delivery_mix. Источник: `q`",
+                     "- **Fact**: the send failed because the pool was empty — `q`, 15:18Z → `x`",
+                     "> Факт: заказ отказал из-за Ndops — `q`",
+                     "Факт: g70 отказал потому, что кончились аккаунты — `q`",
+                     "Факт: держали не сами лимиты, а учёт их расхода — `q`",
+                     "Факт: лимиты не менялись, держали отправку — `q`",
+                     "Proven: sending was held by the caps — `q`, 15:18Z → `x`; explains all of it",
+                     "Доказано: отправку держали лимиты; объясняет 5 из 3"):
+            self.assertEqual(self._rules(line + "\n\nДальше текст."), ["fact-cause"], line)
+
+    def test_lines_without_an_asserted_cause_pass(self):
+        for line in (self.ROW_33,
+                     "Факт: лимиты отправку не держали — `q`, 15:18Z → `x`",
+                     "Факт: файл содержит 40 строк, а клиент поддержит формат — `q`",
+                     "Факт: отправка остановилась в 14:00 — `q`, 14:05Z → `x`",
+                     "Fact: sending stopped at 14:00, v2.3 was released at 14:02 — `q`",
+                     "Fact: the merge is blocked by a red CI run; the pool is capped at 20 — `q`",
+                     "Факт: лимиты стояли выше отправки — `q`, 15:18Z → `\"reason\": \"held because quota\"`",
+                     "Факт: лимиты стояли выше отправки — `q`, 15:18Z → `x`. Поэтому держали не они, а учёт.",
+                     "Fact: `maxPerDay` was 2900 for google — `q`, 15:18Z → `x`",
+                     self.PROVEN,
+                     "Доказано: отправку держали лимиты — `q`, 15:18Z → `3 384 писем`; объясняет 3 384 из 3 384",
+                     "Unknown: why the caps held sending — blocked by `permission denied`",
+                     "Неизвестно: почему отправку держали лимиты — blocked by запрет владельца",
+                     "Подтверждено: отправку держали лимиты",
+                     "Отправку держали лимиты, потому что так было настроено.",
+                     "Сводка за день.\nФакт: отправку держали лимиты."):
+            self.assertEqual(self._rules(line), [], line)
+
+    def test_second_stop_passes(self):
+        self.assertEqual(self._rules("Факт: отправку держали лимиты — `q`", stop_hook_active=True), [])
+
+    def test_fires_beside_other_rules_in_one_return(self):
+        decision = gate_policy.reply_lint_decision("Факт: отправку держали лимиты. Готово.", False)
+        self.assertEqual(decision["rules"], ["claim", "fact-cause"])
+        self.assertIn("\"держали\"", decision["reason"])
+        for exit_form in ("labelled hypothesis", "`Unknown:", "`Proven:"):
+            self.assertIn(exit_form, decision["reason"])
+
+
 class HandoffJudgeTest(unittest.TestCase):
     def test_reply_that_addresses_the_owner_goes_to_the_judge(self):
         for text in (
