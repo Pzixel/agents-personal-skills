@@ -61,12 +61,12 @@ CHECKLISTS = [
     ),
     (
         r"(статус|что сделано|как успехи|как дела|чего жд|что происходит|status\b)",
-        "Status format: 1) goal metric now vs target, measured when and how; 2) what changed since the last status, with evidence; "
+        "Status format (after the typed Fact:/Unknown: first line of rules/always-on.md when the status names a cause or a blocker): 1) goal metric now vs target, measured when and how; 2) what changed since the last status, with evidence; "
         "3) the one blocker, whether it is a real dependency, and the resume signal; 4) next step. Full sentences, no account of the process, no owner decisions.",
     ),
     (
         r"(^/loop|^/goal|продолжай|автоном|не останов|пока я не|loop\b|goal\b)",
-        "Wake-up format (unattended work): first line 'lever #1: <the largest gap to the goal>; blocker: <none | real dependency + resume signal>; doing: <step on lever #1>'. "
+        "Wake-up format (unattended work): the line after the typed Fact:/Unknown: line when a cause or blocker is named, otherwise the first line: 'lever #1: <the largest gap to the goal>; blocker: <none | real dependency + resume signal>; doing: <step on lever #1>'. "
         "Side work only after lever #1 is blocked by a real dependency named in that line. Never wait on a question to an absent owner; never idle on a permission prompt.",
     ),
 ]
