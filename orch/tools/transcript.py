@@ -106,6 +106,7 @@ def _snapshot(state, turn_start, marker, index, timestamp, now):
         "cron_jobs": {k: dict(v) for k, v in state["cron_jobs"].items()},
         "recurring_jobs": {k: dict(v) for k, v in state["recurring_jobs"].items()},
         "wakeup_pending": bool(state["wakeup_due"] and now and now < state["wakeup_due"]),
+        "wakeup_prompt": state["wakeup_prompt"],
         "prior_block_seen": any(i > last_event for i in state["markers"]),
     }
 
@@ -119,21 +120,24 @@ def background_watch_scan(entries, marker):
     crons: indexes of CronCreate calls; turn_start: first index of the turn;
     agents: async Agent id -> {launch, closed} (closed by its notification or a
     TaskStop, re-opened by a SendMessage to it); agent_calls: Agent calls with no
-    tool_result yet; cron_jobs: one-shot job id -> {created, closed} (closed by
-    its `scheduled_task_fire` entry or CronDelete); recurring_jobs: recurring job id ->
-    {created, closed} (closed by CronDelete); wakeup_pending: the last ScheduleWakeup armed a wakeup that has
+    tool_result yet; cron_jobs: one-shot job id -> {created, closed, prompt, fired} (closed by
+    its `scheduled_task_fire` entry, which also sets fired, or CronDelete); recurring_jobs: recurring
+    job id -> {created, closed, prompt} (closed by CronDelete); wakeup_prompt: the ``prompt`` of the
+    last ScheduleWakeup call, "" after a ``{"stop": true}`` call; its fire entry does not empty it
+    (the fire may be written before the UserPromptSubmit hook reads the transcript); wakeup_pending: the last ScheduleWakeup armed a wakeup that has
     not fired, was not stopped (``{"stop": true}``) and whose due time (the result's timestamp plus its
     ``(in Ns)``) is after the latest entry timestamp seen; a compaction or an owner message does not clear it;
     prior_block_seen: a user entry starting with ``Stop hook feedback:`` and
     carrying ``marker`` follows the last launch or monitor end; a tool result
     that quotes the marker (a read of this source or a review) does not count."""
     state = {"tasks": {}, "monitors": {}, "crons": [], "markers": [],
-             "agents": {}, "agent_calls": set(), "cron_jobs": {}, "recurring_jobs": {}, "wakeup_due": None}
+             "agents": {}, "agent_calls": set(), "cron_jobs": {}, "recurring_jobs": {}, "wakeup_due": None,
+             "wakeup_prompt": ""}
     wakeup_uses, wakeup_stops = set(), set()
     now = None  # the latest entry timestamp seen
     commands = {}  # Bash tool_use id -> command
     monitor_uses = set()
-    cron_uses = set()
+    cron_prompts = {}  # CronCreate tool_use id -> the prompt the job will submit
     turn_start = 0
     for index, (_, entry) in enumerate(entries):
         kind = entry.get("type")
@@ -147,6 +151,7 @@ def background_watch_scan(entries, marker):
             job = state["cron_jobs"].get(str(entry.get("taskId") or ""))
             if job:
                 job["closed"] = True
+                job["fired"] = True
             if "/loop wakeup" in str(entry.get("content") or ""):
                 state["wakeup_due"] = None
             continue
@@ -161,7 +166,7 @@ def background_watch_scan(entries, marker):
                     monitor_uses.add(block.get("id"))
                 elif name == "CronCreate":
                     state["crons"].append(index)
-                    cron_uses.add(block.get("id"))
+                    cron_prompts[block.get("id")] = str(args.get("prompt") or "")
                 elif name == "CronDelete":
                     for jobs in (state["cron_jobs"], state["recurring_jobs"]):
                         job = jobs.get(str(args.get("id") or ""))
@@ -171,6 +176,7 @@ def background_watch_scan(entries, marker):
                     wakeup_uses.add(block.get("id"))
                     if args.get("stop") is True:
                         wakeup_stops.add(block.get("id"))
+                    state["wakeup_prompt"] = "" if args.get("stop") is True else str(args.get("prompt") or "")
                 elif name == "Agent":
                     state["agent_calls"].add(block.get("id"))
                 elif name == "SendMessage" and str(args.get("to") or "") in state["agents"]:
@@ -199,13 +205,14 @@ def background_watch_scan(entries, marker):
                     if spawned:
                         state["agents"][spawned.group(1)] = {"launch": index, "closed": False}
                     continue
-                if block.get("tool_use_id") in cron_uses:
+                if block.get("tool_use_id") in cron_prompts:
+                    job = {"created": index, "closed": False, "prompt": cron_prompts[block.get("tool_use_id")]}
                     scheduled = _CRON_SCHEDULED_RE.match(result_text(block).strip())
                     if scheduled:
-                        state["cron_jobs"][scheduled.group(1)] = {"created": index, "closed": False}
+                        state["cron_jobs"][scheduled.group(1)] = job
                     recurring = _CRON_RECURRING_RE.match(result_text(block).strip())
                     if recurring:
-                        state["recurring_jobs"][recurring.group(1)] = {"created": index, "closed": False}
+                        state["recurring_jobs"][recurring.group(1)] = job
                     continue
                 if block.get("tool_use_id") in wakeup_uses:
                     armed = _WAKEUP_SCHEDULED_RE.match(result_text(block).strip())

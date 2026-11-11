@@ -10,6 +10,25 @@ ID_PREFIX_RE = re.compile(r"^[0-9a-f][0-9a-f-]{3,}$", re.I)
 NOISE_PREFIXES = ("<task-notification", "<system-reminder", "<local-command")
 
 
+def typed_by_owner(prompt, facts=None):
+    """True when a UserPromptSubmit ``prompt`` is text the owner typed. False for a
+    tagged system turn (NOISE_PREFIXES), for the prompt of a scheduled job the scan
+    lists as open or as just fired, and for the prompt of the last /loop wakeup: the
+    hook payload carries no origin field (CASE-80). ``facts``: the last
+    ``transcript.background_watch_scan`` snapshot, or None."""
+    text = (prompt or "").strip() if isinstance(prompt, str) else ""
+    if not text or text.startswith(NOISE_PREFIXES):
+        return False
+    if not facts:
+        return True
+    if (facts.get("wakeup_prompt") or "").strip() == text:
+        return False
+    jobs = list(facts.get("cron_jobs", {}).values()) + list(facts.get("recurring_jobs", {}).values())
+    return not any(
+        (job.get("prompt") or "").strip() == text and (not job.get("closed") or job.get("fired")) for job in jobs
+    )
+
+
 class Session(NamedTuple):
     id: str
     path: str

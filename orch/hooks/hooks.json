@@ -203,6 +203,16 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "matcher": "PushNotification|AskUserQuestion",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/open-question.py\"",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "Stop": [
@@ -221,6 +231,11 @@
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/background-watch-gate.py\"",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/open-question.py\"",
             "timeout": 5
           }
         ]
@@ -257,6 +272,15 @@
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/plan-approval.py\"",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/open-question.py\"",
             "timeout": 5
           }
         ]

@@ -67,6 +67,23 @@ def candidates(text, transcript_path):
     return gate_policy.exempt_candidates(next_step, timed_step, facts)
 
 
+def pinned_while_working(payload):
+    """The session has a non-empty open-question file and live work in its transcript scan (CASE-80)."""
+    session, source = payload.get("session_id"), payload.get("transcript_path") or ""
+    if not gate_policy.session_id_ok(session) or not os.path.isfile(source):
+        return False
+    path = gate_policy.open_question_path(os.path.expanduser("~"), session)
+    if not os.path.isfile(path):
+        return False
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        pinned_text = fh.read()
+    facts = None
+    if pinned_text.strip():
+        for facts in transcript_scan.background_watch_scan(transcript_scan.entries_of(source), "\x00"):
+            pass
+    return gate_policy.question_pinned_while_working(pinned_text, facts)
+
+
 def judge(text, next_step="", lever="", timed_step=""):
     """(verdict or None, error or None) from the nested small-model judge."""
     prompt = gate_policy.judge_prompt(text, next_step, lever, timed_step=timed_step)
@@ -133,8 +150,14 @@ def main():
     started = time.monotonic()
     verdict, judge_error = (None, None) if skip_judge else judge(text, next_step, lever, timed_step)
     judge_ms = None if skip_judge else int((time.monotonic() - started) * 1000)
+    pinned = False
+    if verdict and verdict["handoff"]:
+        try:
+            pinned = pinned_while_working(payload)
+        except Exception as exc:  # the hand-off rule stays in force; the failure is logged
+            scan_error = "%s: %s" % (type(exc).__name__, exc)
     decision = gate_policy.reply_lint_decision(text, stop_hook_active, verdict, next_step, lever,
-                                            timed_step=timed_step)
+                                            timed_step=timed_step, pinned_while_working=pinned)
     if os.path.isfile(payload.get("transcript_path") or ""):
         log(
             {
@@ -145,6 +168,7 @@ def main():
                 "next_step_candidate": next_step,
                 "lever_candidate": lever,
                 "timed_step_candidate": timed_step,
+                "pinned_while_working": pinned,
                 "scan_error": scan_error,
                 "verdict": verdict,
                 "judge_error": judge_error,

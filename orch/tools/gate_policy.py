@@ -3026,7 +3026,7 @@ def parse_judge_verdict(cli_stdout):
 
 
 def reply_lint_decision(last_assistant_text, stop_hook_active, verdict=None, next_step="", lever="", *,
-                        timed_step=""):
+                        timed_step="", pinned_while_working=False):
     """Return the main session once when its final reply claims completion
     without an observation, or the judge ``verdict`` (``parse_judge_verdict``,
     None when no verdict exists) finds a plain-text hand-off to the owner or an
@@ -3036,7 +3036,9 @@ def reply_lint_decision(last_assistant_text, stop_hook_active, verdict=None, nex
     lever candidate (``lever``), the judge finds a lever listed with no consumer read; or, for a timed-step
     candidate (``timed_step`` = ``timed_step_sentence`` of a reply whose session holds no live clock,
     ``live_clocks``), the judge finds an own step at a time not yet arrived. Rules add up.
-    ``rules`` names every rule that fired.
+    ``rules`` names every rule that fired. A hand-off does not fire when ``pinned_while_working``: the
+    session has a non-empty open-question file and live work (``live_mechanisms`` or ``live_clocks``),
+    so its question is already raised and pinned while work that does not wait on it runs (CASE-80).
     Not claims (2026-10-15): a Russian not-verified disclosure, a done word
     as a section label or with a manner complement.
     The second stop (``stop_hook_active``) always passes."""
@@ -3046,7 +3048,7 @@ def reply_lint_decision(last_assistant_text, stop_hook_active, verdict=None, nex
     fired = []
     if _has_done_claim(text) and not _OBSERVATION_RE.search(text):
         fired.append(("claim", _CLAIM_REASON))
-    if verdict and verdict["handoff"]:
+    if verdict and verdict["handoff"] and not pinned_while_working:
         fired.append(("handoff", _HANDOFF_REASON.format(sentence=verdict["sentence"].replace('"', "'"))))
     if next_step and verdict and verdict["next_step"]:
         sentence = verdict["next_step_sentence"] or next_step
@@ -5075,3 +5077,53 @@ def background_watch_decision(facts):
         "waits": waits,
         "reason": _BACKGROUND_WATCH_REASON.format(ids=", ".join(ids)),
     }
+
+
+OPEN_QUESTION_PREFIX = "QUESTION:"
+
+
+def open_question_path(home, session_id):
+    """The file that pins a session's open owner questions, one per line; the
+    hook writes it and the status line reads it."""
+    return os.path.join(home, ".claude", "open-questions", session_id + ".md")
+
+
+def question_pinned_while_working(pinned_text, facts):
+    """True when the session's open-question file text (``pinned_text``) holds a question and its
+    ``transcript.background_watch_scan`` snapshot ``facts`` shows live work: the same
+    ``live_mechanisms`` or ``live_clocks`` test that keeps the pin at a Stop (CASE-80)."""
+    return bool((pinned_text or "").strip() and facts and (live_mechanisms(facts) or live_clocks(facts)))
+
+
+def open_question_decision(payload, facts=None):
+    """What a hook event does to the session's open-question file:
+    ``("append", line)``, ``("clear", None)`` or ``("none", None)``.
+
+    A main-session PostToolUse of PushNotification whose message starts with
+    ``QUESTION:`` appends the message (prefix stripped, one line). PostToolUse
+    of AskUserQuestion clears; so does UserPromptSubmit when the prompt is typed
+    owner text (``chat_policy.typed_by_owner``) and Stop when the session has no
+    live mechanism or clock. ``facts``: the last ``transcript.background_watch_scan``
+    snapshot, or None when there is no transcript. Subagent events and a
+    session id that is not a Claude Code UUID do nothing (CASE-80)."""
+    import chat_policy  # pure, stdlib only; imported here so gate_policy keeps no import-time dependency
+
+    none = ("none", None)
+    if not isinstance(payload, dict) or is_delegate(payload) or not session_id_ok(payload.get("session_id")):
+        return none
+    event = payload.get("hook_event_name")
+    if event == "PostToolUse":
+        tool = payload.get("tool_name")
+        if tool == "AskUserQuestion":
+            return ("clear", None)
+        message = (payload.get("tool_input") or {}).get("message")
+        if tool == "PushNotification" and isinstance(message, str) and message.startswith(OPEN_QUESTION_PREFIX):
+            line = " ".join(message[len(OPEN_QUESTION_PREFIX):].split())
+            return ("append", line) if line else none
+        return none
+    if event == "UserPromptSubmit":
+        return ("clear", None) if chat_policy.typed_by_owner(payload.get("prompt"), facts) else none
+    if event == "Stop":
+        running = facts is not None and (live_mechanisms(facts) or live_clocks(facts))
+        return none if running else ("clear", None)
+    return none
