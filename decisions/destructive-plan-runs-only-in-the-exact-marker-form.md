@@ -26,6 +26,7 @@ Cost to the owner: of the 92 off-form launches, 51 had an earlier typed `APPROVE
 
 - Retry (approval valid again after a failed run): 0 of 3 measured retries reused a hash; every retry ran an edited plan.
 - Stages (one approval for declared stages): 0 of 6 saved; all 12 launches of the one staged plan ran in the background, and a background run has no success signal to advance a stage on.
+- Stages, later evidence (2026-11-11, one session's transcript): 15 typed approvals for one staged plan, 4 for a new plan text and 11 for the same text before the next step; the 11 were asked by the agent under the always-on rule on a production step, not by the gate. With arguments refused, a step became a wrapper file with its own hash (2 more approvals for the last step). Owner decision (AskUserQuestion): a pilot approval, then one approval for one file that runs all remaining steps; no gate change, the text lives in `rules/always-on.md` (Authority and evidence) and `rules/always-on-claude.details.md` (Destructive). Check: 3 of 3 fresh headless sessions asked a six-step plan for 2 approvals (retro-evals `runs/case82-live/`); no fresh baseline arm, the baseline is the real session.
 - Local scratch databases as `ours`: the closed grammar (`docker exec <allowlisted> psql … -c 'DROP DATABASE <name>'`) covers 0 of the 3 measured rows (loops over variables, pipes).
 - Trusting the plan's `# undo:` line: the agent writes it.
 - Relaxing `kubectl apply` by class: 2 irreversible and 2 read-only plans share it.
