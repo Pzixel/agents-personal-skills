@@ -14,7 +14,9 @@ only the final reply (gate_policy.judge_prompt), runs with no hooks, plugins,
 MCP or settings, and is guarded by REPLY_LINT_JUDGE against recursion. A later
 stop (`stop_hook_active`) makes no model call and runs only the judge-free
 first-cause rule, at most twice per turn: when the transcript shows a Stop hook
-return in this turn and fewer than two of them were first-cause; so a flagged
+return in this turn and fewer than two of them were first-cause; after a
+first-cause return a reply whose line after the first paragraph says it names
+no cause passes (the exit that return offers); so a flagged
 reply costs at most three extra turns, never a loop. A judge error, timeout or
 unparsable verdict passes the reply (fail open) and is logged; every record
 names the rules that fired. Measurement and acceptance condition: ORIGINS.md.
@@ -86,16 +88,16 @@ def pinned_while_working(payload):
     return gate_policy.question_pinned_while_working(pinned_text, facts)
 
 
-def first_cause_open(transcript_path):
-    """At a later stop: a Stop hook returned this turn and fewer than two of its returns were first-cause; False
-    when the transcript is missing or unreadable."""
+def first_cause_state(transcript_path):
+    """At a later stop: (a Stop hook returned this turn and fewer than two of its returns were first-cause, one of
+    them was first-cause); (False, False) when the transcript is missing or unreadable."""
     try:
         if not os.path.isfile(transcript_path):
-            return False
+            return False, False
         texts = transcript_scan.stop_feedback_this_turn(transcript_scan.entries_of(transcript_path))
-        return gate_policy.first_cause_open(texts)
+        return gate_policy.first_cause_open(texts), gate_policy.first_cause_returned(texts)
     except Exception:
-        return False
+        return False, False
 
 
 def judge(text, next_step="", lever="", timed_step=""):
@@ -170,11 +172,12 @@ def main():
             pinned = pinned_while_working(payload)
         except Exception as exc:  # the hand-off rule stays in force; the failure is logged
             scan_error = "%s: %s" % (type(exc).__name__, exc)
-    reopen = (stop_hook_active and bool(gate_policy.first_paragraph_cause(text))
-              and first_cause_open(payload.get("transcript_path") or ""))
+    reopen, after_first_cause = False, False
+    if stop_hook_active and gate_policy.first_paragraph_cause(text):
+        reopen, after_first_cause = first_cause_state(payload.get("transcript_path") or "")
     decision = gate_policy.reply_lint_decision(text, stop_hook_active, verdict, next_step, lever,
                                             timed_step=timed_step, pinned_while_working=pinned,
-                                            first_cause_open=reopen)
+                                            first_cause_open=reopen, after_first_cause=after_first_cause)
     if os.path.isfile(payload.get("transcript_path") or ""):
         log(
             {

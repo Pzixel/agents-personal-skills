@@ -1800,10 +1800,14 @@ def _write_operands(program, args):
 
 
 def _resolve_write(target, ctx):
-    """A write target as an absolute path where its directory is known, else as written."""
+    """A write target as an absolute path where its directory is known; as
+    written when no directory was given and no cd ran; None, an unknown
+    target, when it is relative after a cd the text does not resolve."""
     target = _substitute(target, ctx["vars"])
     if target.startswith("~"):
         target = os.path.expanduser(target)
+    if not target.startswith("/") and ctx["dir"] is None:
+        return None
     if not target.startswith("/") and ctx["dir"] and "$" not in target:
         target = os.path.join(ctx["dir"], target)
     return os.path.normpath(target)
@@ -1941,12 +1945,14 @@ def bash_effects(command, cwd="", scripts=None):
     ``check``: a segment runs ``check-run`` (the command word; text in a quoted
     string or a heredoc body is not a run). ``writes``: files written by a
     redirect, ``tee``, ``sed -i``, a heredoc fed (or piped from ``cat``) to a
-    shell or an interpreter, or an interpreter running a file of ``scripts``
-    (bodies the session wrote earlier, by path); resolved against ``cwd`` and
-    the cd's and ``NAME=`` bindings the command runs, a cd target taken as
-    given; None where the target is unknown. Other programs are not read for
-    writes. ``wrote``: the heredoc bodies ``cat``/``tee`` wrote, by path.
-    A pure function of its arguments: it never reads the disk.
+    shell or an interpreter, or a shell or an interpreter running a script
+    file this command or an earlier call wrote (``scripts``: bodies the
+    session wrote earlier, by path); resolved against ``cwd`` and the cd's and
+    ``NAME=`` bindings the command runs, a cd target taken as given; None
+    where the target is unknown, a relative one after a cd the text does not
+    resolve included. Other programs are not read for writes. ``wrote``: the heredoc
+    bodies ``cat``/``tee`` wrote, by path. A pure function of its arguments:
+    it never reads the disk (a cd target is normalised, not resolved).
     """
     script, heredocs = _split_heredocs(command)
     bodies = [body for _, body, _ in heredocs]
@@ -1955,7 +1961,7 @@ def bash_effects(command, cwd="", scripts=None):
     script = _CLOBBER_RE.sub(">", script)
     script = _BRACED_VAR_RE.sub(lambda m: "$" + m.group(1) + "\x01", script)
     ctx = _new_ctx(os.path.normpath(cwd) if cwd else "", 0, command,
-                   {"TMPDIR": tempfile.gettempdir()})
+                   {"TMPDIR": os.environ.get("TMPDIR") or "/tmp"})
     check, writes, wrote, piped = False, [], {}, None
     for tokens, before, after in _segments_meta(script):
         _scope(before, ctx)
@@ -1971,8 +1977,7 @@ def bash_effects(command, cwd="", scripts=None):
             continue
         program, args, _ = _command_head([_substitute(t, ctx["vars"]) for t in tokens])
         if program in ("cd", "pushd", "popd"):
-            _change_dir(program, args, ctx, before, after, tokens[:1] == ["!"],
-                        isdir=lambda _path: True)
+            _change_dir(program, args, ctx, before, after, tokens[:1] == ["!"], literal=True)
             continue
         check = check or program == "check-run"
         operands = [_resolve_write(t, ctx) for t in _write_operands(program, args)]
@@ -1981,10 +1986,11 @@ def bash_effects(command, cwd="", scripts=None):
         if body is None and piped is not None and reads_code:
             body = piped
         piped = body if program in _HEREDOC_DATA_SINKS and _lone("|", after) else None
-        if body is None and scripts and _INLINE_INTERPRETER_RE.match(program):
+        if body is None and reads_code:  # a script file this session (or this command) wrote
             path = next((a for a in args if not a.startswith("-")), None)
-            if path and (kept := scripts.get(_resolve_write(path, ctx))) is not None:
-                writes += _interpreter_writes(program, kept, ctx)
+            kept = {**(scripts or {}), **wrote}.get(_resolve_write(path, ctx)) if path else None
+            if kept is not None:
+                writes += _heredoc_writes(program, args, kept, ctx)
         if body is not None and program in _HEREDOC_DATA_SINKS:
             wrote.update((target, body) for target in operands)
         if body is not None:
@@ -2027,6 +2033,39 @@ def _spaced(text):
     return " ".join(text.split())
 
 
+# Programs whose arguments are text they print, never a command they run.
+_PRINTERS = frozenset({"echo", "printf"})
+
+
+def executed_text(command, depth=0):
+    """What a shell command executes, as one spaced string: heredoc bodies and
+    comments dropped; ``;`` and newlines read as spaces; a quoted argument that
+    holds whitespace (a message, a pattern, an echoed sentence) and every
+    argument of ``echo`` / ``printf`` replaced by ``\\x02``; the script of
+    ``sh -c`` / ``bash -c`` (also after ``check-run --``) read as a command.
+    A declared span and a command are compared in this form, so a quoted
+    ``"$test"`` in both still matches."""
+    script = _split_heredocs(command or "")[0].replace("\\\n", " ")
+    out = []
+    for tokens, before, _ in _segments_meta(script):
+        out += [p for p in before.split() if p not in (";", "\n")]
+        printer = _command_head(tokens)[0] in _PRINTERS
+        shell = None
+        for i, tok in enumerate(tokens):
+            if os.path.basename(tok) in _SHELLS:
+                shell = i
+            if printer and os.path.basename(tok) in _PRINTERS:
+                out += [tok, "\x02"]
+                break
+            if shell is not None and i > shell and tokens[i - 1] == "-c" and depth < 4:
+                out.append(executed_text(tok.replace("\\$", "$"), depth + 1))  # shlex keeps \$ in "..."
+            elif any(ch.isspace() for ch in tok):
+                out.append("\x02")
+            else:
+                out.append(tok)
+    return _spaced(" ".join(out))
+
+
 def check_spans(declared_check):
     """The declared commands of a ``check:`` line, without a check-run prefix:
     its backticked spans that start with a command word and give it
@@ -2048,16 +2087,19 @@ def checks_decision(declared_check, events):
 
     ``events`` is the ordered record of what the agent did (``builder_events``
     plus ``reminder`` for this hook's own earlier return). After the last edit
-    the check ran when a command contains the whole line, or every declared
-    command of the line (``check_spans``) appears in a command, through
-    check-run or not; a line that declares none is settled by any
-    ``check-run``. No declared check means allow, flagged ``undeclared``.
+    the check ran when the executed text of a command (``executed_text``: not
+    a heredoc body, a quoted message or pattern, an echoed line) contains the
+    whole line, or every declared command of the line (``check_spans``)
+    appears in the executed text of a command, through check-run or not; a
+    line that declares none is settled by any ``check-run``. No declared
+    check means allow, flagged ``undeclared``.
     """
     check = (declared_check or "").strip()
     if not check:
         return {"decision": "allow", "undeclared": True}
     literal = check.strip("`").strip()
-    spans = check_spans(check)
+    whole = executed_text(literal)
+    spans = [executed_text(s) for s in check_spans(check)]
 
     last_edit = -1
     for i, event in enumerate(events or []):
@@ -2072,9 +2114,10 @@ def checks_decision(declared_check, events):
         if kind == "reminder":
             return {"decision": "allow"}
         if kind in ("command", "check"):
-            if literal in command:
+            executed = executed_text(command)
+            if whole and whole in executed:
                 return {"decision": "allow"}
-            commands.append(_spaced(command))
+            commands.append(executed)
             checked = checked or kind == "check"
     if all(any(s in c for c in commands) for s in spans) if spans else checked:
         return {"decision": "allow"}
@@ -3104,6 +3147,14 @@ _CONTRAST_RE = re.compile(r",\s+а\s|\sbut\s", re.IGNORECASE)
 _AGENT_SUBJECT_RE = re.compile(
     r"(?<![\w-])(?:я|мы|ты|вы|скрипт\w*|воркер\w*|агент\w*|хук\w*|джоб\w*|cron\w*|команд\w*)(?![\w-])", re.IGNORECASE
 )
+# A count as the whole subject of a cause verb ("около 870–1110 остановили агента зря", "12 of 40 held"): how many
+# members of a set already named did it, a distribution a read measured, not the cause of an event.
+_COUNT_SUBJECT_RE = re.compile(
+    r"\s*(?:(?:около|примерно|приблизительно|почти|ещё|еще|всего|лишь|только|ровно|до|свыше|более|менее|about|roughly"
+    r"|approximately|nearly|almost|only|just|over|under|~|≈)\s+|[~≈]\s*)*\d[\d  .,]*(?:\s*[–—-]\s*\d[\d  .,]*)?\s*%?"
+    r"(?:\s+(?:из|of)\s+\d[\d  .,]*)?\s*",
+    re.IGNORECASE,
+)
 # A connective whose clause opens with the owner as subject ("потому что ты выбрал ..."): the owner's decision,
 # known first-hand, not a cause to prove.
 # The owner right after the connective; an interjection ("because, as you know, ...") is not the subject.
@@ -3153,7 +3204,8 @@ UNKNOWN_WHY = "unknown-why"
 
 def _asserted_cause(text, open_question=False):
     """The first cause word of ``text`` that is asserted: not negated, in a clause that states an event (no
-    subjunctive, indirect question or prohibition), a verb whose clause before it names no agent or owner subject,
+    subjunctive, indirect question or prohibition), a verb whose clause before it names no agent or owner subject
+    and is not a bare count (``_COUNT_SUBJECT_RE``),
     a connective not followed by the owner as subject, and, when ``open_question``, not right after «что» /
     `what`; else ""."""
     for match in _CAUSE_WORD_RE.finditer(text):
@@ -3169,7 +3221,7 @@ def _asserted_cause(text, open_question=False):
             or (_CLAUSE_CONNECTIVE_RE.match(text, match.start()) and _UNREAL_CONTENT_RE.search(text, match.end(), end))
         ):
             continue
-        if match.group(2) and _AGENT_SUBJECT_RE.search(before[start:]):
+        if match.group(2) and (_AGENT_SUBJECT_RE.search(before[start:]) or _COUNT_SUBJECT_RE.fullmatch(before[start:])):
             continue
         if match.group(1) and _OWNER_AFTER_RE.match(text, match.end()):
             continue
@@ -3225,6 +3277,26 @@ def first_paragraph_cause(reply):
 
 
 FIRST_CAUSE_RETURNS_PER_TURN = 2
+# The exit the first-cause return offers ("If the paragraph names no cause ..., keep it and say so in one line"):
+# a line that says the paragraph above asserts no cause. Data the rule matches, kept byte-for-byte.
+_NO_CAUSE_NOTE_RE = re.compile(
+    r"(?:нет|не\s+(?:называ\w*|утвержда\w*|содерж\w*|указыва\w*))\s+(?:[\w-]+\s+){0,3}?причин"
+    r"|(?:names|states|asserts|contains|gives)\s+no\s+(?:[\w-]+\s+){0,2}?(?:cause|reason)"
+    r"|no\s+(?:causal\s+)?(?:claim|statement|assertion)\s+(?:of|about|on)\s+(?:a\s+|the\s+)?(?:cause|reason)",
+    re.IGNORECASE,
+)
+
+
+def no_cause_note(reply):
+    """The first non-empty line after the reply's first paragraph says that paragraph names no cause."""
+    rest = _PARAGRAPH_BREAK_RE.split((reply or "").strip(), 1)[1:]
+    line = next((ln for ln in rest[0].splitlines() if ln.strip()), "") if rest else ""
+    return bool(_NO_CAUSE_NOTE_RE.search(line))
+
+
+def first_cause_returned(stop_feedback_texts):
+    """A return of this turn carries ``FIRST_CAUSE_MARKER``."""
+    return any(FIRST_CAUSE_MARKER in t for t in stop_feedback_texts)
 
 
 def first_cause_open(stop_feedback_texts):
@@ -3543,17 +3615,21 @@ def parse_judge_verdict(cli_stdout):
     }
 
 
-def _first_cause_fired(text):
-    """The first-cause entry of a reply-lint return: [] or [("first-cause", reason)]."""
+def _first_cause_fired(text, after_first_cause=False):
+    """The first-cause entry of a reply-lint return: [] or [("first-cause", reason)]. After a first-cause return
+    of this turn (``after_first_cause``) a plain cause word passes when the reply takes that return's exit: the
+    line after the first paragraph says it names no cause (``no_cause_note``)."""
     cause = first_paragraph_cause(text)
-    if not cause:
+    if not cause or (after_first_cause and cause not in (PROVEN_FORM_MISSING, UNKNOWN_WHY)
+                     and no_cause_note(text)):
         return []
     reason = {PROVEN_FORM_MISSING: _PROVEN_FORM_REASON, UNKNOWN_WHY: _UNKNOWN_WHY_REASON}.get(cause, _FIRST_CAUSE_REASON)
     return [("first-cause", reason)]
 
 
 def reply_lint_decision(last_assistant_text, stop_hook_active, verdict=None, next_step="", lever="", *,
-                        timed_step="", pinned_while_working=False, first_cause_open=False):
+                        timed_step="", pinned_while_working=False, first_cause_open=False,
+                        after_first_cause=False):
     """Return the main session once when its final reply claims completion
     without an observation, or the judge ``verdict`` (``parse_judge_verdict``,
     None when no verdict exists) finds a plain-text hand-off to the owner or an
@@ -3572,12 +3648,14 @@ def reply_lint_decision(last_assistant_text, stop_hook_active, verdict=None, nex
     after a question or condition word with at most one word between.
     A later stop (``stop_hook_active``) runs only the first-cause rule, and only when ``first_cause_open``
     (``first_cause_open``: a return of this turn exists and fewer than two were first-cause), so that rule
-    returns at most twice per turn; otherwise it passes."""
+    returns at most twice per turn; otherwise it passes. After a first-cause return of this turn
+    (``after_first_cause``) a reply that takes its exit, a line after the first paragraph saying it names no
+    cause, passes that rule."""
     text = (last_assistant_text or "").strip()
     if not text or (stop_hook_active and not first_cause_open):
         return {"decision": "allow", "rules": []}
     if stop_hook_active:
-        fired = _first_cause_fired(text)
+        fired = _first_cause_fired(text, after_first_cause)
         if not fired:
             return {"decision": "allow", "rules": []}
         return {"decision": "block", "rules": [r for r, _ in fired], "reason": " ".join(m for _, m in fired)}
@@ -4360,18 +4438,27 @@ def _classify_inner(tokens, cfg, ctx):
     return _classify_tokens(local, cfg, inner)
 
 
-def _cd_target(program, args, ctx):
-    """The directory a literal ``cd``/``pushd`` moves to, None when unknown."""
+def _cd_target(program, args, ctx, literal=False):
+    """The directory a literal ``cd``/``pushd`` moves to, None when unknown.
+    ``literal``: the path as the text gives it (normalised, never resolved on disk)."""
     operands = [a for a in _path_args_keep_flags(args) if not a.startswith("-") or a == "-"]
     if len(operands) > 1:
         return None
     if not operands:
-        return os.path.realpath(os.path.expanduser("~")) if program == "cd" else None
+        home = os.path.expanduser("~")
+        return None if program != "cd" else home if literal else os.path.realpath(home)
     target = operands[0]
     if target == "-" or any(ch in target for ch in "$`{}*?[") or target.startswith("~") and not (
         target == "~" or target.startswith("~/")
     ):
         return None
+    if literal:
+        target = os.path.expanduser(target)
+        if not target.startswith("/"):
+            if not ctx["dir"]:
+                return None
+            target = os.path.join(ctx["dir"], target)
+        return os.path.normpath(target)
     return _resolve(target, ctx)
 
 
@@ -4410,21 +4497,22 @@ def _chain_step(ctx, before):
         ctx["dir"] = None
 
 
-def _change_dir(program, args, ctx, before, after, negated, isdir=os.path.isdir):
+def _change_dir(program, args, ctx, before, after, negated, literal=False):
     """Track the working directory through a cd. A top-level cd (see
     ``_top_level``) to a literal directory, not negated by ``!``, reached
     only through ``&&`` and not followed by ``||``, moves it: for the rest of
     the command when it is first of its chain and the directory exists, else
     for the rest of its ``&&`` chain (``_chain_step``; a missing directory
-    may be created earlier in the chain; ``isdir`` decides existence). Any
+    may be created earlier in the chain). ``literal``: the target is taken
+    as the text gives it and as existing, with no read of the disk. Any
     other cd makes it unknown for the rest of the command or of the
     enclosing subshell."""
     ctx["cd_seen"] = True
     target = None
     if program != "popd" and not negated and _top_level(ctx, before, after) \
             and "||" not in after and not ctx.get("chain_or"):
-        target = _cd_target(program, args, ctx)
-    if target is not None and ("&&" in before or not isdir(target)):
+        target = _cd_target(program, args, ctx, literal)
+    if target is not None and ("&&" in before or not (literal or os.path.isdir(target))):
         if "&&" in before or "&&" in after:
             ctx["cd_pending"] = True
         else:

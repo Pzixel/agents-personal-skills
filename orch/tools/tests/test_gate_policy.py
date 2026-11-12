@@ -512,6 +512,35 @@ class ChecksDecisionTest(unittest.TestCase):
         events = [{"kind": "edit"}, {"kind": "check", "command": "check-run -- wc -l src/a.rs"}]
         self.assertEqual(gate_policy.checks_decision(line, events)["decision"], "return")
 
+    def test_a_declared_command_only_mentioned_after_the_last_edit_does_not_settle_it(self):
+        line = "`cargo test -p a` and `cargo clippy --all-targets`"
+        mentions = {
+            "note": "cat >> orch-notes/HANDOFF.md <<'EOF'\nnot run: cargo test -p a, cargo clippy --all-targets\nEOF",
+            "commit message": "git commit -qm 'wip; todo: cargo test -p a and cargo clippy --all-targets'",
+            "search": "grep -rn 'cargo test -p a' docs; grep -rn 'cargo clippy --all-targets' docs",
+            "echo": "check-run -- cargo test -p a; echo skipped cargo clippy --all-targets",
+        }
+        for name, command in mentions.items():
+            with self.subTest(name):
+                events = [{"kind": "edit"}, {"kind": "command", "command": command}]
+                self.assertEqual(gate_policy.checks_decision(line, events)["decision"], "return")
+
+    def test_a_declared_loop_run_through_a_shell_script_argument_settles_it(self):
+        line = ("`for test in orch/tools/tests/test_*.py; do python3 \"$test\" || exit 1; done`, then "
+                "`python3 scripts/validate-skills.py`")
+        runs = (
+            "~/.claude/tools/check-run -- sh -c 'for test in orch/tools/tests/test_*.py; do python3 \"$test\" "
+            "|| exit 1; done; python3 scripts/validate-skills.py'",
+            "check-run -- sh -c \"for test in orch/tools/tests/test_*.py; do python3 \\\"\\$test\\\" || exit 1; "
+            "done; python3 scripts/validate-skills.py\"",
+            "for test in orch/tools/tests/test_*.py\ndo\n  python3 \"$test\" || exit 1\ndone\n"
+            "python3 scripts/validate-skills.py",
+        )
+        for command in runs:
+            with self.subTest(command=command):
+                events = [{"kind": "edit"}, {"kind": "command", "command": command}]
+                self.assertEqual(gate_policy.checks_decision(line, events)["decision"], "allow")
+
 
 def _events(tool, cwd="/repo", **tool_input):
     return gate_policy.builder_events(tool, tool_input, cwd)
@@ -589,6 +618,8 @@ class BuilderEventsTest(unittest.TestCase):
             "echo x >| /srv/f": ["/srv/f"],
             "sed -i -e 's/a/b/' -e '/c/d' /srv/x": ["/srv/x"],
             "cd /gone/wt; echo x > src/a.py": ["/gone/wt/src/a.py"],
+            "cd \"$D\"; echo 1 > a.rs": [None],
+            "cd /gone/wt || exit 1; echo 1 > tmp/a.txt": [None],
             "python3 - <<'EOF'\nimport sys; sys.path.insert(0, 'orch/tools')\nimport gate_policy\n"
             "open('/srv/runs/refusal.txt', 'w').write(gate_policy.X)\nEOF": ["/srv/runs/refusal.txt"],
         }
@@ -604,6 +635,21 @@ class BuilderEventsTest(unittest.TestCase):
                  for command in ("python3 tmp/patch.py", "python3 /tmp/probe.py")}
         self.assertEqual(kinds, {"python3 tmp/patch.py": ["edit", "command"],
                                  "python3 /tmp/probe.py": ["command"]})
+
+    def test_a_script_written_and_run_in_one_command_is_read_for_its_writes(self):
+        cases = {
+            "cat > /tmp/p.py <<'EOF'\nopen('src/a.py', 'w').write('x')\nEOF\npython3 /tmp/p.py": ["edit"],
+            "cat > /tmp/e.sh <<'EOF'\nsed -i '' s/a/b/ src/a.rs\nEOF\nbash /tmp/e.sh": ["edit"],
+            "cat > /tmp/r.py <<'EOF'\nprint(open('src/a.py').read())\nEOF\npython3 /tmp/r.py": [],
+        }
+        for command, edits in cases.items():
+            with self.subTest(command=command):
+                self.assertEqual([e["kind"] for e in _events("Bash", command=command) if e["kind"] == "edit"], edits)
+
+    def test_a_shell_script_the_session_wrote_earlier_is_read_for_its_writes(self):
+        scripts = {"/tmp/e.sh": "sed -i '' s/a/b/ src/a.rs\n"}
+        events = gate_policy.builder_events("Bash", {"command": "sh /tmp/e.sh"}, "/repo", scripts)
+        self.assertEqual([e["kind"] for e in events], ["edit", "command"])
 
     def test_a_script_written_by_a_heredoc_and_then_run_is_the_edit(self):
         written = _events("Bash", command="cat > /tmp/p.py <<'EOF'\nopen('src/a.py', 'w').write('x')\nEOF")
@@ -1324,8 +1370,9 @@ class FirstCauseRuleTest(unittest.TestCase):
     PROVEN = ("Proven: sending was held by the per-provider caps — `history.py logs --service gateway`, 15:18Z → "
               "`old 1450`; explains 3,384 of 3,384")
 
-    def _rules(self, text, stop_hook_active=False, first_cause_open=False):
-        return gate_policy.reply_lint_decision(text, stop_hook_active, first_cause_open=first_cause_open)["rules"]
+    def _rules(self, text, stop_hook_active=False, first_cause_open=False, after_first_cause=False):
+        return gate_policy.reply_lint_decision(text, stop_hook_active, first_cause_open=first_cause_open,
+                                               after_first_cause=after_first_cause)["rules"]
 
     def test_a_cause_in_the_first_paragraph_is_returned(self):
         for opening in ("Факт: 9–10 ноября отправку держали лимиты по провайдерам — `q`, 15:18Z → `x`",
@@ -1463,6 +1510,25 @@ class FirstCauseRuleTest(unittest.TestCase):
         self.assertTrue(gate_policy.first_cause_open(["Stop hook feedback:\nx", "Stop hook feedback:\n" + returned]))
         self.assertFalse(gate_policy.first_cause_open(["Stop hook feedback:\n" + returned] * 2))
 
+    COUNT_OPENING = ("За 14 дней в интерактивных сессиях было 1700 возвратов стоп-хуков, и примерно половина–две "
+                     "трети из них шум: около 870–1110 остановили агента зря. Почти весь шум дают три хука. От вас "
+                     "ничего не нужно.")
+    NO_CAUSE_NOTE = "(В этом абзаце нет утверждения о причине: это подсчёт возвратов и их распределение по хукам.)"
+
+    def test_a_count_as_the_subject_of_a_cause_verb_is_a_distribution_not_a_cause(self):
+        self.assertEqual(self._rules(self.COUNT_OPENING + "\n\n| Хук | Возвратов |"), [])
+        self.assertEqual(self._rules("Три пода остановили отправку."), ["first-cause"])
+
+    def test_after_a_first_cause_return_a_line_saying_the_paragraph_names_no_cause_passes(self):
+        for opening in (self.COUNT_OPENING, "Отправку держали лимиты по провайдерам."):
+            reply = opening + "\n\n" + self.NO_CAUSE_NOTE + "\n\n| Хук | Возвратов |"
+            with self.subTest(opening=opening):
+                self.assertEqual(self._rules(reply, stop_hook_active=True, first_cause_open=True,
+                                             after_first_cause=True), [])
+        dirty = "Отправку держали лимиты по провайдерам.\n\n" + self.NO_CAUSE_NOTE
+        self.assertEqual(self._rules(dirty), ["first-cause"])
+        self.assertEqual(self._rules(dirty, stop_hook_active=True, first_cause_open=True), ["first-cause"])
+
     def test_merged_return_names_the_rule_without_the_word_and_one_next_opening(self):
         decision = gate_policy.reply_lint_decision("Факт: отправку держали лимиты. Готово.", False)
         self.assertEqual(set(decision["rules"]), {"claim", "first-cause"})
@@ -1523,6 +1589,13 @@ class FirstCauseHookProcessTest(unittest.TestCase):
     def test_second_stop_clean_passes(self):
         first = gate_policy.reply_lint_decision(self.DIRTY, False)["reason"]
         self.assertIsNone(self._reason(self._transcript(first), True, "Факт: 1,511 и 449 писем 9–10 ноября."))
+
+    def test_second_stop_taking_the_no_cause_exit_passes(self):
+        first = gate_policy.reply_lint_decision(self.DIRTY, False)["reason"]
+        reply = self.DIRTY + "\n\n(В этом абзаце нет утверждения о причине: это подсчёт.)"
+        self.assertIsNone(self._reason(self._transcript(first), True, reply))
+        self.assertTrue(self._reason(self._transcript("background-watch-gate: x"), True, reply)
+                        .startswith(gate_policy.FIRST_CAUSE_MARKER))
 
     def test_later_stop_with_an_unreadable_transcript_passes(self):
         path = self._transcript("background-watch-gate: x")

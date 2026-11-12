@@ -166,6 +166,10 @@ class OwnWritesTest(unittest.TestCase):
     def test_handoff_the_gate_asks_for_written_by_relative_path_is_not_own_work(self):
         self.assertEqual(self.bash("echo 'builder still coding' >> HANDOFF.md", "/r/.worktrees/x"), set())
 
+    def test_a_document_named_like_a_handoff_is_own_work(self):
+        self.assertEqual(own_writes("Write", {"file_path": "/r/.worktrees/x/docs/handoff-format.md"}, "/r", ()),
+                         {"/r/.worktrees/x"})
+
 
 WT = "/r/.worktrees/x"
 

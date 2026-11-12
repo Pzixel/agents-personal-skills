@@ -57,8 +57,8 @@ _READ_ONLY_AGENTS = frozenset({"reviewer", "scout", "watcher", "prod-probe", "Ex
 
 
 def _is_handoff(path):
-    name = os.path.basename(str(path)).lower()
-    return name.startswith("handoff") and name.endswith(".md")
+    """The note the gate asks for: a file named HANDOFF.md, in any case."""
+    return os.path.basename(str(path)).lower() == "handoff.md"
 
 
 def own_writes(tool_name, tool_input, cwd, write_targets):
@@ -68,7 +68,7 @@ def own_writes(tool_name, tool_input, cwd, write_targets):
     gate_policy.bash_effects (None = unknown target). A known target counts for
     the worktree it lies in unless it is scratch there (gate_policy.scratch_path
     of its path inside the worktree: orch-notes, .git, a tmp directory) or a
-    handoff*.md, the note the gate itself asks for; an unknown target counts for
+    HANDOFF.md, the note the gate itself asks for; an unknown target counts for
     the worktree of ``cwd`` and every worktree the command names.
     """
     if tool_name in FILE_EDIT_TOOLS:
