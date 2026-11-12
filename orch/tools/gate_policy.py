@@ -2781,17 +2781,7 @@ _AGENT_SUBJECT_RE = re.compile(
 _CLAUSE_STOPS = ",.;:!?—–()\n"
 # An open question that names no cause: "Неизвестно: что (именно) держало отправку", "Unknown: what caused it".
 _OPEN_WHAT_RE = re.compile(r"(?<![\w-])(?:что(?:\s+именно)?|what)\s+$", re.IGNORECASE)
-# The same question untyped: «что» / `what` opens the sentence, and the sentence says the answer is not known
-# («Что держало отправку …, всё ещё не установлено.»). Narrow on purpose: «лимиты, что держали отправку» asserts,
-# and a contrast in the sentence («…, пока не доказано, но причина почти наверняка в лимитах») names the cause.
-_SENTENCE_WHAT_RE = re.compile(r"(?:^|[.!?]\s+|\n)[^\w\n]*(?:что(?:\s+именно)?|what)\s+$", re.IGNORECASE)
-_NOT_KNOWN_RE = re.compile(
-    r"(?<![\w-])(?:не\s+(?:установлен|выяснен|известн|найден|доказан|ясн)\w*|неизвестн\w*|неясн\w*|unknown"
-    r"|not\s+(?:yet\s+)?(?:known|established|found|proven|clear))(?![\w-])",
-    re.IGNORECASE,
-)
-_OPEN_BUT_RE = re.compile(r",\s+(?:но|а)\s|\sbut\s", re.IGNORECASE)
-_SPACED_DASH_RE =re.compile(r"[ \t][—–][ \t]")
+_SPACED_DASH_RE = re.compile(r"[ \t][—–][ \t]")
 _CLOCK_RE = re.compile(r"(?<!\d)\d{1,2}:\d{2}(?!\d)")
 _COUNT = r"(\d{1,3}(?:[ ,.  ]\d{3})+|\d+)"
 # Applied to the short text after the last ";" only, anchored at both ends.
@@ -2805,19 +2795,13 @@ PROVEN_FORM_MISSING = "proven-form"
 
 def _asserted_cause(text, open_question=False):
     """The first cause word of ``text`` that is asserted: not negated, a verb whose clause before it names no
-    agent subject, not right after «что» / `what` when ``open_question``, and not right after a sentence-opening
-    «что» / `what` whose sentence says the answer is not known; else ""."""
+    agent subject, and, when ``open_question``, not right after «что» / `what`; else ""."""
     for match in _CAUSE_WORD_RE.finditer(text):
         before = text[: match.start()]
         if _NEGATION_BEFORE_RE.search(before):
             continue
         if open_question and _OPEN_WHAT_RE.search(before):
             continue
-        if _SENTENCE_WHAT_RE.search(before):
-            end = _SENTENCE_END_RE.search(text, match.end())
-            sentence = re.split(r"[:;]", text[match.end(): end.start() if end else len(text)], 1)[0]
-            if _NOT_KNOWN_RE.search(sentence) and not _OPEN_BUT_RE.search(sentence):
-                continue
         if match.group(2) and _AGENT_SUBJECT_RE.search(before[max(before.rfind(c) for c in _CLAUSE_STOPS) + 1:]):
             continue
         if _NEGATION_AFTER_RE.match(text, match.end()):
