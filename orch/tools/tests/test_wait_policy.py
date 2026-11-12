@@ -100,6 +100,18 @@ class SleepingStopDecisionTest(unittest.TestCase):
             self.decide("Fetched 40 of 100 pages. I'll end this turn now and wait."), "block"
         )
 
+    def test_own_run_still_running_is_returned(self):
+        self.assertEqual(self.decide("Report written. My background download (task b1) is still running."), "block")
+
+    def test_negated_still_running_is_let_through(self):
+        self.assertEqual(self.decide("Report written. No background tasks of mine are still running."), "allow")
+
+    def test_another_objects_run_still_running_is_let_through(self):
+        self.assertEqual(self.decide("Should a landing wait while the tip's tests are still running?"), "allow")
+
+    def test_wait_phrase_inside_another_word_is_let_through(self):
+        self.assertEqual(self.decide("Question: should the backfill wait for a gate verdict?"), "allow")
+
     def test_finished_reply_is_let_through(self):
         self.assertEqual(self.decide("Report written to out.md. 100 pages fetched."), "allow")
 
@@ -107,10 +119,10 @@ class SleepingStopDecisionTest(unittest.TestCase):
         self.assertEqual(self.decide("Still running.", ids=["b1"], seen=True), "allow")
 
     def test_stop_hook_active_without_own_marker_is_returned(self):
-        self.assertEqual(self.decide("Still running.", active=True), "block")
+        self.assertEqual(self.decide("My build is still running.", active=True), "block")
 
     def test_own_marker_seen_is_let_through(self):
-        self.assertEqual(self.decide("Still running.", active=True, seen=True), "allow")
+        self.assertEqual(self.decide("My build is still running.", active=True, seen=True), "allow")
 
 
 if __name__ == "__main__":

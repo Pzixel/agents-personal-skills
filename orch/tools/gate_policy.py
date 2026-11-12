@@ -764,9 +764,8 @@ def _poll_rule(cmd, run_in_background, agent_type, params, timeout_ms):
 
 
 # Phrases of a final reply that ends a turn in order to wait. Matched
-# case-insensitively against the agent's last assistant text.
+# case-insensitively, as whole words, against the agent's last assistant text.
 WAITING_PHRASES = (
-    r"still running",
     r"i(?:'|\u2019)?ll wait",
     r"i will wait",
     r"wait(?:ing)? for the background",
@@ -775,7 +774,16 @@ WAITING_PHRASES = (
     r"waiting for the (?:task )?notification",
     r"wait for the (?:task )?notification",
 )
-_WAITING_RE = re.compile("|".join(WAITING_PHRASES), re.IGNORECASE)
+_WAITING_RE = re.compile(r"(?<![\w'\u2019])(?:" + "|".join(WAITING_PHRASES) + r")(?!\w)", re.IGNORECASE)
+# "still running" is a wait only about the agent's own run: a first-person word
+# before it in its clause ("my backfill is still running") and no negation there
+# ("none of mine is still running"); "the tests are still running" or a
+# leftover port-forward is another object.
+_STILL_RUNNING_RE = re.compile(r"(?<![\w-])still running(?!\w)", re.IGNORECASE)
+_PARENTHESIS_RE = re.compile(r"\([^()]*\)")
+_FIRST_PERSON_RE = re.compile(r"(?<![\w'\u2019])(?:i|my|mine|me)(?![\w'\u2019])", re.IGNORECASE)
+_CLAUSE_NEGATION_RE = re.compile(
+    r"(?<![\w'\u2019])(?:no|none|nothing|not|never)(?![\w'\u2019])|n['\u2019]t(?!\w)", re.IGNORECASE)
 
 # Fixed sentence of the block reason; the hook finds it in the transcript to
 # know the agent was already returned once.
@@ -832,8 +840,16 @@ def _blank_quoted(text):
 
 def is_waiting_text(text):
     """True when the end of the final reply, outside quoted spans, says the
-    agent is waiting."""
-    return bool(_WAITING_RE.search(_blank_quoted(text or "")[-WAITING_TAIL_CHARS:]))
+    agent is waiting: a waiting phrase, or "still running" about its own run."""
+    tail = _blank_quoted(text or "")[-WAITING_TAIL_CHARS:]
+    if _WAITING_RE.search(tail):
+        return True
+    for match in _STILL_RUNNING_RE.finditer(tail):
+        before = _PARENTHESIS_RE.sub(" ", tail[:match.start()])  # "my download (task b1) is still running"
+        clause = before[max(before.rfind(c) for c in _CLAUSE_STOPS) + 1:]
+        if _FIRST_PERSON_RE.search(clause) and not _CLAUSE_NEGATION_RE.search(clause):
+            return True
+    return False
 
 
 def sleeping_stop_decision(
