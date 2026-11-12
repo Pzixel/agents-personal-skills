@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """PreToolUse hook (matcher Bash|Read|Grep|Glob|Edit|Write|NotebookEdit): remind the
 MAIN session, once its context is expensive and a window holds several hands-on
-calls, to batch or delegate the rest. It never refuses a call.
+calls, of the read size rule in params `main_budget`. It never refuses a call.
 
 Subagents are exempt (they are budgeted by agent-turn-budget.sh), which is also
 why the subagent-transcript resolution is unnecessary here: when agent_type is

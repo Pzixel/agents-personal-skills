@@ -47,6 +47,14 @@
     "retro"
   ],
   "_doc_main_only_skills": "main-budget-gate: skills whose whole procedure runs in the main session by design; the budget gate does not count calls in a session that loaded one (skill-load-gate logs every allowed load).",
+  "main_budget": {
+    "_doc": "main-budget-gate reminder (gate_policy.budget_decision; never refuses). Trigger: a hands-on main-session call at context above remind_above_context_tokens with at least remind_from_window_calls hands-on calls in the window (since the last owner message or agent spawn). Rule for the reads still ahead (the reminder states the size arm, orchestrate SKILL.md Investigations both arms): hand them to one orch:scout or orch:prod-probe when they are expected to return more than delegate_above_result_tokens tokens of results (shown also as KB at result_chars_per_token, the measured ratio) or to take more than delegate_above_requests separate requests; otherwise read them in the main session, batched into one message. The values are measured break-evens of one read agent against hands-on reads; the measurement and why the trigger stays at 80000 / 4: decisions/main-budget-gate-reminds-and-never-denies.md, method detail in ORIGINS.md (Read break-even).",
+    "remind_above_context_tokens": 80000,
+    "remind_from_window_calls": 4,
+    "delegate_above_result_tokens": 20000,
+    "delegate_above_requests": 7,
+    "result_chars_per_token": 2.25
+  },
   "process_skill_globs": [
     "orchestrate-*",
     "process-*",

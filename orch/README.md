@@ -17,7 +17,8 @@ generic wording; the specifics live in the ignored `evals/NOTES-private.md` and
 ## Using it
 
 1. Type the task (text, or a path to a task file) in a new chat. One chat per task.
-2. Wait. The main session only spawns agents and reads their replies.
+2. Wait. The main session spawns agents and reads their replies; small reads (under the
+   thresholds of `main_budget` in `tools/orchestrate-params.json`) it does itself.
 3. Read the report: result and check, cost, blockers and majors before and after the fix
    round, what no run has verified, and questions for you.
 4. Review and merge the branch yourself.

@@ -860,8 +860,10 @@ def sleeping_stop_decision(
 
 
 _BUDGET_REMIND = (
-    "Budget: you are at {calls} hands-on calls in this window at {ctx}k context -- "
-    "batch the rest into one message or delegate them to a subagent."
+    "Budget: {calls} hands-on calls in this window at {ctx}k context. Hand the reads "
+    "still ahead to one orch:scout or orch:prod-probe when you expect them to return "
+    "more than about {tokens:,} tokens of results (about {kb} KB of output); otherwise "
+    "read them here in one batched message."
 )
 
 
@@ -972,8 +974,9 @@ def budget_decision(
     agent_type, ctx_tokens, window_calls, cmd_or_path,
     tool_name="Bash", loaded_skills=(), params=None,
 ):
-    """Remind the main session to batch or delegate hands-on tool calls once
-    its context is expensive; never refuses a call.
+    """Remind the main session of the read size rule (``main_budget`` params)
+    once its context is expensive and a window holds several hands-on calls;
+    never refuses a call.
 
     ``loaded_skills`` are the skills this session loaded; a session running a
     ``main_only_skills`` skill works in main by design and is never reminded.
@@ -984,15 +987,21 @@ def budget_decision(
     main_only = [s for s in loaded_skills or () if s in p["main_only_skills"]]
     if main_only:
         return {"decision": "allow", "reason": "main-only skill %s loaded" % main_only[0]}
-    if ctx_tokens <= 80000:
+    budget = p["main_budget"]
+    if ctx_tokens <= budget["remind_above_context_tokens"]:
         return {"decision": "allow"}
     if tool_call_class(tool_name, cmd_or_path, p) in (EXEMPT, WAIT_FOR):
         return {"decision": "allow"}
-    if window_calls >= 4:
-        ctx_k = int(round(ctx_tokens / 1000.0))
+    if window_calls >= budget["remind_from_window_calls"]:
+        tokens = budget["delegate_above_result_tokens"]
         return {
             "decision": "remind",
-            "message": _BUDGET_REMIND.format(calls=window_calls, ctx=ctx_k),
+            "message": _BUDGET_REMIND.format(
+                calls=window_calls,
+                ctx=int(round(ctx_tokens / 1000.0)),
+                tokens=tokens,
+                kb=int(round(tokens * budget["result_chars_per_token"] / 1000.0)),
+            ),
         }
     return {"decision": "allow"}
 
@@ -1041,6 +1050,15 @@ DEFAULT_PARAMS = {
     # Skills whose whole procedure runs in the main session by design; the
     # budget gate does not count calls in a session that loaded one.
     "main_only_skills": ["dialogue-to-knowledge", "retro"],
+    # main-budget-gate reminder: trigger and the read size rule it states
+    # (measurement in orchestrate-params.json main_budget._doc).
+    "main_budget": {
+        "remind_above_context_tokens": 80000,
+        "remind_from_window_calls": 4,
+        "delegate_above_result_tokens": 20000,
+        "delegate_above_requests": 7,
+        "result_chars_per_token": 2.25,
+    },
     "process_skill_globs": ["orchestrate-*", "process-*", "*-process", "workflow-*"],
     # Who may spawn whom, by the type of the SPAWNING agent. "*" means every
     # type the gate otherwise allows; "default" covers types not listed. A

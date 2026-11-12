@@ -145,13 +145,82 @@ class BudgetDecisionTest(unittest.TestCase):
 
     def test_fourth_hands_on_call_reminds(self):
         self.assertEqual(
-            gate_policy.budget_decision("", 200000, 4, "cat src/app.py")["decision"], "remind"
+            gate_policy.budget_decision(
+                "", 200000, 4, "cat src/app.py", params=_shipped_params()
+            )["decision"],
+            "remind",
         )
 
     def test_third_hands_on_call_is_allowed(self):
         self.assertEqual(
-            gate_policy.budget_decision("", 200000, 3, "cat src/app.py")["decision"], "allow"
+            gate_policy.budget_decision(
+                "", 200000, 3, "cat src/app.py", params=_shipped_params()
+            )["decision"],
+            "allow",
         )
+
+    def test_trigger_follows_the_params_values(self):
+        cases = [
+            ("call count raised", {"remind_from_window_calls": 6}, 200000, 5, "allow"),
+            ("call count lowered", {"remind_from_window_calls": 2}, 200000, 2, "remind"),
+            ("context floor raised", {"remind_above_context_tokens": 250000}, 200000, 9, "allow"),
+        ]
+        for name, budget, ctx, calls, expected in cases:
+            with self.subTest(name):
+                self.assertEqual(
+                    gate_policy.budget_decision(
+                        "", ctx, calls, "cat src/app.py", params={"main_budget": budget}
+                    )["decision"],
+                    expected,
+                )
+
+    def test_reminder_states_the_size_rule_from_params_without_delegate(self):
+        message = gate_policy.budget_decision(
+            "", 200000, 4, "cat src/app.py",
+            params={"main_budget": {
+                "delegate_above_result_tokens": 30000, "result_chars_per_token": 2.0,
+            }},
+        )["message"]
+        self.assertIn("more than about 30,000 tokens of results (about 60 KB of output)", message)
+        self.assertIn("otherwise read them here", message)
+        self.assertNotRegex(message.lower(), r"delegat")
+
+    def test_default_main_budget_equals_the_shipped_params(self):
+        shipped = {
+            k: v for k, v in _shipped_params()["main_budget"].items() if not k.startswith("_")
+        }
+        self.assertEqual(gate_policy.DEFAULT_PARAMS["main_budget"], shipped)
+
+
+class SkillThresholdsTest(unittest.TestCase):
+    def test_skill_investigations_numbers_equal_the_params(self):
+        skill = os.path.join(
+            os.path.dirname(os.path.realpath(__file__)),
+            "..", "..", "skills", "orchestrate", "SKILL.md",
+        )
+        with open(skill) as fh:
+            text = fh.read()
+        budget = _shipped_params()["main_budget"]
+        tokens = re.search(
+            r"`main_budget\.delegate_above_result_tokens` tokens of results "
+            r"\(([\d,]+), about (\d+) KB of output\)", text,
+        )
+        requests = re.search(
+            r"`main_budget\.delegate_above_requests` separate requests \((\d+)\)", text
+        )
+        self.assertEqual(
+            (int(tokens.group(1).replace(",", "")), int(tokens.group(2)), int(requests.group(1))),
+            (
+                budget["delegate_above_result_tokens"],
+                round(budget["delegate_above_result_tokens"] * budget["result_chars_per_token"] / 1000),
+                budget["delegate_above_requests"],
+            ),
+        )
+
+
+def _shipped_params():
+    with open(PARAMS_FILE) as fh:
+        return json.load(fh)
 
 
 class OverrideMarkerTest(unittest.TestCase):

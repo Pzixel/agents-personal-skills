@@ -88,7 +88,7 @@ questions[]: <for the user only>
 
 ## Stop rules
 
-- One chat per task. The main session reads only agent replies: no findings files, reports or diffs. Steps 1-7 with one fix round take 6 turns (8 with a design review and simplify pass, 10 with a size return, 2 more per design-fix round); only a second fix round, a question exchange or a re-spawn below adds turns.
+- One chat per task. The main session reads agent replies first; it opens a findings file, report or diff when a reply is ambiguous or contradicts its check, and hands one expected above the thresholds of Investigations to an `orch:scout` (code) or `orch:prod-probe` (production evidence) instead. Steps 1-7 with one fix round take 6 turns (8 with a design review and simplify pass, 10 with a size return, 2 more per design-fix round); only a second fix round, a question exchange or a re-spawn below adds turns.
 - At most 2 fix rounds, and none without a new verified finding.
 - Before step 5: when a BLOCKER is `check: missed`, instead re-spawn `orch:builder`: the step 1 prompt plus `handoff: <head>, <notes>/review-verified.md; the spec and design stand`. It does this and every later fix round.
 - A reply whose check failed: one SendMessage `the check fails: <tail>; fix and rerun, same schema`; a second failure goes to step 7.
@@ -97,7 +97,7 @@ questions[]: <for the user only>
 
 ## Investigations
 
-A question without a code change: one `orch:prod-probe` (report path in the prompt and an `access:` line with the route to every system it reads; a hook refuses the spawn without it) or one `orch:scout`. If a fix is needed, continue with step 1.
+A question without a code change is read in the main session, batched into one message, unless the reads it needs are expected to return more than `main_budget.delegate_above_result_tokens` tokens of results (20,000, about 45 KB of output) or to take more than `main_budget.delegate_above_requests` separate requests (7), both in `orchestrate-params.json` with the measurement in its `_doc`; then it goes to one `orch:prod-probe` (report path in the prompt and an `access:` line with the route to every system it reads; a hook refuses the spawn without it) or one `orch:scout`. A number that leaves the session still goes through the probe of "Proof or ship", which takes precedence over these thresholds. If a fix is needed, continue with step 1.
 
 ## Waiting
 
