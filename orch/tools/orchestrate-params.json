@@ -203,5 +203,12 @@
     "_doc": "plan-simplify-gate (ExitPlanMode; SendMessage to a builder starting `design reviewed` and containing `proceed to code`; Agent spawn of a builder with `handoff:`): a plan or a builder DESIGN.md of at least fan_out_min_words words (whitespace split) needs at least fan_out_min_agents /simplify lens agents spawned by the main session (spawn depth 1) naming the plan path. Set to 1200 from 53 plans on 2026-10-20: median 891, p75 1315, max 4187.",
     "fan_out_min_words": 1200,
     "fan_out_min_agents": 2
+  },
+  "tmp_evict": {
+    "_doc": "tools/tmp-evict: a first-level entry of a repository tmp directory idle (latest max(mtime, ctime) inside and latest transcript reference) more than big_idle_days when it holds big_bytes or more, else more than small_idle_days, is moved to <tmp>/.evicted/; grace_days after that it is deleted unless used again (then moved back). The 14-day class bounds large scratch output, where reuse after a two-week idle gap is rare; small entries cost little disk and keep the long 180-day class.",
+    "big_bytes": 100000000,
+    "big_idle_days": 14,
+    "small_idle_days": 180,
+    "grace_days": 14
   }
 }

@@ -74,6 +74,7 @@ is installed with `CLAUDE_CONFIG_DIR=~/.claude-accounts/<name> ./install.sh clau
   - `reply-lint.py` — final-reply lint.
   - `task-type-checklist.py` — per-task checklist injection.
   - `worktree-dirty-gate.py`, `worktree-reaper.py` — worktree hygiene.
+  - SessionStart also starts `tools/tmp-evict --scheduled` detached; it does nothing until `tmp-evict enable`.
   - `session-tools-link.py` — `~/.claude/{tools,hooks}` links in a fresh HOME (eval runs).
   - `dup-skills-hook.py` — one context line when a skill or agent name is visible from two
     sources (`tools/dup_policy.py`; CLI `tools/dup-skills`), silent otherwise.
@@ -83,7 +84,11 @@ is installed with `CLAUDE_CONFIG_DIR=~/.claude-accounts/<name> ./install.sh clau
   scratch paths after checking the real path; the destructive gate lets it through), `kill-own`
   (SIGTERMs the agent's own leftover local processes after the ancestry checks; same gate exemption), `secretctl` with `vault_policy.py`
   and `vault_files.py`, `scout.py`, `scout_policy.py`, `scout-mcp-empty.json`, `clamp.py`,
-  `worktree_policy.py`, `tests/`.
+  `worktree_policy.py`, `tmp-evict` with `tmp_evict.py` and `tmp_evict_policy.py` (opt-in daily two-phase cleanup of
+  repository tmp directories by idleness; `tmp-evict --help`; Codex sessions and a separate per-account transcript
+  store not passed with `--projects` are not read, and a reader they hold does not bring an entry back: the
+  `.evicted.tsv` row holds the `mv` line for the 14-day grace; an absolute reference written through a symbolic
+  link above a repository does not reach its entry), `tests/`.
 - `evals/` — the eval suite; the synthetic fixture `evals/fixtures/mini/` is tracked, results
   and `NOTES-private.md` are ignored.
 

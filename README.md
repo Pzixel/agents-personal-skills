@@ -30,6 +30,8 @@ On macOS 13 or later (the installer uses `/usr/bin/realpath`), clone the reposit
 git clone https://github.com/Pzixel/agents-personal-skills.git && cd agents-personal-skills && ./install.sh both
 ```
 
+To let repository `tmp` directories clean themselves, run `~/.claude/tools/tmp-evict` once (a dry run that prints the plan), then `~/.claude/tools/tmp-evict enable`; `tmp-evict disable` stops it (details in `tmp-evict --help`).
+
 Rerun it with the same argument after every pull. Both clients follow the links, so updating the checkout updates the skills; a running session keeps the body it loaded.
 
 ## Validate changes
