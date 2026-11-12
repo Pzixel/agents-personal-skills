@@ -4,6 +4,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
@@ -1152,8 +1153,8 @@ class ReplyLintDecisionTest(unittest.TestCase):
         self.assertEqual(decision["decision"], "allow")
 
 
-class FactCauseRuleTest(unittest.TestCase):
-    """A typed `Fact:` first line states no cause; a cause opens only in the full `Proven:` form (CASE-81)."""
+class FirstCauseRuleTest(unittest.TestCase):
+    """A cause stands in the first paragraph of a reply only in the full `Proven:` form (CASE-81)."""
 
     ROW_33 = ("Факт: 9–10 ноября отправку держали не сами лимиты и не delivery_mix. Лимиты новых до 14:54 11 ноября "
               "в сумме давали 3 500 в день, а ушло 449–1 511. Источник: `history.py logs --service gateway --since "
@@ -1162,47 +1163,83 @@ class FactCauseRuleTest(unittest.TestCase):
     PROVEN = ("Proven: sending was held by the per-provider caps — `history.py logs --service gateway`, 15:18Z → "
               "`old 1450`; explains 3,384 of 3,384")
 
-    def _rules(self, text, stop_hook_active=False):
-        return gate_policy.reply_lint_decision(text, stop_hook_active)["rules"]
+    def _rules(self, text, stop_hook_active=False, first_cause_open=False):
+        return gate_policy.reply_lint_decision(text, stop_hook_active, first_cause_open=first_cause_open)["rules"]
 
-    def test_cause_in_the_answer_of_a_typed_fact_line_is_returned(self):
-        for line in ("Факт: 9–10 ноября отправку держали лимиты по провайдерам — `q`, 15:18Z → `x`",
-                     "**Факт:** отправку сдерживали лимиты, а не delivery_mix. Источник: `q`",
-                     "- **Fact**: the send failed because the pool was empty — `q`, 15:18Z → `x`",
-                     "> Факт: заказ отказал из-за Ndops — `q`",
-                     "Факт: g70 отказал потому, что кончились аккаунты — `q`",
-                     "Факт: держали не сами лимиты, а учёт их расхода — `q`",
-                     "Факт: лимиты не менялись, держали отправку — `q`",
-                     "Proven: sending was held by the caps — `q`, 15:18Z → `x`; explains all of it",
-                     "Доказано: отправку держали лимиты; объясняет 5 из 3"):
-            self.assertEqual(self._rules(line + "\n\nДальше текст."), ["fact-cause"], line)
+    def test_a_cause_in_the_first_paragraph_is_returned(self):
+        for opening in ("Факт: 9–10 ноября отправку держали лимиты по провайдерам — `q`, 15:18Z → `x`",
+                        "**Факт:** отправку сдерживали лимиты, а не delivery_mix. Источник: `q`",
+                        "- **Fact**: the send failed because the pool was empty — `q`, 15:18Z → `x`",
+                        "> Факт: заказ отказал из-за Ndops — `q`",
+                        "Факт: держали не сами лимиты, а учёт их расхода — `q`",
+                        "Факт: лимиты не менялись, держали отправку — `q`",
+                        "Факт: лимиты стояли выше отправки — `q`, 15:18Z → `x`. Поэтому держали не они, а учёт.",
+                        "Отправку держали лимиты, потому что так было настроено.",
+                        "Сводка за день.\nФакт: отправку держали лимиты.",
+                        "9–10 ноября отправку остановили дневные лимиты по провайдерам.",
+                        "Факт: 9–10 ноября отправку остановила проверка дневных лимитов.",
+                        "Причина та же: дневные лимиты.",
+                        "The root cause was a race in the scheduler.",
+                        "Неизвестно: почему отправку держали лимиты — blocked by запрет владельца",
+                        "Неизвестно: что держало отправку, если её держали лимиты по провайдерам."):
+            self.assertEqual(self._rules(opening + "\n\nДальше текст."), ["first-cause"], opening)
 
-    def test_lines_without_an_asserted_cause_pass(self):
-        for line in (self.ROW_33,
-                     "Факт: лимиты отправку не держали — `q`, 15:18Z → `x`",
-                     "Факт: файл содержит 40 строк, а клиент поддержит формат — `q`",
-                     "Факт: отправка остановилась в 14:00 — `q`, 14:05Z → `x`",
-                     "Fact: sending stopped at 14:00, v2.3 was released at 14:02 — `q`",
-                     "Fact: the merge is blocked by a red CI run; the pool is capped at 20 — `q`",
-                     "Факт: лимиты стояли выше отправки — `q`, 15:18Z → `\"reason\": \"held because quota\"`",
-                     "Факт: лимиты стояли выше отправки — `q`, 15:18Z → `x`. Поэтому держали не они, а учёт.",
-                     "Fact: `maxPerDay` was 2900 for google — `q`, 15:18Z → `x`",
-                     self.PROVEN,
-                     "Доказано: отправку держали лимиты — `q`, 15:18Z → `3 384 писем`; объясняет 3 384 из 3 384",
-                     "Unknown: why the caps held sending — blocked by `permission denied`",
-                     "Неизвестно: почему отправку держали лимиты — blocked by запрет владельца",
-                     "Подтверждено: отправку держали лимиты",
-                     "Отправку держали лимиты, потому что так было настроено.",
-                     "Сводка за день.\nФакт: отправку держали лимиты."):
-            self.assertEqual(self._rules(line), [], line)
+    def test_openings_without_an_asserted_cause_pass(self):
+        for opening in (self.ROW_33,
+                        "Факт: лимиты отправку не держали — `q`, 15:18Z → `x`",
+                        "Факт: файл содержал 40 строк, а клиенты поддержали формат — `q`",
+                        "Факт: отправка остановилась в 14:00, проверка останавливалась дважды — `q`, 14:05Z → `x`",
+                        "Fact: sending stopped at 14:00, v2.3 was released at 14:02 — `q`",
+                        "Fact: the merge is blocked by a red CI run; the pool is capped at 20; one bug is open — `q`",
+                        "Факт: лимиты стояли выше отправки — `q`, 15:18Z → `\"reason\": \"held because quota\"`",
+                        "Fact: `maxPerDay` was 2900 for google, `held because of quota` — `q`",
+                        "Я остановил раскатку в 14:00.",
+                        "Фоновую проверку я остановил, она больше не нужна.",
+                        "Скрипт освободил 40 ГБ на диске.",
+                        "Причину ещё не нашёл; termination reason is OOMKilled.",
+                        "Неизвестно: что именно держало отправку 9–10 ноября.",
+                        "Unknown: what caused the stop on 10 November — blocked by `permission denied`",
+                        "Подтверждено: отправка шла.\n\nОтправку держали лимиты, потому что так было настроено."):
+            self.assertEqual(self._rules(opening), [], opening)
 
-    def test_second_stop_passes(self):
-        self.assertEqual(self._rules("Факт: отправку держали лимиты — `q`", stop_hook_active=True), [])
+    def test_full_proven_forms_pass(self):
+        for line in (self.PROVEN,
+                     "Доказано: отправку держали лимиты — `q`, 15:18Z → «3 384 писем»; объясняет 3 384 письма из 3 384",
+                     "Proven: the caps held sending — history.py logs, 2026-11-12T15:18Z → \"old 1450\"; "
+                     "explains 3,384 emails of 3,384"):
+            self.assertEqual(self._rules(line + "\nОтправку держали лимиты.\n\nДальше."), [], line)
 
-    def test_fires_beside_other_rules_in_one_return(self):
+    def test_incomplete_proven_forms_are_returned(self):
+        for line in ("Proven: sending was held by the caps — `q`, 15:18Z → `x`; explains all of it",
+                     "Доказано: отправку держали лимиты; объясняет 3 из 3",
+                     "Доказано: отправку держали лимиты — `q`, 15:18Z → `x`; объясняет 5 из 3",
+                     "Proven: the caps held sending — `q`, 15:18Z → `x`; explains 0 of 3,384",
+                     "Proven: the caps held sending — `q`, 11 November → `x`; explains 3 of 3",
+                     "Proven: the caps held sending — `q`, 15:18Z → x; explains 3 of 3"):
+            self.assertEqual(self._rules(line), ["first-cause"], line)
+
+    def test_a_long_malformed_proven_line_is_parsed_within_the_hook_budget(self):
+        line = ("Proven: " + "отправку держали лимиты — `q`, 15:18 → `x`, " * 50)[:2000] + "; explains 3 of"
+        started = time.perf_counter()
+        self.assertEqual(self._rules(line), ["first-cause"])
+        self.assertLess(time.perf_counter() - started, 0.05)
+
+    def test_later_stop_runs_this_rule_only_while_it_has_not_returned_this_turn(self):
+        dirty = "Готово. Отправку держали лимиты."
+        self.assertEqual(self._rules(dirty, stop_hook_active=True), [])
+        self.assertEqual(self._rules(dirty, stop_hook_active=True, first_cause_open=True), ["first-cause"])
+
+    def test_first_cause_is_open_only_after_another_return_of_this_turn(self):
+        returned = gate_policy.reply_lint_decision("Отправку держали лимиты.", False)["reason"]
+        self.assertFalse(gate_policy.first_cause_open([]))
+        self.assertTrue(gate_policy.first_cause_open(["Stop hook feedback:\nreply-lint: the reply leaves work"]))
+        self.assertFalse(gate_policy.first_cause_open(["Stop hook feedback:\nx", "Stop hook feedback:\n" + returned]))
+
+    def test_merged_return_names_the_rule_without_the_word_and_one_next_opening(self):
         decision = gate_policy.reply_lint_decision("Факт: отправку держали лимиты. Готово.", False)
-        self.assertEqual(decision["rules"], ["claim", "fact-cause"])
-        self.assertIn("\"держали\"", decision["reason"])
+        self.assertEqual(set(decision["rules"]), {"claim", "first-cause"})
+        self.assertNotIn("держали", decision["reason"])
+        self.assertEqual(decision["reason"].count("the last message you send in this turn opens"), 1)
         for exit_form in ("labelled hypothesis", "`Unknown:", "`Proven:"):
             self.assertIn(exit_form, decision["reason"])
 

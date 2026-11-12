@@ -114,6 +114,23 @@ class BackgroundWatchTest(unittest.TestCase):
         self.assertEqual(decide(entries), "block")
 
 
+class StopFeedbackThisTurnTest(unittest.TestCase):
+    """Only the Stop hook returns of the current turn count (first-cause runs once per turn, CASE-81)."""
+
+    def _feedback(self, entries):
+        return transcript.stop_feedback_this_turn([(json.dumps(e), e) for e in entries])
+
+    def test_returns_of_this_turn_are_found(self):
+        meta = dict(owner("Stop hook feedback:\nreply-lint: x"), isMeta=True)
+        entries = [owner("go"), meta, tool_result("u1", "ok"), dict(owner("<system-reminder>"), isMeta=True)]
+        self.assertEqual(self._feedback(entries), ["Stop hook feedback:\nreply-lint: x"])
+
+    def test_returns_of_an_earlier_turn_are_not(self):
+        for boundary in (turn_end(), owner("next question")):
+            entries = [owner("go"), dict(owner("Stop hook feedback:\nreply-lint: x"), isMeta=True), boundary]
+            self.assertEqual(self._feedback(entries), [], boundary)
+
+
 class LaunchAckTest(unittest.TestCase):
     def ack(self, text):
         return transcript.launch_id({"type": "tool_result", "content": text})

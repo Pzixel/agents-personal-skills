@@ -78,6 +78,25 @@ def result_text(block):
     return ""
 
 
+def stop_feedback_this_turn(entries):
+    """Texts of the `Stop hook feedback:` user entries of the current turn, in order. The turn starts after
+    the last `system`/`turn_duration` entry or the last user entry that is neither such feedback, a meta
+    entry nor a tool result (a headless transcript has no `turn_duration` entry)."""
+    feedback = []
+    for _raw, entry in entries:
+        if entry.get("type") == "system" and entry.get("subtype") == "turn_duration":
+            feedback = []
+        if entry.get("type") != "user":
+            continue
+        texts = [str(b.get("text") or "") for b in blocks_of(entry) if b.get("type") == "text"]
+        stop_texts = [t for t in texts if t.startswith(STOP_FEEDBACK_PREFIX)]
+        if stop_texts:
+            feedback += stop_texts
+        elif texts and not entry.get("isMeta"):
+            feedback = []
+    return feedback
+
+
 def launch_id(block):
     """Task id when this tool_result block is a background-launch acknowledgement."""
     text = result_text(block).strip()
