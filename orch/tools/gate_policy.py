@@ -11,11 +11,13 @@ a complete decision dict.
 
 import fnmatch
 import datetime
+import ast
 import json
 import os
 import re
 import shlex
 import tempfile
+import warnings
 
 POLL = "poll"
 WAIT_FOR = "wait_for"
@@ -1721,7 +1723,7 @@ _CHECK_RETURN = (
 )
 
 
-_FILE_EDIT_TOOLS = frozenset({"Edit", "Write", "MultiEdit", "NotebookEdit"})
+FILE_EDIT_TOOLS = frozenset({"Edit", "Write", "MultiEdit", "NotebookEdit"})
 
 
 def scratch_path(path, cwd=""):
@@ -1748,14 +1750,15 @@ def scratch_path(path, cwd=""):
 
 _FD_COPY_RE = re.compile(r"\d*>&(?:\d+|-)")  # 2>&1: a descriptor copy, no file
 _BOTH_REDIRECT_RE = re.compile(r"&>(>?)")  # &>file: stdout and stderr into a file
-_REDIRECT_OPS = frozenset({">", ">>", ">|", "1>", "2>", "1>>", "2>>"})
+_CLOBBER_RE = re.compile(r"(?<![>|])>\|(?!\|)")  # >|file: a redirect past noclobber
+_REDIRECT_OPS = frozenset({">", ">>", "1>", "2>", "1>>", "2>>"})
 _SED_INPLACE_ARG_RE = re.compile(r"^-[A-Za-z]*i|^--in-place")
 # A heredoc fed to these is data their own redirect or operands write, or a
 # commit message.
 _HEREDOC_DATA_SINKS = frozenset({"cat", "tee"})
 _MESSAGE_SUBCOMMANDS = frozenset({"commit", "tag", "notes"})
-# Code in an interpreter heredoc that writes or runs something; without it the
-# body only reads and prints.
+# Code in a non-Python interpreter heredoc that writes or runs something;
+# without it the body only reads and prints.
 _BODY_WRITE_RE = re.compile(
     r"\.write(?:_text|_bytes|lines)?\(|\bopen\([^)]*['\"][wax]\+?b?['\"]"
     r"|\.dump\(|\bos\.replace\(|\b(?:unlink|rename|rmtree|copy2?|copyfile|copytree|move"
@@ -1764,6 +1767,11 @@ _BODY_WRITE_RE = re.compile(
 )
 # A quoted string in that code that names a file: it holds a slash or ends in an extension.
 _PATH_LITERAL_RE = re.compile(r"""['"]([^'"\s]*/[^'"\s]*|[^'"\s/]+\.[A-Za-z]{1,6})['"]""")
+# Python calls that write a file, by the argument that names it.
+_PY_SECOND_ARG_WRITES = frozenset({"copy", "copy2", "copyfile", "copytree", "move", "rename", "replace"})
+_PY_FIRST_ARG_WRITES = frozenset({"remove", "unlink", "rmtree"})
+_PY_RECEIVER_WRITES = frozenset({"write_text", "write_bytes", "touch", "unlink"})
+_PY_SHELL_CALLS = frozenset({"system", "run", "call", "check_call", "check_output", "Popen"})
 
 
 def _write_operands(program, args):
@@ -1774,12 +1782,19 @@ def _write_operands(program, args):
             if i + 1 < len(args):
                 targets.append(args[i + 1])
         elif (m := _REDIRECT.match(arg)) and m.group(5) in (">", ">>") and m.group(6):
-            targets.append(m.group(6).lstrip("|"))
+            targets.append(m.group(6))
     if program == "tee":
         targets += _path_args(args)
     elif program == "sed" and any(_SED_INPLACE_ARG_RE.match(a) for a in args):
-        operands = _path_args([a for a in args if a and not _SED_INPLACE_ARG_RE.match(a)])
-        scripted = any(a in ("-e", "-f") or a.startswith(("--expression", "--file")) for a in args)
+        operands, scripted, skip = [], False, False
+        for a in args:
+            if skip:
+                skip = False
+            elif a in ("-e", "-f") or a.startswith(("--expression", "--file")):
+                scripted, skip = True, "=" not in a  # the script that follows is no file written
+            elif a and not _SED_INPLACE_ARG_RE.match(a):
+                operands.append(a)
+        operands = _path_args(operands)
         targets += operands if scripted else operands[1:]
     return targets
 
@@ -1794,6 +1809,119 @@ def _resolve_write(target, ctx):
     return os.path.normpath(target)
 
 
+def _dotted(node):
+    """``os.path`` for an attribute chain of names, "" for anything else."""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute) and (owner := _dotted(node.value)):
+        return owner + "." + node.attr
+    return ""
+
+
+def _py_values(node, names, depth=0):
+    """The strings a Python path expression can take: a literal, ``Path(...)``,
+    ``os.path.join(...)``, ``/`` and a name bound only to such values (an
+    assignment, a loop over a literal list). None when any value is not literal."""
+    if depth > 8 or node is None:
+        return None
+    if isinstance(node, ast.Constant):
+        return [node.value] if isinstance(node.value, str) else None
+    if isinstance(node, ast.Name):
+        values = []
+        for bound in names.get(node.id) or [None]:
+            more = _py_values(bound, names, depth + 1)
+            if more is None:
+                return None
+            values += more
+        return values
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+        parts = [node.left, node.right]
+    elif isinstance(node, ast.Call) and not node.keywords and _dotted(node.func) in (
+        "Path", "pathlib.Path", "PurePath", "os.path.join"
+    ):
+        parts = node.args
+    else:
+        return None
+    values = [""]
+    for part in parts:
+        more = _py_values(part, names, depth + 1)
+        if more is None:
+            return None
+        values = [os.path.join(v, m) for v in values for m in more]
+    return values
+
+
+def _python_writes(tree, ctx):
+    """Files a parsed Python body writes: the argument of each write call
+    (``open`` in a writing mode, ``Path.write_text`` / ``write_bytes`` /
+    ``touch`` / ``unlink``, ``shutil`` and ``os`` copies, moves and removals),
+    resolved where it is a literal, None where it is not; a literal shell
+    command it runs is read like a Bash command. A ``print(file=...)`` or
+    ``.write`` goes to a handle whose ``open`` is the write."""
+    names = {}
+    for n in ast.walk(tree):
+        if isinstance(n, (ast.Assign, ast.AnnAssign, ast.AugAssign)):
+            value = None if isinstance(n, ast.AugAssign) else n.value
+            for target in getattr(n, "targets", None) or [n.target]:
+                for name in ast.walk(target):
+                    if isinstance(name, ast.Name):
+                        names.setdefault(name.id, []).append(value if name is target else None)
+        elif isinstance(n, (ast.For, ast.comprehension)):
+            items = n.iter.elts if isinstance(n.iter, (ast.List, ast.Tuple, ast.Set)) else [None]
+            for name in ast.walk(n.target):
+                if isinstance(name, ast.Name):
+                    names.setdefault(name.id, []).extend(items if name is n.target else [None])
+    targets, writes = [], []
+    for n in ast.walk(tree):
+        if not isinstance(n, ast.Call):
+            continue
+        func, args = n.func, n.args
+        attr = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
+        owner = _dotted(func.value) if isinstance(func, ast.Attribute) else ""
+        builtin = owner in ("io", "codecs") or isinstance(func, ast.Name)
+        mode = args[1 if builtin else 0] if len(args) > builtin else next(
+            (k.value for k in n.keywords if k.arg == "mode"), None)
+        writing = mode is not None and not (  # a mode that is no literal may write
+            isinstance(mode, ast.Constant) and not set(str(mode.value)) & set("wax+"))
+        if attr == "open" and builtin and args and writing:
+            targets.append(args[0])
+        elif attr == "open" and not builtin and owner != "os" and writing:  # Path(...).open("w")
+            targets.append(func.value)
+        elif attr in _PY_RECEIVER_WRITES and owner not in ("os", "shutil"):
+            targets.append(func.value)
+        elif owner in ("os", "shutil") and attr in _PY_SECOND_ARG_WRITES and len(args) > 1:
+            targets.append(args[1])
+        elif owner in ("os", "shutil") and attr in _PY_FIRST_ARG_WRITES and args:
+            targets.append(args[0])
+        elif owner in ("os", "subprocess") and attr in _PY_SHELL_CALLS and args:
+            words = args[0].elts if isinstance(args[0], (ast.List, ast.Tuple)) else [args[0]]
+            values = [_py_values(w, names) for w in words]
+            if all(v is not None and len(v) == 1 for v in values):
+                text = values[0][0] if len(words) == 1 and not isinstance(args[0], ast.List) \
+                    else shlex.join(v[0] for v in values)
+                writes += bash_effects(text, ctx["dir"] or "")["writes"]
+    for target in targets:
+        values = _py_values(target, names)
+        writes += [None] if values is None else [_resolve_write(v, ctx) for v in values]
+    return writes
+
+
+def _interpreter_writes(program, body, ctx):
+    """Files an interpreter writes running ``body``: for Python the targets of
+    its write calls (``_python_writes``); for other interpreters, or a body
+    Python cannot parse, every path literal of a body that writes."""
+    if program.startswith("python"):
+        try:
+            with warnings.catch_warnings():  # an escape a body leaves to Python is no finding here
+                warnings.simplefilter("ignore")
+                return _python_writes(ast.parse(body), ctx)
+        except (SyntaxError, ValueError):
+            pass
+    if not _BODY_WRITE_RE.search(body):
+        return []
+    return [_resolve_write(t, ctx) for t in _PATH_LITERAL_RE.findall(body)] or [None]
+
+
 def _heredoc_writes(program, args, body, ctx):
     """Files a heredoc body makes ``program`` write: None for an unknown target."""
     if program in _HEREDOC_DATA_SINKS or (
@@ -1803,30 +1931,32 @@ def _heredoc_writes(program, args, body, ctx):
     if program in _SHELLS:
         return bash_effects(body, ctx["dir"] or "")["writes"]
     if _INLINE_INTERPRETER_RE.match(program):
-        if not _BODY_WRITE_RE.search(body):
-            return []
-        return [_resolve_write(t, ctx) for t in _PATH_LITERAL_RE.findall(body)] or [None]
+        return _interpreter_writes(program, body, ctx)
     return [None]
 
 
-def bash_effects(command, cwd=""):
+def bash_effects(command, cwd="", scripts=None):
     """What a Bash command does for the builder's check gate.
 
     ``check``: a segment runs ``check-run`` (the command word; text in a quoted
     string or a heredoc body is not a run). ``writes``: files written by a
-    redirect, ``tee``, ``sed -i`` or a heredoc fed to a shell or an
-    interpreter, resolved against ``cwd`` and the cd's and ``NAME=`` bindings
-    the command runs; None where the target is unknown. Other programs are not
-    read for writes.
+    redirect, ``tee``, ``sed -i``, a heredoc fed (or piped from ``cat``) to a
+    shell or an interpreter, or an interpreter running a file of ``scripts``
+    (bodies the session wrote earlier, by path); resolved against ``cwd`` and
+    the cd's and ``NAME=`` bindings the command runs, a cd target taken as
+    given; None where the target is unknown. Other programs are not read for
+    writes. ``wrote``: the heredoc bodies ``cat``/``tee`` wrote, by path.
+    A pure function of its arguments: it never reads the disk.
     """
     script, heredocs = _split_heredocs(command)
     bodies = [body for _, body, _ in heredocs]
     script = script.replace("\\\n", " ")
     script = _BOTH_REDIRECT_RE.sub(lambda m: " >" + m.group(1), _FD_COPY_RE.sub(" ", script))
+    script = _CLOBBER_RE.sub(">", script)
     script = _BRACED_VAR_RE.sub(lambda m: "$" + m.group(1) + "\x01", script)
     ctx = _new_ctx(os.path.normpath(cwd) if cwd else "", 0, command,
                    {"TMPDIR": tempfile.gettempdir()})
-    check, writes = False, []
+    check, writes, wrote, piped = False, [], {}, None
     for tokens, before, after in _segments_meta(script):
         _scope(before, ctx)
         _chain_step(ctx, before)
@@ -1841,32 +1971,56 @@ def bash_effects(command, cwd=""):
             continue
         program, args, _ = _command_head([_substitute(t, ctx["vars"]) for t in tokens])
         if program in ("cd", "pushd", "popd"):
-            _change_dir(program, args, ctx, before, after, tokens[:1] == ["!"])
+            _change_dir(program, args, ctx, before, after, tokens[:1] == ["!"],
+                        isdir=lambda _path: True)
             continue
         check = check or program == "check-run"
-        writes += [_resolve_write(t, ctx) for t in _write_operands(program, args)]
+        operands = [_resolve_write(t, ctx) for t in _write_operands(program, args)]
+        writes += operands
+        reads_code = program in _SHELLS or _INLINE_INTERPRETER_RE.match(program)
+        if body is None and piped is not None and reads_code:
+            body = piped
+        piped = body if program in _HEREDOC_DATA_SINKS and _lone("|", after) else None
+        if body is None and scripts and _INLINE_INTERPRETER_RE.match(program):
+            path = next((a for a in args if not a.startswith("-")), None)
+            if path and (kept := scripts.get(_resolve_write(path, ctx))) is not None:
+                writes += _interpreter_writes(program, kept, ctx)
+        if body is not None and program in _HEREDOC_DATA_SINKS:
+            wrote.update((target, body) for target in operands)
         if body is not None:
             writes += _heredoc_writes(program, args, body, ctx)
-    return {"check": check, "writes": writes}
+    return {"check": check, "writes": writes, "wrote": wrote}
 
 
-def builder_events(tool, tool_input, cwd=""):
+def builder_events(tool, tool_input, cwd="", scripts=None):
     """The check gate's events for one tool call: ``edit`` for a write outside
     scratch (``scratch_path``), whichever tool made it; ``check`` for a
-    ``check-run`` command, else ``command``. Reads and spawns give none."""
+    ``check-run`` command, else ``command``; ``script`` (``path``, ``body``)
+    for each file the call wrote whole (Write, a heredoc into cat/tee), which
+    the caller keeps as ``scripts`` for later calls (``bash_effects``). Reads
+    and spawns give none."""
     tool_input = tool_input if isinstance(tool_input, dict) else {}
-    if tool in _FILE_EDIT_TOOLS:
+    if tool in FILE_EDIT_TOOLS:
         path = str(tool_input.get("file_path") or tool_input.get("notebook_path") or "")
-        return [] if scratch_path(path, cwd) else [{"kind": "edit", "path": path}]
+        events = [] if scratch_path(path, cwd) else [{"kind": "edit"}]
+        if tool == "Write" and path:
+            events.append({"kind": "script", "path": os.path.normpath(path),
+                           "body": str(tool_input.get("content") or "")})
+        return events
     command = str(tool_input.get("command") or "") if tool == "Bash" else ""
     if not command:
         return []
-    effects = bash_effects(command, cwd)
+    effects = bash_effects(command, cwd, scripts)
     events = [{"kind": "edit"}] if any(not scratch_path(w, cwd) for w in effects["writes"]) else []
+    events += [{"kind": "script", "path": p, "body": b} for p, b in effects["wrote"].items()]
     return events + [{"kind": "check" if effects["check"] else "command", "command": command}]
 
 
 _CHECK_PREFIX_RE = re.compile(r"^\S*check-run\s+(?:--\s+)?")
+_ASSIGNMENT_RE = re.compile(r"[A-Za-z_]\w*=\S*")
+# The program a declared command starts with: a name or a path, never a word
+# of prose (capitalised, a label ending in ':'), SQL (upper case), a flag or a placeholder.
+_COMMAND_WORD_RE = re.compile(r"[~./_a-z][\w.~/+-]*(?<!:)")
 
 
 def _spaced(text):
@@ -1874,9 +2028,19 @@ def _spaced(text):
 
 
 def check_spans(declared_check):
-    """The backticked commands of a ``check:`` line, without a check-run prefix."""
-    return [_spaced(_CHECK_PREFIX_RE.sub("", s.strip()))
-            for s in re.findall(r"`([^`\n]+)`", declared_check or "")]
+    """The declared commands of a ``check:`` line, without a check-run prefix:
+    its backticked spans that start with a command word and give it
+    arguments. A one-word span (a path, a file name, an identifier, a flag)
+    or one that starts with prose, SQL or a placeholder declares no command."""
+    spans = []
+    for span in re.findall(r"`([^`\n]+)`", declared_check or ""):
+        span = _spaced(_CHECK_PREFIX_RE.sub("", span.strip()))
+        words = span.split()
+        while words and _ASSIGNMENT_RE.fullmatch(words[0]):
+            words = words[1:]
+        if len(words) > 1 and _COMMAND_WORD_RE.fullmatch(words[0]):
+            spans.append(span)
+    return spans
 
 
 def checks_decision(declared_check, events):
@@ -1884,9 +2048,10 @@ def checks_decision(declared_check, events):
 
     ``events`` is the ordered record of what the agent did (``builder_events``
     plus ``reminder`` for this hook's own earlier return). After the last edit
-    the check ran when a command contains the whole line, or a ``check-run``
-    command contains a backticked command of the line (any ``check-run`` when
-    the line has none). No declared check means allow, flagged ``undeclared``.
+    the check ran when a command contains the whole line, or every declared
+    command of the line (``check_spans``) appears in a command, through
+    check-run or not; a line that declares none is settled by any
+    ``check-run``. No declared check means allow, flagged ``undeclared``.
     """
     check = (declared_check or "").strip()
     if not check:
@@ -1901,14 +2066,18 @@ def checks_decision(declared_check, events):
     if last_edit < 0:
         return {"decision": "allow"}
 
+    commands, checked = [], False
     for event in (events or [])[last_edit + 1 :]:
         kind, command = event.get("kind"), event.get("command") or ""
         if kind == "reminder":
             return {"decision": "allow"}
-        if kind in ("command", "check") and literal in command:
-            return {"decision": "allow"}
-        if kind == "check" and (not spans or any(s in _spaced(command) for s in spans)):
-            return {"decision": "allow"}
+        if kind in ("command", "check"):
+            if literal in command:
+                return {"decision": "allow"}
+            commands.append(_spaced(command))
+            checked = checked or kind == "check"
+    if all(any(s in c for c in commands) for s in spans) if spans else checked:
+        return {"decision": "allow"}
     return {"decision": "return", "message": _CHECK_RETURN.format(check=literal)}
 
 
@@ -4211,20 +4380,21 @@ def _chain_step(ctx, before):
         ctx["dir"] = None
 
 
-def _change_dir(program, args, ctx, before, after, negated):
+def _change_dir(program, args, ctx, before, after, negated, isdir=os.path.isdir):
     """Track the working directory through a cd. A top-level cd (see
     ``_top_level``) to a literal directory, not negated by ``!``, reached
     only through ``&&`` and not followed by ``||``, moves it: for the rest of
     the command when it is first of its chain and the directory exists, else
     for the rest of its ``&&`` chain (``_chain_step``; a missing directory
-    may be created earlier in the chain). Any other cd makes it unknown for
-    the rest of the command or of the enclosing subshell."""
+    may be created earlier in the chain; ``isdir`` decides existence). Any
+    other cd makes it unknown for the rest of the command or of the
+    enclosing subshell."""
     ctx["cd_seen"] = True
     target = None
     if program != "popd" and not negated and _top_level(ctx, before, after) \
             and "||" not in after and not ctx.get("chain_or"):
         target = _cd_target(program, args, ctx)
-    if target is not None and ("&&" in before or not os.path.isdir(target)):
+    if target is not None and ("&&" in before or not isdir(target)):
         if "&&" in before or "&&" in after:
             ctx["cd_pending"] = True
         else:

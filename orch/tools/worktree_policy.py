@@ -21,12 +21,11 @@ import os
 import re
 from dataclasses import dataclass
 
-from gate_policy import scratch_path
+from gate_policy import FILE_EDIT_TOOLS, scratch_path
 
 
 WT_PATH = re.compile(r"(/[^\s\"'`;|&<>()]+?)/\.worktrees/([A-Za-z0-9._-]+)")
 WT_REL = re.compile(r"(?<![\w/])(?:\./)?\.worktrees/([A-Za-z0-9._-]+)")
-_FILE_WRITERS = frozenset({"Edit", "Write", "MultiEdit", "NotebookEdit"})
 
 
 def written_worktrees(tool_name, tool_input, cwd=None):
@@ -39,7 +38,7 @@ def written_worktrees(tool_name, tool_input, cwd=None):
     nothing.
     """
     tool_input = tool_input if isinstance(tool_input, dict) else {}
-    if tool_name in _FILE_WRITERS:
+    if tool_name in FILE_EDIT_TOOLS:
         text = " ".join(str(tool_input.get(k) or "") for k in ("file_path", "notebook_path"))
     elif tool_name == "Bash":
         text = str(tool_input.get("command") or "")
@@ -65,7 +64,7 @@ def own_writes(tool_name, tool_input, cwd, write_targets):
     unknown target counts for the worktree of ``cwd`` and every worktree the
     command names.
     """
-    if tool_name in _FILE_WRITERS:
+    if tool_name in FILE_EDIT_TOOLS:
         write_targets = [tool_input.get(k) for k in ("file_path", "notebook_path") if tool_input.get(k)]
     elif tool_name != "Bash":
         return set()

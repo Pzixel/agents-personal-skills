@@ -498,6 +498,20 @@ class ChecksDecisionTest(unittest.TestCase):
         events = [{"kind": "edit"}, {"kind": "check", "command": "check-run -- cargo test -p backend"}]
         self.assertEqual(gate_policy.checks_decision(line, events)["decision"], "allow")
 
+    def test_a_line_with_two_commands_settles_only_when_both_ran_after_the_last_edit(self):
+        line = "`cargo test -p a` and `cargo clippy --all-targets`"
+        one = [{"kind": "edit"}, {"kind": "check", "command": "check-run -- cargo test -p a"}]
+        both = one + [{"kind": "command", "command": "rtk cargo clippy --all-targets 2>&1 | tail -3"}]
+        self.assertEqual(
+            [gate_policy.checks_decision(line, events)["decision"] for events in (one, both)],
+            ["return", "allow"],
+        )
+
+    def test_a_path_span_declares_no_command_that_a_run_naming_it_settles(self):
+        line = "`cargo test -p a` covering `src/a.rs`"
+        events = [{"kind": "edit"}, {"kind": "check", "command": "check-run -- wc -l src/a.rs"}]
+        self.assertEqual(gate_policy.checks_decision(line, events)["decision"], "return")
+
 
 def _events(tool, cwd="/repo", **tool_input):
     return gate_policy.builder_events(tool, tool_input, cwd)
@@ -513,6 +527,10 @@ class BuilderEventsTest(unittest.TestCase):
             ("Bash", {"command": "R=/repo; cat > $R/orch-notes/HANDOFF.md <<'EOF'\n"
                                  "8. Run `~/.claude/tools/check-run -- pytest`\nEOF"}),
             ("Bash", {"command": "echo exclude >> \"$(git rev-parse --git-common-dir)/info/exclude\""}),
+            ("Bash", {"command": "cd /gone/wt/orch-notes; python3 - <<'EOF'\n"
+                                 "s = open('SPEC.md').read()\nopen('SPEC.md', 'w').write(s)\nEOF"}),
+            ("Bash", {"command": "python3 - <<'EOF'\nimport sys; sys.path.insert(0, 'orch/tools')\n"
+                                 "s = open('src/app.py').read()\nopen('/tmp/out.txt', 'w').write(s)\nEOF"}),
         ]
         for tool, tool_input in cases:
             with self.subTest(tool_input=tool_input):
@@ -526,6 +544,12 @@ class BuilderEventsTest(unittest.TestCase):
             ("Bash", {"command": "python3 - <<'EOF'\nfrom pathlib import Path\n"
                                  "Path('crates/core/tests/send.rs').write_text('x')\nEOF"}),
             ("Bash", {"command": "git apply <<'EOF'\n--- a/x\n+++ b/x\nEOF"}),
+            ("Bash", {"command": "python3 - <<'EOF'\nimport json, os\nplan = json.load(open('/tmp/plan.json'))\n"
+                                 "for n in plan:\n    open(os.path.join('src', n), 'w').write('x')\nEOF"}),
+            ("Bash", {"command": "python3 - src/app.py <<'EOF'\nimport sys\np = sys.argv[1]\n"
+                                 "open(p, 'w').write('x')\nopen('tmp/patch.log', 'a').write('done')\nEOF"}),
+            ("Bash", {"command": "python3 - <<'EOF'\nf = open('src/app.py', 'wt')\nprint('x', file=f)\nEOF"}),
+            ("Bash", {"command": "cat <<'EOF' | python3 -\nopen('src/app.py', 'w').write('x')\nEOF"}),
         ]
         for tool, tool_input in cases:
             with self.subTest(tool_input=tool_input):
@@ -562,10 +586,30 @@ class BuilderEventsTest(unittest.TestCase):
             "sed -n '10,40p' file.txt": [],
             "cargo check 2>&1 | tail -40": [],
             "rg -n 'x > y' src/": [],
+            "echo x >| /srv/f": ["/srv/f"],
+            "sed -i -e 's/a/b/' -e '/c/d' /srv/x": ["/srv/x"],
+            "cd /gone/wt; echo x > src/a.py": ["/gone/wt/src/a.py"],
+            "python3 - <<'EOF'\nimport sys; sys.path.insert(0, 'orch/tools')\nimport gate_policy\n"
+            "open('/srv/runs/refusal.txt', 'w').write(gate_policy.X)\nEOF": ["/srv/runs/refusal.txt"],
         }
         for command, writes in cases.items():
             with self.subTest(command=command):
                 self.assertEqual(gate_policy.bash_effects(command, "/repo")["writes"], writes)
+
+
+    def test_running_a_script_the_session_wrote_is_read_for_its_writes(self):
+        scripts = {"/repo/tmp/patch.py": "s = open('src/a.py').read()\nopen('src/a.py', 'w').write(s)\n",
+                   "/tmp/probe.py": "print(open('src/a.py').read())\n"}
+        kinds = {command: [e["kind"] for e in gate_policy.builder_events("Bash", {"command": command}, "/repo", scripts)]
+                 for command in ("python3 tmp/patch.py", "python3 /tmp/probe.py")}
+        self.assertEqual(kinds, {"python3 tmp/patch.py": ["edit", "command"],
+                                 "python3 /tmp/probe.py": ["command"]})
+
+    def test_a_script_written_by_a_heredoc_and_then_run_is_the_edit(self):
+        written = _events("Bash", command="cat > /tmp/p.py <<'EOF'\nopen('src/a.py', 'w').write('x')\nEOF")
+        scripts = {e["path"]: e["body"] for e in written if e["kind"] == "script"}
+        events = gate_policy.builder_events("Bash", {"command": "python3 /tmp/p.py"}, "/repo", scripts)
+        self.assertEqual([e["kind"] for e in written + events], ["script", "command", "edit", "command"])
 
 
 class SpawnDecisionTest(unittest.TestCase):

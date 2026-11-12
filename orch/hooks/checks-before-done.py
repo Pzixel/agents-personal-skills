@@ -93,8 +93,9 @@ def declared_check(entries):
 
 def events_of(entries):
     """Ordered record of what the agent did: edits, commands run, and the
-    reminder this hook already delivered."""
-    events = []
+    reminder this hook already delivered. Files the agent wrote whole are kept
+    by path, so a later run of one is read for its writes."""
+    events, scripts = [], {}
     for entry in entries:
         kind = entry.get("type")
         if kind == "user":
@@ -108,9 +109,13 @@ def events_of(entries):
         for block in blocks_of(entry):
             if block.get("type") != "tool_use":
                 continue
-            events += gate_policy.builder_events(
-                block.get("name") or "", block.get("input"), entry.get("cwd") or ""
-            )
+            for event in gate_policy.builder_events(
+                block.get("name") or "", block.get("input"), entry.get("cwd") or "", scripts
+            ):
+                if event["kind"] == "script":
+                    scripts[event["path"]] = event["body"]
+                else:
+                    events.append(event)
     return events
 
 
