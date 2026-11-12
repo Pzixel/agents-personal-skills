@@ -21,6 +21,8 @@ import os
 import re
 from dataclasses import dataclass
 
+from gate_policy import scratch_path
+
 
 WT_PATH = re.compile(r"(/[^\s\"'`;|&<>()]+?)/\.worktrees/([A-Za-z0-9._-]+)")
 WT_REL = re.compile(r"(?<![\w/])(?:\./)?\.worktrees/([A-Za-z0-9._-]+)")
@@ -47,6 +49,54 @@ def written_worktrees(tool_name, tool_input, cwd=None):
     if cwd:
         found.update(os.path.normpath(os.path.join(cwd, m.group(0))) for m in WT_REL.finditer(text))
     return found
+
+
+# Delegates that only read: naming a worktree in their prompt never makes its dirt theirs.
+_READ_ONLY_AGENTS = frozenset({"reviewer", "scout", "watcher", "prod-probe", "Explore", "Plan"})
+
+
+def own_writes(tool_name, tool_input, cwd, write_targets):
+    """Worktrees a call of the session itself wrote work into.
+
+    A file tool by its path; Bash by ``write_targets``, the resolved targets of
+    gate_policy.bash_effects (None = unknown target). A known target counts for
+    the worktree it lies in unless it is scratch there (gate_policy.scratch_path
+    of its path inside the worktree: orch-notes, .git, a tmp directory); an
+    unknown target counts for the worktree of ``cwd`` and every worktree the
+    command names.
+    """
+    if tool_name in _FILE_WRITERS:
+        write_targets = [tool_input.get(k) for k in ("file_path", "notebook_path") if tool_input.get(k)]
+    elif tool_name != "Bash":
+        return set()
+    found = set()
+    for target in write_targets:
+        if target is None:
+            found.update(written_worktrees("Bash", tool_input, cwd))
+            m = WT_PATH.match(cwd or "")
+            if m:
+                found.add(m.group(0))
+            continue
+        m = WT_PATH.match(str(target))
+        if m and not scratch_path(str(target)[m.end():].lstrip("/") or "."):
+            found.add(m.group(0))
+    return found
+
+
+def delegate_held(report, prints, own, delegates):
+    """Drop from a report the worktrees whose dirt is a live delegate's work in progress.
+
+    own: worktrees the session itself wrote inside; delegates: (subagent type,
+    worktrees its prompts name, live) per async agent of the session. A worktree
+    stays reported when the session wrote there or no live writing delegate names
+    it; a finished delegate holds nothing. Returns (report, prints), aligned.
+    """
+    held = set()
+    for kind, named, live in delegates:
+        if live and str(kind or "").rsplit(":", 1)[-1] not in _READ_ONLY_AGENTS:
+            held.update(named)
+    kept = [(w, p) for w, p in zip(report, prints) if w in own or w not in held]
+    return [w for w, _ in kept], [p for _, p in kept]
 
 
 DETACHED_FRESH_S = 2 * 86400

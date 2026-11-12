@@ -5,7 +5,12 @@ Candidates are the .worktrees/<name> paths this session's writing tools named
 (Edit, Write, MultiEdit, NotebookEdit by file path; Bash by command text, a
 relative path resolved against the entry's cwd), plus cwd when it is inside
 one. Delegation (Agent, Task, SendMessage) and read-only tools never make a
-worktree this session's: a builder's edits there are its own. A dirty file
+worktree this session's: a builder's edits there are its own. When a report is
+due, one more pass (worktree_policy.delegate_held) holds back a worktree that a
+live writing delegate's prompt names and the session itself never wrote inside
+(file tool, or a Bash write target from gate_policy.bash_effects); it is
+reported once that delegate has finished. Each such decision is logged to
+~/.claude/tmp/worktree-dirty-gate-log.jsonl. A dirty file
 counts as this session's when its mtime is after the session's first
 transcript timestamp: no per-session ownership record exists, so mtime is the
 proxy. The decision is
@@ -26,9 +31,13 @@ _PLUGIN_TOOLS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "
 sys.path.insert(0, os.path.realpath(
     _PLUGIN_TOOLS if os.path.isdir(_PLUGIN_TOOLS) else os.path.expanduser("~/.claude/tools")))
 
-from worktree_policy import WT_PATH, uncommitted_work_decision, written_worktrees  # noqa: E402
+from gate_policy import bash_effects  # noqa: E402
+from transcript import _AGENT_LAUNCHED_RE, background_watch_scan, blocks_of, entries_of, result_text  # noqa: E402
+from worktree_policy import (  # noqa: E402
+    WT_PATH, delegate_held, own_writes, uncommitted_work_decision, written_worktrees)
 
 STATE = os.path.expanduser("~/.claude/tmp/worktree-dirty-gate.json")
+LOG = os.path.expanduser("~/.claude/tmp/worktree-dirty-gate-log.jsonl")
 HANDOFF = re.compile(r"(/[^\s\"'`;|&<>()]*/[Hh][Aa][Nn][Dd][Oo][Ff][Ff][^/\s\"'`]*\.md)")
 MAX_WORKTREES = 24
 STATE_TTL_S = 7 * 86400
@@ -58,6 +67,53 @@ def session_facts(transcript):
                     wts.update(written_worktrees(item.get("name"), item.get("input"), entry.get("cwd")))
                     handoffs.update(HANDOFF.findall(text))
     return start, wts, handoffs
+
+
+def delegate_facts(entries):
+    """Worktrees the session itself wrote inside, and (type, worktrees named, live) per async agent.
+
+    An agent names the worktrees its spawn prompt and every SendMessage to its id
+    name; it is live while background_watch_scan has it open at the end.
+    """
+    agents = {}
+    for snap in background_watch_scan(entries, "worktree-dirty-gate"):
+        agents = snap["agents"]
+    own, spawns, named, kinds = set(), {}, {}, {}
+    for _, entry in entries:
+        if entry.get("isSidechain"):
+            continue
+        for block in blocks_of(entry):
+            if block.get("type") == "tool_use":
+                name, args = block.get("name"), block.get("input") or {}
+                text = json.dumps(args, ensure_ascii=False)
+                if name == "Agent":
+                    spawns[block.get("id")] = (args.get("subagent_type"), {m.group(0) for m in WT_PATH.finditer(text)})
+                elif name == "SendMessage":
+                    named.setdefault(str(args.get("to") or ""), set()).update(m.group(0) for m in WT_PATH.finditer(text))
+                elif name != "Bash":
+                    own |= own_writes(name, args, entry.get("cwd"), ())
+                elif ".worktrees/" in text or "/.worktrees/" in str(entry.get("cwd")):
+                    # a Bash write lands in a worktree only through a path or a cwd that names one
+                    writes = bash_effects(str(args.get("command") or ""), entry.get("cwd") or "")["writes"]
+                    own |= own_writes(name, args, entry.get("cwd"), writes)
+            elif block.get("type") == "tool_result" and block.get("tool_use_id") in spawns:
+                launched = _AGENT_LAUNCHED_RE.match(result_text(block).strip())
+                if launched:
+                    kind, wts = spawns[block.get("tool_use_id")]
+                    kinds[launched.group(1)] = kind
+                    named.setdefault(launched.group(1), set()).update(wts)
+    delegates = [(kinds.get(a), named.get(a, set()), not v["closed"]) for a, v in agents.items()]
+    return own, delegates
+
+
+def write_log(record):
+    try:
+        record["ts"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        os.makedirs(os.path.dirname(LOG), exist_ok=True)
+        with open(LOG, "a") as fh:
+            fh.write(json.dumps(record) + "\n")
+    except OSError:
+        pass
 
 
 def own_worktree(cwd):
@@ -126,6 +182,14 @@ def main():
     state = load_state()
     seen = set(state.get(session, {}).get("prints", ()))
     report, prints = uncommitted_work_decision(start, dirty, seen, handed_off(handoffs, wts, start))
+    if not report:
+        return
+    own, delegates = delegate_facts(entries_of(transcript))
+    dirty_report = report
+    report, prints = delegate_held(report, prints, own, delegates)
+    write_log({"session": session, "decision": "block" if report else "allow", "dirty": dirty_report,
+               "reported": report, "own": sorted(own & set(dirty_report)),
+               "live_agents": [[k, sorted(n)] for k, n, live in delegates if live]})
     if not report:
         return
     now = time.time()

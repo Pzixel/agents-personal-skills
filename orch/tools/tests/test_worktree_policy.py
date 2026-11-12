@@ -12,7 +12,9 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 
-from worktree_policy import Worktree, decide_cleanup, uncommitted_work_decision, written_worktrees  # noqa: E402
+from gate_policy import bash_effects  # noqa: E402
+from worktree_policy import (  # noqa: E402
+    Worktree, decide_cleanup, delegate_held, own_writes, uncommitted_work_decision, written_worktrees)
 
 MAIN = Worktree("/r", "main", "m1", is_main=True, dirty=False, busy=False)
 
@@ -121,6 +123,43 @@ class UncommittedWorkDecisionTest(unittest.TestCase):
     def test_handoff_outside_naming_the_worktree_settles_it(self):
         report, _ = uncommitted_work_decision(100.0, {"/wt/x": [("a", 150.0)]}, set(), {"/wt/x"})
         self.assertEqual(report, [])
+
+
+class DelegateHeldTest(unittest.TestCase):
+    """A dirty worktree is a live delegate's work in progress unless the session itself wrote there."""
+
+    def held(self, own, delegates):
+        return delegate_held(["/r/.worktrees/x"], ["fp"], own, delegates)
+
+    def test_worktree_named_by_a_live_builder_is_not_reported(self):
+        self.assertEqual(self.held(set(), [("orch:builder", {"/r/.worktrees/x"}, True)]), ([], []))
+
+    def test_own_write_keeps_the_report_beside_a_live_builder(self):
+        self.assertEqual(self.held({"/r/.worktrees/x"}, [("orch:builder", {"/r/.worktrees/x"}, True)]),
+                         (["/r/.worktrees/x"], ["fp"]))
+
+    def test_finished_builder_holds_nothing(self):
+        self.assertEqual(self.held(set(), [("orch:builder", {"/r/.worktrees/x"}, False)]),
+                         (["/r/.worktrees/x"], ["fp"]))
+
+    def test_live_read_only_delegate_holds_nothing(self):
+        self.assertEqual(self.held(set(), [("orch:prod-probe", {"/r/.worktrees/x"}, True)]),
+                         (["/r/.worktrees/x"], ["fp"]))
+
+
+class OwnWritesTest(unittest.TestCase):
+    def bash(self, command, cwd):
+        return own_writes("Bash", {"command": command}, cwd, bash_effects(command, cwd)["writes"])
+
+    def test_interpreter_heredoc_patching_a_relative_file_inside_the_worktree_is_own(self):
+        command = "python3 - <<'EOF'\np='crates/t/a.rs'\ns=open(p).read()\nopen(p,'w').write(s)\nEOF"
+        self.assertEqual(self.bash(command, "/r/.worktrees/x"), {"/r/.worktrees/x"})
+
+    def test_notes_handoff_inside_the_worktree_is_not_own_work(self):
+        self.assertEqual(own_writes("Write", {"file_path": "/r/.worktrees/x/orch-notes/HANDOFF.md"}, "/r", ()), set())
+
+    def test_read_command_naming_the_worktree_is_not_own_work(self):
+        self.assertEqual(self.bash("git -C /r/.worktrees/x status --short", "/r"), set())
 
 
 class WrittenWorktreesTest(unittest.TestCase):
