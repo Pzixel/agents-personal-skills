@@ -1308,6 +1308,33 @@ class FirstCauseRuleTest(unittest.TestCase):
                         "Подтверждено: отправка шла.\n\nОтправку держали лимиты, потому что так было настроено."):
             self.assertEqual(self._rules(opening), [], opening)
 
+    def test_a_cause_word_in_a_clause_that_states_no_event_passes(self):
+        for opening in ("Ревьюер нашёл три проблемы, из-за которых прод упал бы сразу после выкатки.",
+                        "Пока не знаю, будет ли тормозить Inbox из-за кастомных лейблов.",
+                        "Перекрёстная проверка нашла один дефект, из-за которого мержить нельзя.",
+                        "Builder вы остановили, изменений он не внёс.",
+                        "Токены остаются прежними, потому что ты выбрал креды не менять.",
+                        "Я пока не знаю, что держало отправку 9–10 ноября.",
+                        "Пока не знаю, почему встала отправка."):
+            self.assertEqual(self._rules(opening + "\n\nДальше текст."), [], opening)
+
+    def test_an_asserted_cause_beside_such_a_clause_is_still_returned(self):
+        for opening in ("Отправку держал лимит, проверю, вырос ли он.",
+                        "Отправка встала, потому что я не перезапустил воркер.",
+                        "Пока не знаю, почему встала отправка, но держали её лимиты.",
+                        "Неизвестно: почему отправку держали лимиты — blocked by запрет владельца"):
+            self.assertEqual(self._rules(opening + "\n\nДальше текст."), ["first-cause"], opening)
+
+    def test_proven_form_ends_at_the_first_explains_after_the_arrow(self):
+        for line in ("Доказано: сборку ускорил пропуск тестов — `gh run view 1 --log`, 18:50 → `skip: tests passed`; "
+                     "объясняет 228 из 232 секунд разницы в шаге сборки. Рычага не было; от вас ничего не нужно.",
+                     "Proven: Overview hides today — code and recount q8 at 17:23 → «not read per slice», «27+181=208»; "
+                     "explains 935 of 936. I am changing it now."):
+            self.assertEqual(self._rules(line), [], line)
+        decision = gate_policy.reply_lint_decision(
+            "Proven: the caps held sending — `q`, 15:18Z → read «x»; explains 3 of 3. More text.", False)
+        self.assertIn("lacks its full form", decision["reason"])
+
     def test_full_proven_forms_pass(self):
         for line in (self.PROVEN,
                      "Доказано: отправку держали лимиты — `q`, 15:18Z → «3 384 писем»; объясняет 3 384 письма из 3 384",

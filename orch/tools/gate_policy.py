@@ -2686,7 +2686,7 @@ _PROVEN_FORM = "`Proven: <cause> — <command or query>, <time> → <quoted frag
 FIRST_CAUSE_MARKER = REPLY_LINT_MARKER + " (first-cause)"
 _FIRST_LINE_NEXT = (
     "The last message you send in this turn is the whole reply again, opening with that corrected first "
-    "paragraph (or with the kept one and its one line); this overrides \"do not repeat the reply\" and \"append "
+    "paragraph; this overrides \"do not repeat the reply\" and \"append "
     "only the missing part\" in any other part of this return."
 )
 _FIRST_CAUSE_REASON = (
@@ -2929,20 +2929,34 @@ _NEGATION_BEFORE_RE = re.compile(r"(?:(?<![\w-])(?:не|ни|not|never|no)|n't)\
 _NEGATION_AFTER_RE = re.compile(r"\s+(?:не|not)(?![\w-])", re.IGNORECASE)
 # "держали не X, а Y" / "held not by X but by Y": the contrast names the cause.
 _CONTRAST_RE = re.compile(r",\s+а\s|\sbut\s", re.IGNORECASE)
-# The agent or its tool as the subject of a cause verb: an action, not a cause. Searched in the verb's clause.
+# The agent, its tool or the owner as the subject of a cause verb: an action, not a cause. Searched in the verb's
+# clause.
 _AGENT_SUBJECT_RE = re.compile(
-    r"(?<![\w-])(?:я|мы|скрипт\w*|воркер\w*|агент\w*|хук\w*|джоб\w*|cron\w*|команд\w*)(?![\w-])", re.IGNORECASE
+    r"(?<![\w-])(?:я|мы|ты|вы|скрипт\w*|воркер\w*|агент\w*|хук\w*|джоб\w*|cron\w*|команд\w*)(?![\w-])", re.IGNORECASE
 )
+# A connective whose clause opens with the owner as subject ("потому что ты выбрал ..."): the owner's decision,
+# known first-hand, not a cause to prove.
+_OWNER_AFTER_RE = re.compile(r"\s*,?\s*(?:[^\W\d]+\s+)?(?:ты|вы|you)(?![\w-])", re.IGNORECASE)
+# A clause that states no event that happened: a subjunctive, an indirect question or a prohibition
+# ("из-за которых прод упал бы", "будет ли тормозить из-за ...", "из-за которого мержить нельзя").
+_UNREAL_CLAUSE_RE = re.compile(r"(?<![\w-])(?:бы|ли|нельзя|would|whether)(?![\w-])", re.IGNORECASE)
 _CLAUSE_STOPS = ",.;:!?—–()\n"
 # An open question that names no cause: "Неизвестно: что (именно) держало отправку", "Unknown: what caused it".
 _OPEN_WHAT_RE = re.compile(r"(?<![\w-])(?:что(?:\s+именно)?|what)\s+$", re.IGNORECASE)
+# An opening that says the answer is not known yet; it takes the «что / what» exemption of `Unknown:`, never its
+# why-word return («Пока не знаю, почему ...» passes as before).
+_OPEN_UNKNOWN_RE = re.compile(
+    r"\W*(?:я\s+)?(?:пока\s+|ещё\s+|еще\s+)?(?:не\s+знаю|неизвестно|не\s+известно)"
+    r"|\W*I\s+(?:do\s+not|don't)\s+(?:yet\s+)?know",
+    re.IGNORECASE,
+)
 _SPACED_DASH_RE = re.compile(r"[ \t][—–][ \t]")
 _CLOCK_RE = re.compile(r"(?<!\d)\d{1,2}:\d{2}(?!\d)")
 _COUNT = r"(\d{1,3}(?:[ ,.  ]\d{3})+|\d+)"
-# Applied to the short text after the last ";" only, anchored at both ends.
+# The first unquoted "; explains X of Y" after the arrow ends the fragment; any text may follow it.
 _PROVEN_TAIL_RE = re.compile(
-    r"[ \t]*(?:explains|объясняет)[ \t]+" + _COUNT + r"(?:[ \t]+[^\W\d]+)?[ \t]+(?:of|из)[ \t]+" + _COUNT
-    + r"(?:[ \t]+[^\W\d]+)?[ \t]*[.!]?[ \t]*",
+    r";[ \t]*(?:(?:это|this)[ \t]+)?(?:explains|объясняет)[ \t]+" + _COUNT
+    + r"(?:[ \t]+[^\W\d]+)?[ \t]+(?:of|из)[ \t]+" + _COUNT + r"(?!\w)",
     re.IGNORECASE,
 )
 PROVEN_FORM_MISSING = "proven-form"
@@ -2950,15 +2964,23 @@ UNKNOWN_WHY = "unknown-why"
 
 
 def _asserted_cause(text, open_question=False):
-    """The first cause word of ``text`` that is asserted: not negated, a verb whose clause before it names no
-    agent subject, and, when ``open_question``, not right after «что» / `what`; else ""."""
+    """The first cause word of ``text`` that is asserted: not negated, in a clause that states an event (no
+    subjunctive, indirect question or prohibition), a verb whose clause before it names no agent or owner subject,
+    a connective not followed by the owner as subject, and, when ``open_question``, not right after «что» /
+    `what`; else ""."""
     for match in _CAUSE_WORD_RE.finditer(text):
         before = text[: match.start()]
         if _NEGATION_BEFORE_RE.search(before):
             continue
         if open_question and _OPEN_WHAT_RE.search(before):
             continue
-        if match.group(2) and _AGENT_SUBJECT_RE.search(before[max(before.rfind(c) for c in _CLAUSE_STOPS) + 1:]):
+        start = max(before.rfind(c) for c in _CLAUSE_STOPS) + 1
+        end = min((i for i in (text.find(c, match.end()) for c in _CLAUSE_STOPS) if i >= 0), default=len(text))
+        if _UNREAL_CLAUSE_RE.search(text, start, end):
+            continue
+        if match.group(2) and _AGENT_SUBJECT_RE.search(before[start:]):
+            continue
+        if match.group(1) and _OWNER_AFTER_RE.match(text, match.end()):
             continue
         if _NEGATION_AFTER_RE.match(text, match.end()):
             stop = _SENTENCE_END_RE.search(text, match.end())
@@ -2970,25 +2992,26 @@ def _asserted_cause(text, open_question=False):
 
 def _proven_form_ok(rest):
     """The text after a `Proven:` label has the full form: <cause> — <command or query>, <HH:MM> → <quoted
-    fragment>; explains <X> of <Y>, counts with 1 <= X <= Y; the fragment is one or more closed quoted spans
-    (``_blank_quoted``). A split parse, linear in the line length."""
-    head, sep, tail = rest.rpartition(";")
-    counts = _PROVEN_TAIL_RE.fullmatch(tail) if sep else None
-    if not counts:
-        return False
-    explained, total = (int(re.sub(r"\D", "", counts.group(i))) for i in (1, 2))
-    if not 1 <= explained <= total:
-        return False
-    blank = _blank_quoted(head)
+    fragment>; explains <X> of <Y>, counts with 1 <= X <= Y; the fragment opens with a closed quoted span
+    (``_blank_quoted``) and ends at the first unquoted "; explains <X> of <Y>" after the arrow; any text may
+    follow. A split parse, linear in the line length."""
+    blank = _blank_quoted(rest)
     dash = _SPACED_DASH_RE.search(blank)
     if not dash or not blank[: dash.start()].strip():
         return False
     arrow = blank.find("→", dash.end())
     clock = _CLOCK_RE.search(blank, dash.end(), arrow) if arrow >= 0 else None
-    if not clock or not head[dash.end(): clock.start()].strip(" \t,"):
+    if not clock or not rest[dash.end(): clock.start()].strip(" \t,"):
         return False
-    fragment = head[arrow + 1:].strip()
-    return len(fragment) > 2 and not _blank_quoted(fragment).strip()
+    counts = _PROVEN_TAIL_RE.search(blank, arrow + 1)
+    if not counts:
+        return False
+    explained, total = (int(re.sub(r"\D", "", counts.group(i))) for i in (1, 2))
+    if not 1 <= explained <= total:
+        return False
+    start = len(rest) - len(rest[arrow + 1:].lstrip())
+    # A closed span is blanked opener included, so a quote char kept in ``blank`` is an unclosed one.
+    return counts.start() - start > 2 and rest[start] in _QUOTE_PAIRS and blank[start] != rest[start]
 
 
 def first_paragraph_cause(reply):
@@ -2996,8 +3019,8 @@ def first_paragraph_cause(reply):
     ``PROVEN_FORM_MISSING`` unless that line has its full form (``_proven_form_ok``), then "". For any other
     reply: the first asserted cause word (``_asserted_cause``) of its first paragraph (up to the first blank line,
     every closed quoted span blanked by ``_blank_quoted``), with the open-question exemption when the paragraph
-    opens with `Unknown:` / `Неизвестно:` (plain, bold or backticked); such a paragraph with a why-word anywhere
-    in it is ``UNKNOWN_WHY``; "" when none."""
+    opens with `Unknown:` / `Неизвестно:` (plain, bold or backticked) or with "(пока) не знаю" / "I do not know
+    yet"; an `Unknown:` paragraph with a why-word anywhere in it is ``UNKNOWN_WHY``; "" when none."""
     paragraph = _PARAGRAPH_BREAK_RE.split((reply or "").strip(), 1)[0]
     line = next((ln for ln in paragraph.splitlines() if ln.strip()), "")
     label = _PROVEN_LINE_RE.match(line)
@@ -3007,7 +3030,7 @@ def first_paragraph_cause(reply):
     unknown = bool(_UNKNOWN_LINE_RE.match(paragraph))
     if unknown and _WHY_WORD_RE.search(body):
         return UNKNOWN_WHY
-    return _asserted_cause(body, open_question=unknown)
+    return _asserted_cause(body, open_question=unknown or bool(_OPEN_UNKNOWN_RE.match(paragraph)))
 
 
 FIRST_CAUSE_RETURNS_PER_TURN = 2
