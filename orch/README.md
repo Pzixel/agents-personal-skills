@@ -53,6 +53,9 @@ is installed with `CLAUDE_CONFIG_DIR=~/.claude-accounts/<name> ./install.sh clau
 
 - `.claude-plugin/plugin.json` — manifest; `hooks/hooks.json` is auto-discovered.
 - `skills/orchestrate/SKILL.md` — the flow.
+- `skills/worker-rules/` — preloaded into every agent in place of the user-level instruction
+  files: `assemble.py` prints them without their owner-only regions
+  (`decisions/orch-agents-get-worker-rules-not-the-user-instruction-files.md`).
 - `agents/` — spawned as `orch:<name>`: `orch:builder` (spec, code, check, fix rounds),
   `orch:reviewer` (`mode: review`, `crosscheck`, `recheck`; spawned on Fable, on Opus for a small task), `orch:scout`
   (code location; named so it does not collide with the built-in `Explore`), `orch:prod-probe`
