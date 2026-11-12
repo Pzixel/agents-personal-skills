@@ -657,6 +657,42 @@ class BuilderEventsTest(unittest.TestCase):
         events = gate_policy.builder_events("Bash", {"command": "python3 /tmp/p.py"}, "/repo", scripts)
         self.assertEqual([e["kind"] for e in written + events], ["script", "command", "edit", "command"])
 
+    def test_a_syntax_check_of_a_session_written_script_runs_nothing(self):
+        scripts = {"/tmp/e.sh": "sed -i '' s/a/b/ src/a.rs\n"}
+        for command in ("bash -n /tmp/e.sh && echo syntax ok", "zsh -n /tmp/e.sh", "sh -n /tmp/e.sh"):
+            with self.subTest(command=command):
+                events = gate_policy.builder_events("Bash", {"command": command}, "/repo", scripts)
+                self.assertEqual([e["kind"] for e in events], ["command"])
+
+    CHECK = "check: `cargo test -p a` and `cargo clippy --all-targets`"
+    CHECK_SCRIPT = "set -e\ncargo test -p a\ncargo clippy --all-targets\n"
+
+    def _calls(self, *calls):
+        """The hook's record of ``calls`` (tool, input): script bodies kept by path, as checks-before-done does."""
+        events, scripts = [], {}
+        for tool, tool_input in calls:
+            for event in gate_policy.builder_events(tool, tool_input, "/repo", scripts):
+                if event["kind"] == "script":
+                    scripts[event["path"]] = event["body"]
+                else:
+                    events.append(event)
+        return events
+
+    def test_a_declared_command_inside_a_session_written_script_run_after_the_last_edit_counts(self):
+        for run in ("~/.claude/tools/check-run -- bash /repo/tmp/check.sh", "check-run -- tmp/check.sh",
+                    "bash tmp/check.sh"):
+            with self.subTest(run=run):
+                events = self._calls(("Write", {"file_path": "/repo/tmp/check.sh", "content": self.CHECK_SCRIPT}),
+                                     ("Edit", {"file_path": "/repo/src/a.rs"}),
+                                     ("Bash", {"command": run}))
+                self.assertEqual(gate_policy.checks_decision(self.CHECK, events)["decision"], "allow")
+
+    def test_a_declared_command_only_in_a_written_script_that_did_not_run_is_returned(self):
+        events = self._calls(("Write", {"file_path": "/repo/tmp/check.sh", "content": self.CHECK_SCRIPT}),
+                             ("Edit", {"file_path": "/repo/src/a.rs"}),
+                             ("Bash", {"command": "bash -n tmp/check.sh && cat tmp/check.sh"}))
+        self.assertEqual(gate_policy.checks_decision(self.CHECK, events)["decision"], "return")
+
 
 class SpawnDecisionTest(unittest.TestCase):
     def test_main_session_may_spawn_the_flow_types(self):
@@ -1370,9 +1406,8 @@ class FirstCauseRuleTest(unittest.TestCase):
     PROVEN = ("Proven: sending was held by the per-provider caps — `history.py logs --service gateway`, 15:18Z → "
               "`old 1450`; explains 3,384 of 3,384")
 
-    def _rules(self, text, stop_hook_active=False, first_cause_open=False, after_first_cause=False):
-        return gate_policy.reply_lint_decision(text, stop_hook_active, first_cause_open=first_cause_open,
-                                               after_first_cause=after_first_cause)["rules"]
+    def _rules(self, text, stop_hook_active=False, first_cause_open=False):
+        return gate_policy.reply_lint_decision(text, stop_hook_active, first_cause_open=first_cause_open)["rules"]
 
     def test_a_cause_in_the_first_paragraph_is_returned(self):
         for opening in ("Факт: 9–10 ноября отправку держали лимиты по провайдерам — `q`, 15:18Z → `x`",
@@ -1519,15 +1554,12 @@ class FirstCauseRuleTest(unittest.TestCase):
         self.assertEqual(self._rules(self.COUNT_OPENING + "\n\n| Хук | Возвратов |"), [])
         self.assertEqual(self._rules("Три пода остановили отправку."), ["first-cause"])
 
-    def test_after_a_first_cause_return_a_line_saying_the_paragraph_names_no_cause_passes(self):
-        for opening in (self.COUNT_OPENING, "Отправку держали лимиты по провайдерам."):
-            reply = opening + "\n\n" + self.NO_CAUSE_NOTE + "\n\n| Хук | Возвратов |"
-            with self.subTest(opening=opening):
-                self.assertEqual(self._rules(reply, stop_hook_active=True, first_cause_open=True,
-                                             after_first_cause=True), [])
+    def test_a_line_saying_the_paragraph_names_no_cause_does_not_clear_a_cause_opening(self):
         dirty = "Отправку держали лимиты по провайдерам.\n\n" + self.NO_CAUSE_NOTE
         self.assertEqual(self._rules(dirty), ["first-cause"])
         self.assertEqual(self._rules(dirty, stop_hook_active=True, first_cause_open=True), ["first-cause"])
+        clean = self.COUNT_OPENING + "\n\n" + self.NO_CAUSE_NOTE + "\n\n| Хук | Возвратов |"
+        self.assertEqual(self._rules(clean, stop_hook_active=True, first_cause_open=True), [])
 
     def test_merged_return_names_the_rule_without_the_word_and_one_next_opening(self):
         decision = gate_policy.reply_lint_decision("Факт: отправку держали лимиты. Готово.", False)
@@ -1590,12 +1622,13 @@ class FirstCauseHookProcessTest(unittest.TestCase):
         first = gate_policy.reply_lint_decision(self.DIRTY, False)["reason"]
         self.assertIsNone(self._reason(self._transcript(first), True, "Факт: 1,511 и 449 писем 9–10 ноября."))
 
-    def test_second_stop_taking_the_no_cause_exit_passes(self):
+    def test_second_stop_with_a_dirty_opening_and_a_no_cause_line_is_returned(self):
         first = gate_policy.reply_lint_decision(self.DIRTY, False)["reason"]
-        reply = self.DIRTY + "\n\n(В этом абзаце нет утверждения о причине: это подсчёт.)"
-        self.assertIsNone(self._reason(self._transcript(first), True, reply))
-        self.assertTrue(self._reason(self._transcript("background-watch-gate: x"), True, reply)
-                        .startswith(gate_policy.FIRST_CAUSE_MARKER))
+        for reply in (self.DIRTY + "\n\n(В этом абзаце нет утверждения о причине: это подсчёт.)",
+                      self.DIRTY + "\n\n(this paragraph names no cause)"):
+            with self.subTest(reply=reply):
+                self.assertTrue(self._reason(self._transcript(first), True, reply)
+                                .startswith(gate_policy.FIRST_CAUSE_MARKER))
 
     def test_later_stop_with_an_unreadable_transcript_passes(self):
         path = self._transcript("background-watch-gate: x")

@@ -1947,11 +1947,13 @@ def bash_effects(command, cwd="", scripts=None):
     redirect, ``tee``, ``sed -i``, a heredoc fed (or piped from ``cat``) to a
     shell or an interpreter, or a shell or an interpreter running a script
     file this command or an earlier call wrote (``scripts``: bodies the
-    session wrote earlier, by path); resolved against ``cwd`` and the cd's and
+    session wrote earlier, by path; a shell's syntax check ``-n`` runs
+    nothing); resolved against ``cwd`` and the cd's and
     ``NAME=`` bindings the command runs, a cd target taken as given; None
     where the target is unknown, a relative one after a cd the text does not
     resolve included. Other programs are not read for writes. ``wrote``: the heredoc
-    bodies ``cat``/``tee`` wrote, by path. A pure function of its arguments:
+    bodies ``cat``/``tee`` wrote, by path. ``ran``: the bodies of the
+    session-written script files the command runs (``_script_run``). A pure function of its arguments:
     it never reads the disk (a cd target is normalised, not resolved).
     """
     script, heredocs = _split_heredocs(command)
@@ -1962,7 +1964,7 @@ def bash_effects(command, cwd="", scripts=None):
     script = _BRACED_VAR_RE.sub(lambda m: "$" + m.group(1) + "\x01", script)
     ctx = _new_ctx(os.path.normpath(cwd) if cwd else "", 0, command,
                    {"TMPDIR": os.environ.get("TMPDIR") or "/tmp"})
-    check, writes, wrote, piped = False, [], {}, None
+    check, writes, wrote, piped, ran = False, [], {}, None, []
     for tokens, before, after in _segments_meta(script):
         _scope(before, ctx)
         _chain_step(ctx, before)
@@ -1975,7 +1977,8 @@ def bash_effects(command, cwd="", scripts=None):
                         body = taken
         if _bind(tokens, ctx, before, after):
             continue
-        program, args, _ = _command_head([_substitute(t, ctx["vars"]) for t in tokens])
+        words = [_substitute(t, ctx["vars"]) for t in tokens]
+        program, args, _ = _command_head(words)
         if program in ("cd", "pushd", "popd"):
             _change_dir(program, args, ctx, before, after, tokens[:1] == ["!"], literal=True)
             continue
@@ -1986,16 +1989,39 @@ def bash_effects(command, cwd="", scripts=None):
         if body is None and piped is not None and reads_code:
             body = piped
         piped = body if program in _HEREDOC_DATA_SINKS and _lone("|", after) else None
-        if body is None and reads_code:  # a script file this session (or this command) wrote
-            path = next((a for a in args if not a.startswith("-")), None)
-            kept = {**(scripts or {}), **wrote}.get(_resolve_write(path, ctx)) if path else None
-            if kept is not None:
+        run = _script_run(program, args, words) if body is None else None
+        kept = {**(scripts or {}), **wrote}.get(_resolve_write(run, ctx)) if run else None
+        if kept is not None:  # a script file this session (or this command) wrote
+            ran.append(kept)
+            if reads_code:
                 writes += _heredoc_writes(program, args, kept, ctx)
         if body is not None and program in _HEREDOC_DATA_SINKS:
             wrote.update((target, body) for target in operands)
         if body is not None:
             writes += _heredoc_writes(program, args, body, ctx)
-    return {"check": check, "writes": writes, "wrote": wrote}
+    return {"check": check, "writes": writes, "wrote": wrote, "ran": ran}
+
+
+_SYNTAX_CHECK_RE = re.compile(r"^-[A-Za-z]*n[A-Za-z]*$")
+
+
+def _script_run(program, args, tokens):
+    """The path of the script file a segment runs: the file given to a shell or an interpreter (a shell's
+    syntax check ``-n`` runs nothing), a path-named program, or either through ``check-run --``; else None."""
+    if program == "check-run":
+        inner = args[1:] if args[:1] == ["--"] else args
+        if not inner:
+            return None
+        program, args, tokens = os.path.basename(inner[0]), inner[1:], inner
+    if program in _SHELLS or _INLINE_INTERPRETER_RE.match(program):
+        flags = []
+        for arg in args:
+            if not arg.startswith("-"):
+                return None if program in _SHELLS and any(_SYNTAX_CHECK_RE.match(f) for f in flags) else arg
+            flags.append(arg)
+        return None
+    head = tokens[len(tokens) - len(args) - 1] if len(tokens) > len(args) else ""
+    return head if "/" in head else None
 
 
 def builder_events(tool, tool_input, cwd="", scripts=None):
@@ -2003,7 +2029,8 @@ def builder_events(tool, tool_input, cwd="", scripts=None):
     scratch (``scratch_path``), whichever tool made it; ``check`` for a
     ``check-run`` command, else ``command``; ``script`` (``path``, ``body``)
     for each file the call wrote whole (Write, a heredoc into cat/tee), which
-    the caller keeps as ``scripts`` for later calls (``bash_effects``). Reads
+    the caller keeps as ``scripts`` for later calls (``bash_effects``); the
+    run event carries ``scripts``, the bodies of those files it runs. Reads
     and spawns give none."""
     tool_input = tool_input if isinstance(tool_input, dict) else {}
     if tool in FILE_EDIT_TOOLS:
@@ -2019,7 +2046,10 @@ def builder_events(tool, tool_input, cwd="", scripts=None):
     effects = bash_effects(command, cwd, scripts)
     events = [{"kind": "edit"}] if any(not scratch_path(w, cwd) for w in effects["writes"]) else []
     events += [{"kind": "script", "path": p, "body": b} for p, b in effects["wrote"].items()]
-    return events + [{"kind": "check" if effects["check"] else "command", "command": command}]
+    run = {"kind": "check" if effects["check"] else "command", "command": command}
+    if effects["ran"]:
+        run["scripts"] = effects["ran"]
+    return events + [run]
 
 
 _CHECK_PREFIX_RE = re.compile(r"^\S*check-run\s+(?:--\s+)?")
@@ -2087,7 +2117,8 @@ def checks_decision(declared_check, events):
 
     ``events`` is the ordered record of what the agent did (``builder_events``
     plus ``reminder`` for this hook's own earlier return). After the last edit
-    the check ran when the executed text of a command (``executed_text``: not
+    the check ran when the executed text of a command or of a session-written
+    script it runs (``executed_text``: not
     a heredoc body, a quoted message or pattern, an echoed line) contains the
     whole line, or every declared command of the line (``check_spans``)
     appears in the executed text of a command, through check-run or not; a
@@ -2114,10 +2145,11 @@ def checks_decision(declared_check, events):
         if kind == "reminder":
             return {"decision": "allow"}
         if kind in ("command", "check"):
-            executed = executed_text(command)
-            if whole and whole in executed:
-                return {"decision": "allow"}
-            commands.append(executed)
+            for text in [command, *event.get("scripts", ())]:
+                executed = executed_text(text)
+                if whole and whole in executed:
+                    return {"decision": "allow"}
+                commands.append(executed)
             checked = checked or kind == "check"
     if all(any(s in c for c in commands) for s in spans) if spans else checked:
         return {"decision": "allow"}
@@ -2910,7 +2942,8 @@ _FIRST_CAUSE_REASON = (
     "only when that read is blocked, and name the effect there, never a cause. Open with `Proven:` only when a read "
     "that rules out the other causes has already run: a change followed by the effect is not that read, and the "
     "same sentence under a new label is not a correction. If the paragraph names no cause (an event, a setting, an "
-    "action of your own), keep it and say so in one line. " + _FIRST_LINE_NEXT
+    "action of your own), restate it without the cause wording; a line saying it names no cause does not clear "
+    "this return. " + _FIRST_LINE_NEXT
 )
 _PROVEN_FORM_REASON = (
     FIRST_CAUSE_MARKER + " the `Proven:` first line lacks its full form " + _PROVEN_FORM + ": the cause, a spaced "
@@ -3277,26 +3310,6 @@ def first_paragraph_cause(reply):
 
 
 FIRST_CAUSE_RETURNS_PER_TURN = 2
-# The exit the first-cause return offers ("If the paragraph names no cause ..., keep it and say so in one line"):
-# a line that says the paragraph above asserts no cause. Data the rule matches, kept byte-for-byte.
-_NO_CAUSE_NOTE_RE = re.compile(
-    r"(?:нет|не\s+(?:называ\w*|утвержда\w*|содерж\w*|указыва\w*))\s+(?:[\w-]+\s+){0,3}?причин"
-    r"|(?:names|states|asserts|contains|gives)\s+no\s+(?:[\w-]+\s+){0,2}?(?:cause|reason)"
-    r"|no\s+(?:causal\s+)?(?:claim|statement|assertion)\s+(?:of|about|on)\s+(?:a\s+|the\s+)?(?:cause|reason)",
-    re.IGNORECASE,
-)
-
-
-def no_cause_note(reply):
-    """The first non-empty line after the reply's first paragraph says that paragraph names no cause."""
-    rest = _PARAGRAPH_BREAK_RE.split((reply or "").strip(), 1)[1:]
-    line = next((ln for ln in rest[0].splitlines() if ln.strip()), "") if rest else ""
-    return bool(_NO_CAUSE_NOTE_RE.search(line))
-
-
-def first_cause_returned(stop_feedback_texts):
-    """A return of this turn carries ``FIRST_CAUSE_MARKER``."""
-    return any(FIRST_CAUSE_MARKER in t for t in stop_feedback_texts)
 
 
 def first_cause_open(stop_feedback_texts):
@@ -3615,21 +3628,17 @@ def parse_judge_verdict(cli_stdout):
     }
 
 
-def _first_cause_fired(text, after_first_cause=False):
-    """The first-cause entry of a reply-lint return: [] or [("first-cause", reason)]. After a first-cause return
-    of this turn (``after_first_cause``) a plain cause word passes when the reply takes that return's exit: the
-    line after the first paragraph says it names no cause (``no_cause_note``)."""
+def _first_cause_fired(text):
+    """The first-cause entry of a reply-lint return: [] or [("first-cause", reason)]."""
     cause = first_paragraph_cause(text)
-    if not cause or (after_first_cause and cause not in (PROVEN_FORM_MISSING, UNKNOWN_WHY)
-                     and no_cause_note(text)):
+    if not cause:
         return []
     reason = {PROVEN_FORM_MISSING: _PROVEN_FORM_REASON, UNKNOWN_WHY: _UNKNOWN_WHY_REASON}.get(cause, _FIRST_CAUSE_REASON)
     return [("first-cause", reason)]
 
 
 def reply_lint_decision(last_assistant_text, stop_hook_active, verdict=None, next_step="", lever="", *,
-                        timed_step="", pinned_while_working=False, first_cause_open=False,
-                        after_first_cause=False):
+                        timed_step="", pinned_while_working=False, first_cause_open=False):
     """Return the main session once when its final reply claims completion
     without an observation, or the judge ``verdict`` (``parse_judge_verdict``,
     None when no verdict exists) finds a plain-text hand-off to the owner or an
@@ -3648,14 +3657,12 @@ def reply_lint_decision(last_assistant_text, stop_hook_active, verdict=None, nex
     after a question or condition word with at most one word between.
     A later stop (``stop_hook_active``) runs only the first-cause rule, and only when ``first_cause_open``
     (``first_cause_open``: a return of this turn exists and fewer than two were first-cause), so that rule
-    returns at most twice per turn; otherwise it passes. After a first-cause return of this turn
-    (``after_first_cause``) a reply that takes its exit, a line after the first paragraph saying it names no
-    cause, passes that rule."""
+    returns at most twice per turn; otherwise it passes."""
     text = (last_assistant_text or "").strip()
     if not text or (stop_hook_active and not first_cause_open):
         return {"decision": "allow", "rules": []}
     if stop_hook_active:
-        fired = _first_cause_fired(text, after_first_cause)
+        fired = _first_cause_fired(text)
         if not fired:
             return {"decision": "allow", "rules": []}
         return {"decision": "block", "rules": [r for r, _ in fired], "reason": " ".join(m for _, m in fired)}
