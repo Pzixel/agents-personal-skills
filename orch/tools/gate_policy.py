@@ -2005,6 +2005,8 @@ def bash_effects(command, cwd="", scripts=None):
             ran.append(kept)
             if reads_code:
                 writes += _heredoc_writes(program, args, kept, ctx)
+        elif reads_code and path in known:  # its kept body was dropped: what it writes is unknown, an edit
+            writes.append(None)
         if whole:
             for target in operands:
                 if target is not None:

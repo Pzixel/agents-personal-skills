@@ -703,6 +703,16 @@ class BuilderEventsTest(unittest.TestCase):
         events = self._calls(write, edit, ("Bash", {"command": "sed -i '' '/clippy/d' tmp/check.sh"}), rewrite, run)
         self.assertEqual(gate_policy.checks_decision(self.CHECK, events)["decision"], "allow")
 
+    def test_a_run_of_a_script_changed_after_its_last_whole_write_is_an_edit(self):
+        write = ("Write", {"file_path": "/repo/tmp/patch.py", "content": "print('read only')\n"})
+        change = ("Bash", {"command": "sed -i '' 's/read only/x/' tmp/patch.py"})
+        events = self._calls(write, change, ("Bash", {"command": "python3 tmp/patch.py"}))
+        self.assertEqual([e["kind"] for e in events], ["command", "edit", "command"])
+        self.assertEqual(gate_policy.checks_decision(self.CHECK, events)["decision"], "return")
+        ran = self._calls(write, change, ("Bash", {"command": "python3 tmp/patch.py"}),
+                          ("Bash", {"command": "cargo test -p a && cargo clippy --all-targets"}))
+        self.assertEqual(gate_policy.checks_decision(self.CHECK, ran)["decision"], "allow")
+
     def test_a_note_written_to_an_unresolved_path_is_no_script_for_an_unresolved_run(self):
         events = self._calls(("Edit", {"file_path": "/repo/src/a.rs"}),
                              ("Bash", {"command": "cd \"$WT\" && cat > orch-notes/HANDOFF.md <<'EOF'\n"
