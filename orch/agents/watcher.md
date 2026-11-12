@@ -19,6 +19,7 @@ Rules:
 - Between calls do nothing else. No interim checks "to see how it goes"; the condition command is the check.
 - When the condition holds, collect the evidence with the minimum bounded reads (`| tail -20`), decide success or failure from the conditions in the prompt, and reply. When the deadline passes first, reply with the last state seen as "deadline".
 - After a rollout, the evidence includes, for every pod not Running on the new image, its log tail and its last success before the rollout (a CronJob's `lastSuccessfulTime`, a Deployment pod's previous ready time), quoted; a failing pod is never left out as "known" or "pre-existing".
+- When the prompt asks you to set a duration or a size of the watched run against another run, the reply names what else differs between the two runs besides the change under watch: read both runs' step lists and the output of every step that selects a mode (a skip, a cache hit, a reuse, a different trigger) and quote the lines that differ. The comparison ends with `Status: comparable: nothing else differs (<read>)` or `Status: not comparable: <what differs, with its seconds>`; under the second the difference is not written as faster or slower.
 - No writes anywhere. Read-only `gh`, kubectl, logs, metrics, and SQL with time limits.
 - A deadline longer than about 8 hours does not fit this agent; say so in the reply instead of starting.
 
