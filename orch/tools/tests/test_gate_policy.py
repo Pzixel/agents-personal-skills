@@ -480,68 +480,92 @@ class ChecksDecisionTest(unittest.TestCase):
         events = [{"kind": "edit"}, {"kind": "command", "command": "rtk git diff --stat"}]
         self.assertEqual(gate_policy.checks_decision("pytest", events)["decision"], "return")
 
-    def test_a_design_stop_after_writing_only_the_notes_is_let_through(self):
+    def test_a_check_run_of_a_declared_backticked_command_settles_a_prose_line(self):
+        line = "`cargo test -p campaign-engine` and the vitest suite of the app"
         events = [
-            {"kind": "edit", "path": "/repo/orch-notes/SPEC.md"},
-            {"kind": "edit", "path": "/repo/orch-notes/DESIGN.md"},
+            {"kind": "edit"},
+            {"kind": "check", "command": "~/.claude/tools/check-run -- rtk cargo test -p campaign-engine 2>&1 | tail -5"},
         ]
-        self.assertEqual(gate_policy.checks_decision("pytest", events)["decision"], "allow")
+        self.assertEqual(gate_policy.checks_decision(line, events)["decision"], "allow")
 
-    def test_a_code_edit_after_the_notes_still_needs_the_check(self):
-        events = [
-            {"kind": "edit", "path": "/repo/src/app.py"},
-            {"kind": "edit", "path": "/repo/orch-notes/SPEC.md"},
+    def test_a_check_run_of_another_command_does_not_settle_a_line_with_commands(self):
+        line = "`cargo test -p campaign-engine` and the vitest suite of the app"
+        events = [{"kind": "edit"}, {"kind": "check", "command": "check-run -- npx vitest run"}]
+        self.assertEqual(gate_policy.checks_decision(line, events)["decision"], "return")
+
+    def test_any_check_run_settles_a_prose_only_line(self):
+        line = "native tests of the touched crate plus the harness run"
+        events = [{"kind": "edit"}, {"kind": "check", "command": "check-run -- cargo test -p backend"}]
+        self.assertEqual(gate_policy.checks_decision(line, events)["decision"], "allow")
+
+
+def _events(tool, cwd="/repo", **tool_input):
+    return gate_policy.builder_events(tool, tool_input, cwd)
+
+
+class BuilderEventsTest(unittest.TestCase):
+    def test_notes_and_tmp_written_by_any_tool_are_not_edits(self):
+        cases = [
+            ("Write", {"file_path": "/repo/orch-notes/DESIGN.md"}),
+            ("Write", {"file_path": "/repo/tmp/m6/reader_probe.py"}),
+            ("Bash", {"command": "cd /repo/orch-notes && python3 - <<'EOF'\n"
+                                 "p = 'DESIGN.md'\nopen(p, 'w').write(open(p).read().replace('a', 'b'))\nEOF"}),
+            ("Bash", {"command": "R=/repo; cat > $R/orch-notes/HANDOFF.md <<'EOF'\n"
+                                 "8. Run `~/.claude/tools/check-run -- pytest`\nEOF"}),
+            ("Bash", {"command": "echo exclude >> \"$(git rev-parse --git-common-dir)/info/exclude\""}),
         ]
-        self.assertEqual(gate_policy.checks_decision("pytest", events)["decision"], "return")
+        for tool, tool_input in cases:
+            with self.subTest(tool_input=tool_input):
+                self.assertNotIn("edit", [e["kind"] for e in _events(tool, **tool_input)])
 
+    def test_writes_into_the_tree_are_edits(self):
+        cases = [
+            ("Edit", {"file_path": "/repo/src/app.py"}),
+            ("Bash", {"command": "sed -i '' 's/a/b/' src/app.py"}),
+            ("Bash", {"command": "cd /repo/tmp && echo x > /repo/src/app.py"}),
+            ("Bash", {"command": "python3 - <<'EOF'\nfrom pathlib import Path\n"
+                                 "Path('crates/core/tests/send.rs').write_text('x')\nEOF"}),
+            ("Bash", {"command": "git apply <<'EOF'\n--- a/x\n+++ b/x\nEOF"}),
+        ]
+        for tool, tool_input in cases:
+            with self.subTest(tool_input=tool_input):
+                self.assertEqual(_events(tool, **tool_input)[0]["kind"], "edit")
 
-class IsReadCallTest(unittest.TestCase):
-    def test_read_tool_is_a_read(self):
-        self.assertTrue(gate_policy.is_read_call("Read"))
+    def test_a_tmp_directory_above_the_working_directory_is_the_repository_not_scratch(self):
+        events = _events("Edit", cwd="/x/tmp/case/wt", file_path="/x/tmp/case/wt/src/app.py")
+        self.assertEqual([e["kind"] for e in events], ["edit"])
 
-    def test_edit_and_write_tools_are_not_reads(self):
-        self.assertFalse(gate_policy.is_read_call("Edit"))
-        self.assertFalse(gate_policy.is_read_call("Write"))
+    def test_check_run_counts_only_as_the_command_word(self):
+        cases = {
+            "~/.claude/tools/check-run -- sh -c 'pytest -q' 2>&1 | tail -3": "check",
+            "rtk grep -n check-run orch/README.md": "command",
+            "cat > /repo/orch-notes/HANDOFF.md <<'EOF'\nrun check-run -- pytest\nEOF": "command",
+        }
+        for command, kind in cases.items():
+            with self.subTest(command=command):
+                self.assertEqual(_events("Bash", command=command)[-1]["kind"], kind)
 
-    def test_wrapped_inspection_command_is_a_read(self):
-        self.assertTrue(
-            gate_policy.is_read_call("Bash", "rtk proxy poetry run pytest tests/x.py -q")
-        )
+    def test_reads_and_commits_are_not_edits(self):
+        for command in ("rtk cargo test 2>&1 | tail -5",
+                        "git commit -q -m \"$(cat <<'EOF'\nfix\nEOF\n)\""):
+            with self.subTest(command=command):
+                self.assertEqual([e["kind"] for e in _events("Bash", command=command)], ["command"])
 
-    def test_cd_prefix_does_not_hide_a_read(self):
-        self.assertTrue(gate_policy.is_read_call("Bash", "cd /srv/app && rg -n needle src/"))
-
-    def test_cd_prefix_does_not_hide_a_write(self):
-        self.assertFalse(gate_policy.is_read_call("Bash", "cd /srv/app && echo x > out.txt"))
-
-    def test_heredoc_is_a_write(self):
-        self.assertFalse(
-            gate_policy.is_read_call("Bash", "cat <<'EOF' > /tmp/f\nbody\nEOF")
-        )
-
-    def test_appending_redirect_is_a_write(self):
-        self.assertFalse(gate_policy.is_read_call("Bash", "printf 'x' >> /tmp/log"))
-
-    def test_tee_is_a_write(self):
-        self.assertFalse(gate_policy.is_read_call("Bash", "rtk cat a.txt | tee /tmp/copy"))
-
-    def test_sed_in_place_is_a_write(self):
-        self.assertFalse(gate_policy.is_read_call("Bash", "sed -i '' s/a/b/ file.txt"))
-
-    def test_sed_printing_a_range_is_a_read(self):
-        self.assertTrue(gate_policy.is_read_call("Bash", "sed -n '10,40p' file.txt"))
-
-    def test_stderr_redirection_is_not_a_file_write(self):
-        self.assertTrue(gate_policy.is_read_call("Bash", "cargo check 2>&1 | tail -40"))
-
-    def test_discarding_output_to_devnull_is_not_a_file_write(self):
-        self.assertTrue(gate_policy.is_read_call("Bash", "grep -q x file > /dev/null"))
-
-    def test_a_quoted_redirect_inside_a_search_pattern_is_still_a_read(self):
-        self.assertTrue(gate_policy.is_read_call("Bash", "rg -n 'x > y' src/"))
-
-    def test_an_inspection_program_redirected_into_a_file_is_a_write(self):
-        self.assertFalse(gate_policy.is_read_call("Bash", "rg foo src > /tmp/hits.txt"))
+    def test_write_targets_of_each_shell_write_form(self):
+        cases = {
+            "cd /srv/app && echo x > out.txt": ["/srv/app/out.txt"],
+            "cat <<'EOF' > /srv/f\nbody\nEOF": ["/srv/f"],
+            "printf 'x' >> \"/srv/a log\"": ["/srv/a log"],
+            "rtk cat a.txt | tee /srv/copy": ["/srv/copy"],
+            "sed -i '' s/a/b/ /srv/file.txt": ["/srv/file.txt"],
+            "rg foo src > /srv/hits.txt": ["/srv/hits.txt"],
+            "sed -n '10,40p' file.txt": [],
+            "cargo check 2>&1 | tail -40": [],
+            "rg -n 'x > y' src/": [],
+        }
+        for command, writes in cases.items():
+            with self.subTest(command=command):
+                self.assertEqual(gate_policy.bash_effects(command, "/repo")["writes"], writes)
 
 
 class SpawnDecisionTest(unittest.TestCase):

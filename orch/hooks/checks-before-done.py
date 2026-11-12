@@ -31,9 +31,6 @@ import gate_policy  # noqa: E402
 
 LOG_PATH = os.path.join(STATE_DIR, "checks-gate-log.jsonl")
 AGENT_TYPES = frozenset({"builder"})
-# A file edit is an editing tool call or a Bash command that writes (the write
-# side of is_read_call); a to-do list or a spawn is not an edit.
-EDIT_TOOLS = frozenset({"Edit", "Write", "MultiEdit", "NotebookEdit"})
 BLOCK_TEXT = (
     "run `{check}` through check-run, or state in your reply why it cannot be run. "
     "Then give your COMPLETE final reply again: only your last message reaches the caller, "
@@ -78,7 +75,8 @@ def blocks_of(entry):
 
 
 def declared_check(entries):
-    """The `check:` line of the agent's first user message, backticks stripped."""
+    """The `check:` line of the agent's first user message, backticks kept (they
+    mark the commands in a prose line)."""
     for entry in entries:
         if entry.get("type") != "user":
             continue
@@ -88,7 +86,7 @@ def declared_check(entries):
             for line in str(block.get("text") or "").splitlines():
                 stripped = line.strip().lstrip("-*").strip()
                 if stripped.lower().startswith("check:"):
-                    return stripped.split(":", 1)[1].strip().strip("`").strip()
+                    return stripped.split(":", 1)[1].strip()
         return ""
     return ""
 
@@ -110,18 +108,9 @@ def events_of(entries):
         for block in blocks_of(entry):
             if block.get("type") != "tool_use":
                 continue
-            tool = block.get("name") or ""
-            tool_input = block.get("input") or {}
-            if tool == "Bash":
-                command = str(tool_input.get("command") or "")
-                if command and not gate_policy.is_read_call(tool, command):
-                    events.append({"kind": "edit"})
-                if command:
-                    events.append({"kind": "command", "command": command})
-            elif tool in EDIT_TOOLS:
-                events.append(
-                    {"kind": "edit", "path": str(tool_input.get("file_path") or "")}
-                )
+            events += gate_policy.builder_events(
+                block.get("name") or "", block.get("input"), entry.get("cwd") or ""
+            )
     return events
 
 
@@ -165,7 +154,8 @@ def main():
 
     if decision["decision"] == "return":
         json.dump(
-            {"decision": "block", "reason": BLOCK_TEXT.format(check=check)}, sys.stdout
+            {"decision": "block", "reason": BLOCK_TEXT.format(check=check.strip("`").strip())},
+            sys.stdout,
         )
     return 0
 

@@ -34,7 +34,7 @@ class CacheWritePricingTest(unittest.TestCase):
 
 @_NEEDS_SCRIPT
 class ReadLikeNarrowingTest(unittest.TestCase):
-    """Read-like = observing only; gate_policy.is_read_call is the wider gate."""
+    """Read-like = observing only; gate_policy.bash_effects decides writes for the check gate."""
 
     def test_observing_programs_are_read_like(self):
         for command in ("rtk proxy cat /tmp/f.py", "cd /tmp/x && sed -n '1,40p' f.py",

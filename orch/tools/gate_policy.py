@@ -1705,81 +1705,195 @@ _CHECK_RETURN = (
 )
 
 
-# The builder's own notes under <repo>/orch-notes/: writing them is not a change
-# the check proves, and a builder stops after writing them when a design review
-# must run before code.
-_NOTE_FILES = frozenset({"SPEC.md", "DESIGN.md", "HANDOFF.md"})
+_FILE_EDIT_TOOLS = frozenset({"Edit", "Write", "MultiEdit", "NotebookEdit"})
 
 
-def _is_note_edit(event):
-    path = event.get("path") or ""
-    return (
-        os.path.basename(path) in _NOTE_FILES
-        and os.path.basename(os.path.dirname(path)) == "orch-notes"
-    )
+def scratch_path(path, cwd=""):
+    """True when a written file is outside the change a check proves: the
+    builder's notes (an ``orch-notes`` directory), git's own files, the system
+    temp directories, ``/dev/null``, and a ``tmp`` directory below the agent's
+    working directory ``cwd`` (above it a ``tmp`` component is where the
+    repository itself lives). ``None``, a write with no known target, is not
+    scratch."""
+    if path is None:
+        return False
+    path = os.path.normpath(os.path.expanduser(path))
+    if not path.startswith("/") and cwd:
+        path = os.path.normpath(os.path.join(cwd, path))
+    parts = path.split("/")
+    if "orch-notes" in parts or ".git" in parts or path == "/dev/null" or path.endswith("/info/exclude"):
+        return True
+    if _inside(path, [r.rstrip("/") for r in _scratch_roots()]):
+        return True
+    base = os.path.normpath(cwd) if cwd else ""
+    below = path[len(base) + 1:] if base and path.startswith(base + "/") else path
+    return "tmp" in below.split("/")[:-1]
+
+
+_FD_COPY_RE = re.compile(r"\d*>&(?:\d+|-)")  # 2>&1: a descriptor copy, no file
+_BOTH_REDIRECT_RE = re.compile(r"&>(>?)")  # &>file: stdout and stderr into a file
+_REDIRECT_OPS = frozenset({">", ">>", ">|", "1>", "2>", "1>>", "2>>"})
+_SED_INPLACE_ARG_RE = re.compile(r"^-[A-Za-z]*i|^--in-place")
+# A heredoc fed to these is data their own redirect or operands write, or a
+# commit message.
+_HEREDOC_DATA_SINKS = frozenset({"cat", "tee"})
+_MESSAGE_SUBCOMMANDS = frozenset({"commit", "tag", "notes"})
+# Code in an interpreter heredoc that writes or runs something; without it the
+# body only reads and prints.
+_BODY_WRITE_RE = re.compile(
+    r"\.write(?:_text|_bytes|lines)?\(|\bopen\([^)]*['\"][wax]\+?b?['\"]"
+    r"|\.dump\(|\bos\.replace\(|\b(?:unlink|rename|rmtree|copy2?|copyfile|copytree|move"
+    r"|makedirs|mkdir|remove|touch|system|run|call|check_call|check_output|Popen"
+    r"|writeFile(?:Sync)?|appendFile(?:Sync)?)\("
+)
+# A quoted string in that code that names a file: it holds a slash or ends in an extension.
+_PATH_LITERAL_RE = re.compile(r"""['"]([^'"\s]*/[^'"\s]*|[^'"\s/]+\.[A-Za-z]{1,6})['"]""")
+
+
+def _write_operands(program, args):
+    """Targets of the redirects, ``tee`` and ``sed -i`` of one segment, as written."""
+    targets = []
+    for i, arg in enumerate(args):
+        if arg in _REDIRECT_OPS:
+            if i + 1 < len(args):
+                targets.append(args[i + 1])
+        elif (m := _REDIRECT.match(arg)) and m.group(5) in (">", ">>") and m.group(6):
+            targets.append(m.group(6).lstrip("|"))
+    if program == "tee":
+        targets += _path_args(args)
+    elif program == "sed" and any(_SED_INPLACE_ARG_RE.match(a) for a in args):
+        operands = _path_args([a for a in args if a and not _SED_INPLACE_ARG_RE.match(a)])
+        scripted = any(a in ("-e", "-f") or a.startswith(("--expression", "--file")) for a in args)
+        targets += operands if scripted else operands[1:]
+    return targets
+
+
+def _resolve_write(target, ctx):
+    """A write target as an absolute path where its directory is known, else as written."""
+    target = _substitute(target, ctx["vars"])
+    if target.startswith("~"):
+        target = os.path.expanduser(target)
+    if not target.startswith("/") and ctx["dir"] and "$" not in target:
+        target = os.path.join(ctx["dir"], target)
+    return os.path.normpath(target)
+
+
+def _heredoc_writes(program, args, body, ctx):
+    """Files a heredoc body makes ``program`` write: None for an unknown target."""
+    if program in _HEREDOC_DATA_SINKS or (
+        program == "git" and args[:1] and args[0] in _MESSAGE_SUBCOMMANDS
+    ):
+        return []
+    if program in _SHELLS:
+        return bash_effects(body, ctx["dir"] or "")["writes"]
+    if _INLINE_INTERPRETER_RE.match(program):
+        if not _BODY_WRITE_RE.search(body):
+            return []
+        return [_resolve_write(t, ctx) for t in _PATH_LITERAL_RE.findall(body)] or [None]
+    return [None]
+
+
+def bash_effects(command, cwd=""):
+    """What a Bash command does for the builder's check gate.
+
+    ``check``: a segment runs ``check-run`` (the command word; text in a quoted
+    string or a heredoc body is not a run). ``writes``: files written by a
+    redirect, ``tee``, ``sed -i`` or a heredoc fed to a shell or an
+    interpreter, resolved against ``cwd`` and the cd's and ``NAME=`` bindings
+    the command runs; None where the target is unknown. Other programs are not
+    read for writes.
+    """
+    script, heredocs = _split_heredocs(command)
+    bodies = [body for _, body, _ in heredocs]
+    script = script.replace("\\\n", " ")
+    script = _BOTH_REDIRECT_RE.sub(lambda m: " >" + m.group(1), _FD_COPY_RE.sub(" ", script))
+    script = _BRACED_VAR_RE.sub(lambda m: "$" + m.group(1) + "\x01", script)
+    ctx = _new_ctx(os.path.normpath(cwd) if cwd else "", 0, command,
+                   {"TMPDIR": tempfile.gettempdir()})
+    check, writes = False, []
+    for tokens, before, after in _segments_meta(script):
+        _scope(before, ctx)
+        _chain_step(ctx, before)
+        body = None
+        for tok in tokens:
+            if "<<" in tok and "<<<" not in tok:
+                for _ in _HEREDOC_RE.finditer(tok):
+                    taken = bodies.pop(0) if bodies else ""
+                    if body is None and tok.startswith("<<"):
+                        body = taken
+        if _bind(tokens, ctx, before, after):
+            continue
+        program, args, _ = _command_head([_substitute(t, ctx["vars"]) for t in tokens])
+        if program in ("cd", "pushd", "popd"):
+            _change_dir(program, args, ctx, before, after, tokens[:1] == ["!"])
+            continue
+        check = check or program == "check-run"
+        writes += [_resolve_write(t, ctx) for t in _write_operands(program, args)]
+        if body is not None:
+            writes += _heredoc_writes(program, args, body, ctx)
+    return {"check": check, "writes": writes}
+
+
+def builder_events(tool, tool_input, cwd=""):
+    """The check gate's events for one tool call: ``edit`` for a write outside
+    scratch (``scratch_path``), whichever tool made it; ``check`` for a
+    ``check-run`` command, else ``command``. Reads and spawns give none."""
+    tool_input = tool_input if isinstance(tool_input, dict) else {}
+    if tool in _FILE_EDIT_TOOLS:
+        path = str(tool_input.get("file_path") or tool_input.get("notebook_path") or "")
+        return [] if scratch_path(path, cwd) else [{"kind": "edit", "path": path}]
+    command = str(tool_input.get("command") or "") if tool == "Bash" else ""
+    if not command:
+        return []
+    effects = bash_effects(command, cwd)
+    events = [{"kind": "edit"}] if any(not scratch_path(w, cwd) for w in effects["writes"]) else []
+    return events + [{"kind": "check" if effects["check"] else "command", "command": command}]
+
+
+_CHECK_PREFIX_RE = re.compile(r"^\S*check-run\s+(?:--\s+)?")
+
+
+def _spaced(text):
+    return " ".join(text.split())
+
+
+def check_spans(declared_check):
+    """The backticked commands of a ``check:`` line, without a check-run prefix."""
+    return [_spaced(_CHECK_PREFIX_RE.sub("", s.strip()))
+            for s in re.findall(r"`([^`\n]+)`", declared_check or "")]
 
 
 def checks_decision(declared_check, events):
     """Return an agent once if its declared check never ran after its last edit.
 
-    ``events`` is the ordered record of what the agent did: dicts with
-    ``kind`` in ``edit``/``command``/``reminder``, for commands the
-    ``command`` text, and for file-tool edits the ``path``. An edit of one of
-    the builder's notes (``_NOTE_FILES``) is not an edit here. No declared
-    check means allow, flagged ``undeclared``.
+    ``events`` is the ordered record of what the agent did (``builder_events``
+    plus ``reminder`` for this hook's own earlier return). After the last edit
+    the check ran when a command contains the whole line, or a ``check-run``
+    command contains a backticked command of the line (any ``check-run`` when
+    the line has none). No declared check means allow, flagged ``undeclared``.
     """
     check = (declared_check or "").strip()
     if not check:
         return {"decision": "allow", "undeclared": True}
+    literal = check.strip("`").strip()
+    spans = check_spans(check)
 
     last_edit = -1
     for i, event in enumerate(events or []):
-        if event.get("kind") == "edit" and not _is_note_edit(event):
+        if event.get("kind") == "edit":
             last_edit = i
     if last_edit < 0:
         return {"decision": "allow"}
 
     for event in (events or [])[last_edit + 1 :]:
-        kind = event.get("kind")
-        if kind == "command" and check in (event.get("command") or ""):
-            return {"decision": "allow"}
+        kind, command = event.get("kind"), event.get("command") or ""
         if kind == "reminder":
             return {"decision": "allow"}
-    return {"decision": "return", "message": _CHECK_RETURN.format(check=check)}
-
-
-_READ_TOOLS = frozenset(
-    {"Read", "Grep", "Glob", "LS", "NotebookRead", "WebFetch", "WebSearch"}
-)
-_WRITE_TOOLS = frozenset({"Write", "Edit", "MultiEdit", "NotebookEdit", "TodoWrite"})
-_CD_PREFIX = re.compile(r"^cd\s+[^\s;|&]+\s*&&\s*")
-_FD_DUP = re.compile(r"\d*>&\d*")
-_DEVNULL = re.compile(r">>?\s*/dev/null")
-_SED_INPLACE = re.compile(r"\bsed\b[^|;&]*\s-[A-Za-z]*i\b")
-
-
-def is_read_call(tool, command=None):
-    """True when a tool call only observes. Writing Bash forms - a heredoc, a
-    redirect into a file, ``tee``, ``sed -i`` - are writes, not reads."""
-    if tool in _WRITE_TOOLS:
-        return False
-    if tool != "Bash":
-        return tool in _READ_TOOLS
-    text = (command or "").strip()
-    if not text:
-        return False
-    stripped = _strip_quotes(_CD_PREFIX.sub("", text))
-    if "<<" in stripped:
-        return False
-    if _SED_INPLACE.search(stripped):
-        return False
-    scan = _DEVNULL.sub(" ", _FD_DUP.sub(" ", stripped))
-    if ">" in scan:
-        return False
-    for segment in _segments(stripped):
-        if _program(_tokens_after_keywords(segment)) == "tee":
-            return False
-    return True
+        if kind in ("command", "check") and literal in command:
+            return {"decision": "allow"}
+        if kind == "check" and (not spans or any(s in _spaced(command) for s in spans)):
+            return {"decision": "allow"}
+    return {"decision": "return", "message": _CHECK_RETURN.format(check=literal)}
 
 
 # ---------------------------------------------------------------------------
