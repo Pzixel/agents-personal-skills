@@ -1144,6 +1144,21 @@ class ReplyLintDecisionTest(unittest.TestCase):
         for text in ("Исправлено, всё работает.", "Исправлено, ошибка не воспроизводится.", "Исправлено, раньше не воспроизводилось."):
             self.assertEqual(self._d(text), "block", text)
 
+    def test_first_person_not_read_disclosure_counts_only_in_the_done_words_sentence(self):
+        for text in ("Субъект 1 варианта 2 готов (delegate's claim, файл не читал); жду субъектов 2 и 3.",
+                     "Тесты исправлены по отчёту сборщика, сам я их не запускал."):
+            self.assertEqual(self._d(text), "allow", text)
+        for text in ("Исправлено. Логи я не смотрел.",
+                     "Дизайн исправления готов. У кампаний, которые ещё не запускали, статистика тоже есть.",
+                     "Мелкие замечания тоже исправлены. Ещё не запускалось нигде."):
+            self.assertEqual(self._d(text), "block", text)
+
+    def test_source_or_pre_existing_complement_is_not_a_completion_claim(self):
+        for text in ("Старый путь закрыт ещё до вашей просьбы.", "Снимок сделан из админского аккаунта."):
+            self.assertEqual(self._d(text), "allow", text)
+        for text in ("Задача закрыта до конца.", "Снимок сделан, данные свежие."):
+            self.assertEqual(self._d(text), "block", text)
+
     def test_done_word_before_colon_is_a_label(self):
         for text in ("Что сделано: ничего не записано.", "What was done: nothing yet.",
                      "Блокер: нет прав.\n- **Что сделано:** ничего не записано."):
@@ -1187,8 +1202,12 @@ class ReplyLintDecisionTest(unittest.TestCase):
             "Три из 13 прогонов готовы.",
             "NS готовы: 0 из 15.",
             "Готово, когда CI зелёный.",
+            "Если всё исправлено, вливаю ветку.",
+            "**Почему так сделано:** Макс просил один раз классифицировать теги.",
         ):
             self.assertEqual(self._decide(text), "allow", text)
+        for text in ("Если тесты зелёные, всё готово.", "Когда я проверил, всё было исправлено."):
+            self.assertEqual(self._decide(text), "block", text)
 
     def test_complete_progress_is_a_claim(self):
         self.assertEqual(self._decide("13 из 13 готовы."), "block")

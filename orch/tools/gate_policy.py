@@ -3082,13 +3082,20 @@ _DONE_LABEL_RE = re.compile(
     r"^\W*(?:что\s+сделано|what(?:\s+(?:was|is))?\s+done)\s*:", re.IGNORECASE
 )
 _NON_ASSERTION_WORD_RE = re.compile(
-    r"\b(?:как|how|когда|when|once|будет|будут|станет|will|если|if)\s+$", re.IGNORECASE
+    r"\b(?:как|how|когда|when|once|будет|будут|станет|will|если|if|почему|why)\s+(?:[^\W\d]+\s+)?$", re.IGNORECASE
+)
+# A first-person not-read disclosure in the done word's sentence ("готов (файл не читал)", "сам я тесты не
+# запускал"): the claim carries its provenance. Singular past only: "ещё не запускали", "не запускалось" describe the
+# object, not the agent's read.
+_NOT_READ_RE = re.compile(
+    r"(?<![\w-])не\s+(?:пере)?(?:открыва|чита|прочита|смотре|посмотре|запуска)(?:л|ла)(?![\w-])", re.IGNORECASE
 )
 # A condition or a negation right after the done word qualifies the status, it does not claim it.
 _QUALIFIED_AFTER_RE = re.compile(
     r"(?:готов\w*,?\s+когда|done\s+when)\b"
     r"|(?:сделан\w*|done)\s+(?:через|в\s+виде|via|as\s+an?\b|\S+['`](?:ом|ем)\b)"
     r"|(?:готов\w*|сделан\w*|done)\s+(?:пока\s+|ещё\s+|еще\s+|yet\s+)?(?:не|not)\b"
+    r"|сделан\w*\s+из(?![\w-])|\w+\s+(?:ещё|еще|уже)\s+до(?![\w-])"
     r"|(?:готов\w*|сделан\w*|done)\s+(?:за|in)\s+(?:\d+\s+)?(?:секунд\w*|минут\w*|час\w*|дн[ея]\w*|seconds?|minutes?|hours?|days?)\b",
     re.IGNORECASE,
 )
@@ -3134,10 +3141,11 @@ def _has_done_claim(original):
         start, end = _sentence_bounds(text, match.start())
         if (
             _NEGATED_DONE_RE.search(before[-24:])
-            or _NON_ASSERTION_WORD_RE.search(before[-16:])
+            or _NON_ASSERTION_WORD_RE.search(before[-32:])
             or _QUALIFIED_AFTER_RE.match(original, match.start())
             or _label_covers(text, start, match.end())
             or _is_partial_progress(text[start:end])
+            or _NOT_READ_RE.search(text, start, end)
         ):
             continue
         return True
@@ -3360,8 +3368,9 @@ def reply_lint_decision(last_assistant_text, stop_hook_active, verdict=None, nex
     ``rules`` names every rule that fired. A hand-off does not fire when ``pinned_while_working``: the
     session has a non-empty open-question file and live work (``live_mechanisms`` or ``live_clocks``),
     so its question is already raised and pinned while work that does not wait on it runs (CASE-80).
-    Not claims (2026-10-15): a Russian not-verified disclosure, a done word
-    as a section label or with a manner complement.
+    Not claims: a Russian not-verified disclosure (a first-person "не открывал / читал / запускал" only in the done
+    word's sentence), a done word as a section label, with a manner, source or pre-existing-state complement, or
+    after a question or condition word with at most one word between.
     A later stop (``stop_hook_active``) runs only the first-cause rule, and only when ``first_cause_open``
     (``first_cause_open``: a return of this turn exists and fewer than two were first-cause), so that rule
     returns at most twice per turn; otherwise it passes."""
