@@ -17,11 +17,13 @@ never deleted. Remote branches are left to GitHub's delete-branch-on-merge.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 from dataclasses import dataclass
 
-from gate_policy import FILE_EDIT_TOOLS, scratch_path
+from gate_policy import FILE_EDIT_TOOLS, bash_effects, scratch_path
+from transcript import background_watch_scan, blocks_of
 
 
 WT_PATH = re.compile(r"(/[^\s\"'`;|&<>()]+?)/\.worktrees/([A-Za-z0-9._-]+)")
@@ -54,15 +56,20 @@ def written_worktrees(tool_name, tool_input, cwd=None):
 _READ_ONLY_AGENTS = frozenset({"reviewer", "scout", "watcher", "prod-probe", "Explore", "Plan"})
 
 
+def _is_handoff(path):
+    name = os.path.basename(str(path)).lower()
+    return name.startswith("handoff") and name.endswith(".md")
+
+
 def own_writes(tool_name, tool_input, cwd, write_targets):
     """Worktrees a call of the session itself wrote work into.
 
     A file tool by its path; Bash by ``write_targets``, the resolved targets of
     gate_policy.bash_effects (None = unknown target). A known target counts for
     the worktree it lies in unless it is scratch there (gate_policy.scratch_path
-    of its path inside the worktree: orch-notes, .git, a tmp directory); an
-    unknown target counts for the worktree of ``cwd`` and every worktree the
-    command names.
+    of its path inside the worktree: orch-notes, .git, a tmp directory) or a
+    handoff*.md, the note the gate itself asks for; an unknown target counts for
+    the worktree of ``cwd`` and every worktree the command names.
     """
     if tool_name in FILE_EDIT_TOOLS:
         write_targets = [tool_input.get(k) for k in ("file_path", "notebook_path") if tool_input.get(k)]
@@ -77,9 +84,64 @@ def own_writes(tool_name, tool_input, cwd, write_targets):
                 found.add(m.group(0))
             continue
         m = WT_PATH.match(str(target))
-        if m and not scratch_path(str(target)[m.end():].lstrip("/") or "."):
+        if m and not scratch_path(str(target)[m.end():].lstrip("/") or ".") and not _is_handoff(target):
             found.add(m.group(0))
     return found
+
+
+# A delegate whose transcript has not been written for this long is gone (killed, or finished on a version that
+# writes no "finished" key). Sized from the in-run gaps between consecutive entries of 3000 sampled delegate
+# transcripts (419,276 gaps, 2026-11-12): p99.99 607 s, 3 gaps above 1800 s; a Bash call is capped at 600 s.
+DELEGATE_SILENT_S = 1800
+# meta.json is rewritten when a delegate finishes: at rest its mtime is not older than its transcript's (11,820 of
+# 11,820 files with the key, 2026-11-12); a transcript written later is a resumed run.
+_META_SLACK_S = 5
+
+
+def delegate_facts(entries):
+    """Worktrees the session itself wrote inside, and (agent id, type, worktrees named, open) per async agent.
+
+    entries: (raw, entry) pairs of the main transcript. An agent names the worktrees its spawn prompt and every
+    SendMessage to its id name; it is open while background_watch_scan has it open at the end (no completion
+    notification, no TaskStop since its launch or last SendMessage).
+    """
+    agents = {}
+    for snap in background_watch_scan(entries, "worktree-dirty-gate"):
+        agents = snap["agents"]
+    own, spawns, named = set(), {}, {}
+    for _, entry in entries:
+        if entry.get("isSidechain"):
+            continue
+        for block in blocks_of(entry):
+            if block.get("type") != "tool_use":
+                continue
+            name, args = block.get("name"), block.get("input") or {}
+            text = json.dumps(args, ensure_ascii=False)
+            if name == "Agent":
+                spawns[block.get("id")] = (args.get("subagent_type"), {m.group(0) for m in WT_PATH.finditer(text)})
+            elif name == "SendMessage":
+                named.setdefault(str(args.get("to") or ""), set()).update(m.group(0) for m in WT_PATH.finditer(text))
+            elif name != "Bash":
+                own |= own_writes(name, args, entry.get("cwd"), ())
+            elif ".worktrees/" in text or "/.worktrees/" in str(entry.get("cwd")):
+                # a Bash write lands in a worktree only through a path or a cwd that names one
+                writes = bash_effects(str(args.get("command") or ""), entry.get("cwd") or "")["writes"]
+                own |= own_writes(name, args, entry.get("cwd"), writes)
+    delegates = []
+    for agent, record in agents.items():
+        kind, wts = spawns.get(record.get("call"), (None, set()))
+        delegates.append((agent, kind, wts | named.get(agent, set()), not record["closed"]))
+    return own, delegates
+
+
+def delegate_finished(meta, meta_mtime, transcript_mtime, now):
+    """A delegate is finished when its meta.json says ``"finished": true`` and its transcript was not written after
+    that, or when its transcript has been silent for DELEGATE_SILENT_S. Unknown transcript time: not finished."""
+    if transcript_mtime is None:
+        return False
+    if meta.get("finished") is True and meta_mtime is not None and meta_mtime + _META_SLACK_S >= transcript_mtime:
+        return True
+    return now - transcript_mtime > DELEGATE_SILENT_S
 
 
 def delegate_held(report, prints, own, delegates):

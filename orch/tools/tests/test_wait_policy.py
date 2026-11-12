@@ -107,7 +107,9 @@ class SleepingStopDecisionTest(unittest.TestCase):
         self.assertEqual(self.decide("Report written. No background tasks of mine are still running."), "allow")
 
     def test_another_objects_run_still_running_is_let_through(self):
-        self.assertEqual(self.decide("Should a landing wait while the tip's tests are still running?"), "allow")
+        for text in ("Should a landing wait while the tip's tests are still running?",
+                     "I see the CI run is still running."):
+            self.assertEqual(self.decide(text), "allow", text)
 
     def test_wait_phrase_inside_another_word_is_let_through(self):
         self.assertEqual(self.decide("Question: should the backfill wait for a gate verdict?"), "allow")

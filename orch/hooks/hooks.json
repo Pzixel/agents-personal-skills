@@ -231,7 +231,7 @@
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/worktree-dirty-gate.py\"",
-            "timeout": 5
+            "timeout": 15
           },
           {
             "type": "command",

@@ -777,13 +777,13 @@ WAITING_PHRASES = (
     r"wait for the (?:task )?notification",
 )
 _WAITING_RE = re.compile(r"(?<![\w'\u2019])(?:" + "|".join(WAITING_PHRASES) + r")(?!\w)", re.IGNORECASE)
-# "still running" is a wait only about the agent's own run: a first-person word
-# before it in its clause ("my backfill is still running") and no negation there
-# ("none of mine is still running"); "the tests are still running" or a
-# leftover port-forward is another object.
+# "still running" is a wait only about the agent's own run: a possessive of the
+# agent before it in its clause ("my backfill is still running") and no negation
+# there ("none of mine is still running"); "the tests are still running", "I see
+# the CI run is still running" or a leftover port-forward is another object.
 _STILL_RUNNING_RE = re.compile(r"(?<![\w-])still running(?!\w)", re.IGNORECASE)
 _PARENTHESIS_RE = re.compile(r"\([^()]*\)")
-_FIRST_PERSON_RE = re.compile(r"(?<![\w'\u2019])(?:i|my|mine|me)(?![\w'\u2019])", re.IGNORECASE)
+_OWN_RUN_RE = re.compile(r"(?<![\w'\u2019])(?:my|mine|мо[йяёеи])(?![\w'\u2019])", re.IGNORECASE)
 _CLAUSE_NEGATION_RE = re.compile(
     r"(?<![\w'\u2019])(?:no|none|nothing|not|never)(?![\w'\u2019])|n['\u2019]t(?!\w)", re.IGNORECASE)
 
@@ -848,8 +848,8 @@ def is_waiting_text(text):
         return True
     for match in _STILL_RUNNING_RE.finditer(tail):
         before = _PARENTHESIS_RE.sub(" ", tail[:match.start()])  # "my download (task b1) is still running"
-        clause = before[max(before.rfind(c) for c in _CLAUSE_STOPS) + 1:]
-        if _FIRST_PERSON_RE.search(clause) and not _CLAUSE_NEGATION_RE.search(clause):
+        clause = before[_clause_bounds(before, len(before))[0]:]
+        if _OWN_RUN_RE.search(clause) and not _CLAUSE_NEGATION_RE.search(clause):
             return True
     return False
 
@@ -2787,6 +2787,7 @@ _NEGATED_DONE_RE = re.compile(
 _OBSERVATION_RE = re.compile(
     r"```"
     r"|measured|observed|assumed|замер|наблюда|измер|не\s+(?:пере)?провер|не\s+повторял|не\s+воспроизводил[аи]?\b|по\s+словам|со\s+слов\b|not verified|unverified"
+    r"|\b(?:delegate|builder|subagent|agent|reviewer)['’]s\s+claim\b"
     r"|\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}:\d{2}(?::\d{2})?Z?\b"
     r"|\b\d+(?:[.,]\d+)?\s?(?:ms|мс|s|с|sec|сек|min|мин|h|ч|%|/s|/с|[KMG]i?B|[КМГ]Б|rows|строк|LOC|cores?)\b"
     r"|(?<![\w-])(?=[0-9a-f]*\d)[0-9a-f]{7,40}(?![\w-])|(?<![\w-])[A-Za-z][\w-]*\s+#\d+\b"
@@ -3105,11 +3106,29 @@ _AGENT_SUBJECT_RE = re.compile(
 )
 # A connective whose clause opens with the owner as subject ("потому что ты выбрал ..."): the owner's decision,
 # known first-hand, not a cause to prove.
-_OWNER_AFTER_RE = re.compile(r"\s*,?\s*(?:[^\W\d]+\s+)?(?:ты|вы|you)(?![\w-])", re.IGNORECASE)
-# A clause that states no event that happened: a subjunctive, an indirect question or a prohibition
-# ("из-за которых прод упал бы", "будет ли тормозить из-за ...", "из-за которого мержить нельзя").
-_UNREAL_CLAUSE_RE = re.compile(r"(?<![\w-])(?:бы|ли|нельзя|would|whether)(?![\w-])", re.IGNORECASE)
+# The owner right after the connective; an interjection ("because, as you know, ...") is not the subject.
+_OWNER_AFTER_RE = re.compile(r"\s+(?:ты|вы|you)(?![\w-])", re.IGNORECASE)
+# A clause that states no event that happened. A subjunctive or an indirect question anywhere in the cause word's
+# clause ("из-за которых прод упал бы", "будет ли тормозить из-за ..."); `would` in the effect before the cause
+# word ("it would fail because ..."); a prohibition or a hypothetical as the content of a clause the cause word
+# opens ("потому что выполнять ничего нельзя", "дефект, из-за которого мержить нельзя"). "because the pod would not
+# start" (a refusal) and "из-за лимита письма отправить нельзя" (the effect itself) state events.
+_UNREAL_CLAUSE_RE = re.compile(r"(?<![\w-])(?:бы|ли|whether)(?![\w-])", re.IGNORECASE)
+_UNREAL_EFFECT_RE = re.compile(r"(?<![\w-])would(?![\w-])", re.IGNORECASE)
+_UNREAL_CONTENT_RE = re.compile(r"(?<![\w-])(?:нельзя|would(?!\s+not\b|n['’]t))(?![\w-])", re.IGNORECASE)
+_CLAUSE_CONNECTIVE_RE = re.compile(
+    r"потому\s*,?\s*что|так\s+как|поскольку|because|по\s+причине|из-за(?=\s+(?:котор\w+|чего)(?![\w-]))",
+    re.IGNORECASE,
+)
 _CLAUSE_STOPS = ",.;:!?—–()\n"
+
+
+def _clause_bounds(text, start, end=None):
+    """(start, end) of the clause around ``text[start:end]``: from after the last clause stop before ``start`` to
+    the first one at or after ``end`` (default ``start``)."""
+    end = start if end is None else end
+    return (max(text.rfind(c, 0, start) for c in _CLAUSE_STOPS) + 1,
+            min((i for i in (text.find(c, end) for c in _CLAUSE_STOPS) if i >= 0), default=len(text)))
 # An open question that names no cause: "Неизвестно: что (именно) держало отправку", "Unknown: what caused it".
 _OPEN_WHAT_RE = re.compile(r"(?<![\w-])(?:что(?:\s+именно)?|what)\s+$", re.IGNORECASE)
 # An opening that says the answer is not known yet; it takes the «что / what» exemption of `Unknown:`, never its
@@ -3143,9 +3162,12 @@ def _asserted_cause(text, open_question=False):
             continue
         if open_question and _OPEN_WHAT_RE.search(before):
             continue
-        start = max(before.rfind(c) for c in _CLAUSE_STOPS) + 1
-        end = min((i for i in (text.find(c, match.end()) for c in _CLAUSE_STOPS) if i >= 0), default=len(text))
-        if _UNREAL_CLAUSE_RE.search(text, start, end):
+        start, end = _clause_bounds(text, match.start(), match.end())
+        if (
+            _UNREAL_CLAUSE_RE.search(text, start, end)
+            or _UNREAL_EFFECT_RE.search(text, start, match.start())
+            or (_CLAUSE_CONNECTIVE_RE.match(text, match.start()) and _UNREAL_CONTENT_RE.search(text, match.end(), end))
+        ):
             continue
         if match.group(2) and _AGENT_SUBJECT_RE.search(before[start:]):
             continue
@@ -3245,19 +3267,27 @@ def live_mechanisms(facts):
     return live
 
 
-# The one word before a done word that makes it a question, a relative clause, a condition or a
-# future, not an assertion ("как работает", "когда будут готовы", "once done").
+# The word before a done word that makes it a question, a relative clause, a condition or a future, not an
+# assertion ("как работает", "когда будут готовы", "once done"); a condition or a why-question may stand one word
+# away ("если всё исправлено", "почему это сломано"), the others only right before it.
 _DONE_LABEL_RE = re.compile(
     r"^\W*(?:что\s+сделано|what(?:\s+(?:was|is))?\s+done)\s*:", re.IGNORECASE
 )
 _NON_ASSERTION_WORD_RE = re.compile(
-    r"\b(?:как|how|когда|when|once|будет|будут|станет|will|если|if|почему|why)\s+(?:[^\W\d]+\s+)?$", re.IGNORECASE
+    r"\b(?:(?:как|how|когда|when|once|будет|будут|станет|will)\s+|(?:если|if|почему|why)\s+(?:[^\W\d]+\s+)?)$",
+    re.IGNORECASE,
 )
-# A first-person not-read disclosure in the done word's sentence ("готов (файл не читал)", "сам я тесты не
-# запускал"): the claim carries its provenance. Singular past only: "ещё не запускали", "не запускалось" describe the
-# object, not the agent's read.
+# A first-person not-read disclosure in the done word's sentence ("сам я тесты не запускал", "готово, не открывал
+# лог", "I did not run the tests"): the claim carries its provenance. The agent is the subject: «я» / «сам» before
+# the verb, or a clause that opens with it; "парсер не читал строку" is another subject's behaviour. Singular past
+# only: "ещё не запускали", "не запускалось" describe the object, not the agent's read.
+_NOT_READ_VERB = r"не\s+(?:пере)?(?:открыва|чита|прочита|смотре|посмотре|запуска)(?:л|ла)(?![\w-])"
 _NOT_READ_RE = re.compile(
-    r"(?<![\w-])не\s+(?:пере)?(?:открыва|чита|прочита|смотре|посмотре|запуска)(?:л|ла)(?![\w-])", re.IGNORECASE
+    r"(?<![\w-])(?:я|сам|сама)\s+(?:[^\W\d]+\s+){0,3}?" + _NOT_READ_VERB
+    + r"|(?:^|[,;:(—–]\s*)" + _NOT_READ_VERB
+    + r"|(?<![\w'’])I\s+(?:did\s+not|didn['’]t|have\s+not|haven['’]t|never)\s+(?:re-?)?"
+    r"(?:read|run|ran|open|opened|look(?:ed)?\s+at)(?![\w-])",
+    re.IGNORECASE | re.MULTILINE,
 )
 # A condition or a negation right after the done word qualifies the status, it does not claim it.
 _QUALIFIED_AFTER_RE = re.compile(

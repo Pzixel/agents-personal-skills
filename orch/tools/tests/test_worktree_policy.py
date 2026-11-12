@@ -14,7 +14,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 
 from gate_policy import bash_effects  # noqa: E402
 from worktree_policy import (  # noqa: E402
-    Worktree, decide_cleanup, delegate_held, own_writes, uncommitted_work_decision, written_worktrees)
+    DELEGATE_SILENT_S, Worktree, decide_cleanup, delegate_facts, delegate_finished, delegate_held, own_writes,
+    uncommitted_work_decision, written_worktrees)
 
 MAIN = Worktree("/r", "main", "m1", is_main=True, dirty=False, busy=False)
 
@@ -160,6 +161,77 @@ class OwnWritesTest(unittest.TestCase):
 
     def test_read_command_naming_the_worktree_is_not_own_work(self):
         self.assertEqual(self.bash("git -C /r/.worktrees/x status --short", "/r"), set())
+
+
+    def test_handoff_the_gate_asks_for_written_by_relative_path_is_not_own_work(self):
+        self.assertEqual(self.bash("echo 'builder still coding' >> HANDOFF.md", "/r/.worktrees/x"), set())
+
+
+WT = "/r/.worktrees/x"
+
+
+def _main(content):
+    return (None, {"type": "assistant" if content[0]["type"] == "tool_use" else "user", "cwd": "/r",
+                   "message": {"content": content}})
+
+
+def _spawn(call, kind, prompt):
+    return _main([{"type": "tool_use", "id": call, "name": "Agent",
+                   "input": {"subagent_type": kind, "prompt": prompt, "run_in_background": True}}])
+
+
+def _launched(call, agent):
+    return _main([{"type": "tool_result", "tool_use_id": call,
+                   "content": [{"type": "text", "text": "Async agent launched successfully.\nagentId: %s (...)" % agent}]}])
+
+
+def _notified(agent):
+    return _main([{"type": "text", "text": "<task-notification>\n<task-id>%s</task-id>\n<status>completed</status>\n"
+                                           "</task-notification>" % agent}])
+
+
+class DelegateFactsTest(unittest.TestCase):
+    """Which async agent names which worktree, and whether it is still open, as the main transcript records it."""
+
+    def test_builder_spawned_on_a_worktree_is_open_and_names_it(self):
+        entries = [_spawn("toolu_1", "orch:builder", "workspace: %s, fix it" % WT), _launched("toolu_1", "a1")]
+        self.assertEqual(delegate_facts(entries), (set(), [("a1", "orch:builder", {WT}, True)]))
+
+    def test_send_message_adds_the_worktree_it_names(self):
+        entries = [_spawn("toolu_1", "orch:builder", "no path here"), _launched("toolu_1", "a1"),
+                   _main([{"type": "tool_use", "id": "toolu_2", "name": "SendMessage",
+                           "input": {"to": "a1", "message": "continue in %s" % WT}}])]
+        self.assertEqual(delegate_facts(entries)[1], [("a1", "orch:builder", {WT}, True)])
+
+    def test_completion_notification_closes_the_agent(self):
+        entries = [_spawn("toolu_1", "orch:builder", WT), _launched("toolu_1", "a1"), _notified("a1")]
+        self.assertEqual(delegate_facts(entries)[1], [("a1", "orch:builder", {WT}, False)])
+
+    def test_session_edit_inside_the_worktree_is_own(self):
+        entries = [_main([{"type": "tool_use", "id": "toolu_3", "name": "Edit",
+                           "input": {"file_path": WT + "/src/a.py", "old_string": "a", "new_string": "b"}}])]
+        self.assertEqual(delegate_facts(entries), ({WT}, []))
+
+
+class DelegateFinishedTest(unittest.TestCase):
+    """A delegate with no notification is finished by its meta.json or by a silent transcript."""
+
+    NOW = 1_000_000.0
+
+    def test_meta_finished_after_the_last_transcript_write(self):
+        self.assertTrue(delegate_finished({"finished": True}, self.NOW - 60, self.NOW - 61, self.NOW))
+
+    def test_transcript_written_after_the_finished_meta_is_a_resumed_run(self):
+        self.assertFalse(delegate_finished({"finished": True}, self.NOW - 600, self.NOW - 30, self.NOW))
+
+    def test_running_delegate_without_the_key_writing_recently_is_live(self):
+        self.assertFalse(delegate_finished({}, self.NOW - 3600, self.NOW - 590, self.NOW))
+
+    def test_delegate_without_the_key_silent_past_the_bound_is_finished(self):
+        self.assertTrue(delegate_finished({}, self.NOW - 7200, self.NOW - DELEGATE_SILENT_S - 1, self.NOW))
+
+    def test_missing_transcript_is_not_finished(self):
+        self.assertFalse(delegate_finished({}, None, None, self.NOW))
 
 
 class WrittenWorktreesTest(unittest.TestCase):

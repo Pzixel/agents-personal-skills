@@ -1190,9 +1190,12 @@ class ReplyLintDecisionTest(unittest.TestCase):
 
     def test_first_person_not_read_disclosure_counts_only_in_the_done_words_sentence(self):
         for text in ("Субъект 1 варианта 2 готов (delegate's claim, файл не читал); жду субъектов 2 и 3.",
-                     "Тесты исправлены по отчёту сборщика, сам я их не запускал."):
+                     "Тесты исправлены по отчёту сборщика, сам я их не запускал.",
+                     "Done, but I did not run the tests."):
             self.assertEqual(self._d(text), "allow", text)
         for text in ("Исправлено. Логи я не смотрел.",
+                     "Исправлено: парсер не читал последнюю строку файла.",
+                     "Баг исправлен, хук не открывал транскрипт субагента.",
                      "Дизайн исправления готов. У кампаний, которые ещё не запускали, статистика тоже есть.",
                      "Мелкие замечания тоже исправлены. Ещё не запускалось нигде."):
             self.assertEqual(self._d(text), "block", text)
@@ -1250,7 +1253,9 @@ class ReplyLintDecisionTest(unittest.TestCase):
             "**Почему так сделано:** Макс просил один раз классифицировать теги.",
         ):
             self.assertEqual(self._decide(text), "allow", text)
-        for text in ("Если тесты зелёные, всё готово.", "Когда я проверил, всё было исправлено."):
+        for text in ("Если тесты зелёные, всё готово.", "Когда я проверил, всё было исправлено.",
+                     "Ещё он проверяет, как был сделан сегодняшний перенос.",
+                     "Теперь, когда всё исправлено, вливаю."):
             self.assertEqual(self._decide(text), "block", text)
 
     def test_complete_progress_is_a_claim(self):
@@ -1385,7 +1390,10 @@ class FirstCauseRuleTest(unittest.TestCase):
         for opening in ("Отправку держал лимит, проверю, вырос ли он.",
                         "Отправка встала, потому что я не перезапустил воркер.",
                         "Пока не знаю, почему встала отправка, но держали её лимиты.",
-                        "Неизвестно: почему отправку держали лимиты — blocked by запрет владельца"):
+                        "Неизвестно: почему отправку держали лимиты — blocked by запрет владельца",
+                        "The deploy failed because the pod would not start.",
+                        "Из-за лимита Google письма отправить нельзя.",
+                        "Sending stalled because, as you know, the quota ran out."):
             self.assertEqual(self._rules(opening + "\n\nДальше текст."), ["first-cause"], opening)
 
     def test_proven_form_ends_at_the_first_explains_after_the_arrow(self):

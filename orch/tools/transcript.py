@@ -132,7 +132,7 @@ def background_watch_scan(entries, marker):
 
     tasks: id -> {launch, command, closed}; monitors: id -> {armed, ended};
     crons: indexes of CronCreate calls; turn_start: first index of the turn;
-    agents: async Agent id -> {launch, closed} (closed by its notification or a
+    agents: async Agent id -> {launch, closed, call} (call: the Agent tool_use id; closed by its notification or a
     TaskStop, re-opened by a SendMessage to it); agent_calls: Agent calls with no
     tool_result yet; cron_jobs: one-shot job id -> {created, closed, prompt, fired} (closed by
     its `scheduled_task_fire` entry, which also sets fired, or CronDelete); recurring_jobs: recurring
@@ -217,7 +217,8 @@ def background_watch_scan(entries, marker):
                     state["agent_calls"].discard(block.get("tool_use_id"))
                     spawned = _AGENT_LAUNCHED_RE.match(result_text(block).strip())
                     if spawned:
-                        state["agents"][spawned.group(1)] = {"launch": index, "closed": False}
+                        state["agents"][spawned.group(1)] = {
+                            "launch": index, "closed": False, "call": block.get("tool_use_id")}
                     continue
                 if block.get("tool_use_id") in cron_prompts:
                     job = {"created": index, "closed": False, "prompt": cron_prompts[block.get("tool_use_id")]}
