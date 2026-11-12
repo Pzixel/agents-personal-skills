@@ -115,7 +115,7 @@ class BackgroundWatchTest(unittest.TestCase):
 
 
 class StopFeedbackThisTurnTest(unittest.TestCase):
-    """Only the Stop hook returns of the current turn count (first-cause runs once per turn, CASE-81)."""
+    """Only the Stop hook returns of the current turn count (first-cause returns at most twice per turn, CASE-81)."""
 
     def _feedback(self, entries):
         return transcript.stop_feedback_this_turn([(json.dumps(e), e) for e in entries])

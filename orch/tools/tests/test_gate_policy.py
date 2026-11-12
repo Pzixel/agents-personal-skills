@@ -1242,6 +1242,24 @@ class FirstCauseRuleTest(unittest.TestCase):
             reason = gate_policy.reply_lint_decision(text, False)["reason"]
             self.assertTrue(reason.startswith(gate_policy.FIRST_CAUSE_MARKER), text)
 
+    def test_unknown_line_with_a_why_question_is_returned_with_its_own_reason(self):
+        for opening in ("Unknown: почему лимиты по провайдерам срезали отправку 9–11 ноября, хотя письма расходовали "
+                        "лишь 2–19 % каждого лимита.",
+                        "Неизвестно: 1,511 и 449 писем 9–10 ноября. Отчего квота кончалась, решает чтение escrow.",
+                        "**Неизвестно:** из-за чего кампании упирались в лимиты — blocked by `refused`",
+                        "`Unknown:` почему 9–11 ноября лимиты отпускали меньше писем, чем в них было заложено.",
+                        "Unknown: why the caps fired at 2 % use — blocked by `permission denied`"):
+            decision = gate_policy.reply_lint_decision(opening + "\n\nДальше текст.", False)
+            self.assertEqual(decision["rules"], ["first-cause"], opening)
+            self.assertIn("a why-question carries its own premise", decision["reason"], opening)
+
+    def test_why_word_passes_when_quoted_or_outside_an_unknown_paragraph(self):
+        for opening in ("Unknown: счётчики escrow за 9–11 ноября — blocked by «почему отказано: нет роли»",
+                        "Unknown: what caps sending at 2 % use — blocked by `permission denied`",
+                        "Unknown: счётчики escrow — blocked by `refused`.\n\nПочему лимиты срезали отправку, неизвестно.",
+                        "Факт: письма расходовали 2–19 % каждого лимита; почему, решает чтение escrow."):
+            self.assertEqual(self._rules(opening), [], opening)
+
     def test_later_stop_runs_this_rule_only_while_it_has_not_returned_this_turn(self):
         dirty = "Готово. Отправку держали лимиты."
         self.assertEqual(self._rules(dirty, stop_hook_active=True), [])
@@ -1251,7 +1269,8 @@ class FirstCauseRuleTest(unittest.TestCase):
         returned = gate_policy.reply_lint_decision("Отправку держали лимиты.", False)["reason"]
         self.assertFalse(gate_policy.first_cause_open([]))
         self.assertTrue(gate_policy.first_cause_open(["Stop hook feedback:\nreply-lint: the reply leaves work"]))
-        self.assertFalse(gate_policy.first_cause_open(["Stop hook feedback:\nx", "Stop hook feedback:\n" + returned]))
+        self.assertTrue(gate_policy.first_cause_open(["Stop hook feedback:\nx", "Stop hook feedback:\n" + returned]))
+        self.assertFalse(gate_policy.first_cause_open(["Stop hook feedback:\n" + returned] * 2))
 
     def test_merged_return_names_the_rule_without_the_word_and_one_next_opening(self):
         decision = gate_policy.reply_lint_decision("Факт: отправку держали лимиты. Готово.", False)
@@ -1264,8 +1283,8 @@ class FirstCauseRuleTest(unittest.TestCase):
 
 
 class FirstCauseHookProcessTest(unittest.TestCase):
-    """The reply-lint hook process returns first-cause at most once per turn (CASE-81): a later stop is checked
-    only while no return of this turn carries the first-cause marker."""
+    """The reply-lint hook process returns first-cause at most twice per turn (CASE-81): a later stop is checked
+    only while fewer than two returns of this turn carry the first-cause marker."""
 
     HOOK = os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "..", "hooks", "reply-lint.py")
     DIRTY = "Отправку держали лимиты по провайдерам."
@@ -1286,9 +1305,9 @@ class FirstCauseHookProcessTest(unittest.TestCase):
             fh.write("".join(json.dumps(e) + "\n" for e in entries))
         return path
 
-    def _reason(self, path, stop_hook_active):
+    def _reason(self, path, stop_hook_active, message=DIRTY):
         payload = {"session_id": "s", "transcript_path": path, "stop_hook_active": stop_hook_active,
-                   "last_assistant_message": self.DIRTY}
+                   "last_assistant_message": message}
         out = subprocess.run([sys.executable, self.HOOK], input=json.dumps(payload), stdout=subprocess.PIPE,
                              stderr=subprocess.PIPE, universal_newlines=True, env=self.env, timeout=60)
         self.assertEqual(out.returncode, 0, out.stderr)
@@ -1301,9 +1320,18 @@ class FirstCauseHookProcessTest(unittest.TestCase):
         path = self._transcript("background-watch-gate: the turn ends with a background task open")
         self.assertTrue(self._reason(path, True).startswith(gate_policy.FIRST_CAUSE_MARKER))
 
-    def test_later_stop_after_a_first_cause_return_passes(self):
+    def test_second_stop_still_dirty_is_returned_again(self):
         first = gate_policy.reply_lint_decision(self.DIRTY, False)["reason"]
-        self.assertIsNone(self._reason(self._transcript(first, "open-question: x"), True))
+        self.assertTrue(self._reason(self._transcript(first, "open-question: x"), True)
+                        .startswith(gate_policy.FIRST_CAUSE_MARKER))
+
+    def test_third_stop_after_two_first_cause_returns_passes(self):
+        first = gate_policy.reply_lint_decision(self.DIRTY, False)["reason"]
+        self.assertIsNone(self._reason(self._transcript(first, first), True))
+
+    def test_second_stop_clean_passes(self):
+        first = gate_policy.reply_lint_decision(self.DIRTY, False)["reason"]
+        self.assertIsNone(self._reason(self._transcript(first), True, "Факт: 1,511 и 449 писем 9–10 ноября."))
 
     def test_later_stop_with_an_unreadable_transcript_passes(self):
         path = self._transcript("background-watch-gate: x")

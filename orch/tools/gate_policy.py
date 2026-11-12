@@ -2559,6 +2559,10 @@ _PROVEN_FORM_REASON = (
     "`Unknown: <the read that decides it> — blocked by <...>` when that read is blocked, and put the cause below the "
     "first paragraph as a labelled hypothesis with the read that decides it. " + _FIRST_LINE_NEXT
 )
+_UNKNOWN_WHY_REASON = (
+    FIRST_CAUSE_MARKER + " an `Unknown:` line names the read that decides and what blocks it; a why-question "
+    "carries its own premise; the observed effect goes as numbers, without a why-clause. " + _FIRST_LINE_NEXT
+)
 
 _LEVER_REASON = (
     REPLY_LINT_MARKER + " a lever that makes a step faster is listed before the read of who consumes that "
@@ -2751,9 +2755,12 @@ def timed_step_sentence(reply):
 _PROVEN_LINE_RE = re.compile(
     _LINE_LABEL_PREFIX + r"(?:proven|доказано)[ \t]*(?:\*\*|__|\*|_)?[ \t]*:(?:[ \t]*(?:\*\*|__))?", re.IGNORECASE
 )
+# Matched on the paragraph before quoted spans are blanked, so that a backticked label (`Unknown:`) counts.
 _UNKNOWN_LINE_RE = re.compile(
-    _LINE_LABEL_PREFIX + r"(?:unknown|неизвестно)(?:\s+пока)?[ \t]*(?:\*\*|__|\*|_)?[ \t]*[:,]", re.IGNORECASE
+    _LINE_LABEL_PREFIX + r"`?(?:unknown|неизвестно)(?:\s+пока)?`?[ \t]*(?:\*\*|__|\*|_)?[ \t]*[:,]", re.IGNORECASE
 )
+# A why-question in an `Unknown:` paragraph presupposes its cause (CASE-81 live-b). Data, kept byte-for-byte.
+_WHY_WORD_RE = re.compile(r"(?<![\w-])(?:почему|отчего|из-за\s+чего|why)(?![\w-])", re.IGNORECASE)
 _PARAGRAPH_BREAK_RE = re.compile(r"\n[ \t]*\n")
 # What held, limited, stopped, caused or enabled something: causal connectives, asserting noun forms and verb
 # forms (past tense, not reflexive). Data the rule matches, kept byte-for-byte.
@@ -2791,6 +2798,7 @@ _PROVEN_TAIL_RE = re.compile(
     re.IGNORECASE,
 )
 PROVEN_FORM_MISSING = "proven-form"
+UNKNOWN_WHY = "unknown-why"
 
 
 def _asserted_cause(text, open_question=False):
@@ -2840,20 +2848,29 @@ def first_paragraph_cause(reply):
     ``PROVEN_FORM_MISSING`` unless that line has its full form (``_proven_form_ok``), then "". For any other
     reply: the first asserted cause word (``_asserted_cause``) of its first paragraph (up to the first blank line,
     every closed quoted span blanked by ``_blank_quoted``), with the open-question exemption when the paragraph
-    opens with `Unknown:` / `Неизвестно:`; "" when none."""
+    opens with `Unknown:` / `Неизвестно:` (plain, bold or backticked); such a paragraph with a why-word anywhere
+    in it is ``UNKNOWN_WHY``; "" when none."""
     paragraph = _PARAGRAPH_BREAK_RE.split((reply or "").strip(), 1)[0]
     line = next((ln for ln in paragraph.splitlines() if ln.strip()), "")
     label = _PROVEN_LINE_RE.match(line)
     if label:
         return "" if _proven_form_ok(line[label.end():]) else PROVEN_FORM_MISSING
     body = _blank_quoted(paragraph)
-    return _asserted_cause(body, open_question=bool(_UNKNOWN_LINE_RE.match(body)))
+    unknown = bool(_UNKNOWN_LINE_RE.match(paragraph))
+    if unknown and _WHY_WORD_RE.search(body):
+        return UNKNOWN_WHY
+    return _asserted_cause(body, open_question=unknown)
+
+
+FIRST_CAUSE_RETURNS_PER_TURN = 2
 
 
 def first_cause_open(stop_feedback_texts):
     """A later stop of this turn may run the first-cause rule: some Stop hook returned this turn
-    (``transcript.stop_feedback_this_turn``) and no return of this turn carries ``FIRST_CAUSE_MARKER``."""
-    return bool(stop_feedback_texts) and not any(FIRST_CAUSE_MARKER in t for t in stop_feedback_texts)
+    (``transcript.stop_feedback_this_turn``) and fewer than ``FIRST_CAUSE_RETURNS_PER_TURN`` returns of this
+    turn carry ``FIRST_CAUSE_MARKER``."""
+    returned = sum(t.count(FIRST_CAUSE_MARKER) for t in stop_feedback_texts)
+    return bool(stop_feedback_texts) and returned < FIRST_CAUSE_RETURNS_PER_TURN
 
 
 def live_clocks(facts):
@@ -3153,7 +3170,8 @@ def _first_cause_fired(text):
     cause = first_paragraph_cause(text)
     if not cause:
         return []
-    return [("first-cause", _PROVEN_FORM_REASON if cause == PROVEN_FORM_MISSING else _FIRST_CAUSE_REASON)]
+    reason = {PROVEN_FORM_MISSING: _PROVEN_FORM_REASON, UNKNOWN_WHY: _UNKNOWN_WHY_REASON}.get(cause, _FIRST_CAUSE_REASON)
+    return [("first-cause", reason)]
 
 
 def reply_lint_decision(last_assistant_text, stop_hook_active, verdict=None, next_step="", lever="", *,
@@ -3174,8 +3192,8 @@ def reply_lint_decision(last_assistant_text, stop_hook_active, verdict=None, nex
     Not claims (2026-10-15): a Russian not-verified disclosure, a done word
     as a section label or with a manner complement.
     A later stop (``stop_hook_active``) runs only the first-cause rule, and only when ``first_cause_open``
-    (``first_cause_open``: a return of this turn exists and none was first-cause), so that rule returns at
-    most once per turn; otherwise it passes."""
+    (``first_cause_open``: a return of this turn exists and fewer than two were first-cause), so that rule
+    returns at most twice per turn; otherwise it passes."""
     text = (last_assistant_text or "").strip()
     if not text or (stop_hook_active and not first_cause_open):
         return {"decision": "allow", "rules": []}

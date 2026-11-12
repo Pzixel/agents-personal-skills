@@ -13,9 +13,9 @@ the owner or holds a first-person commitment): `claude -p --model haiku` sees
 only the final reply (gate_policy.judge_prompt), runs with no hooks, plugins,
 MCP or settings, and is guarded by REPLY_LINT_JUDGE against recursion. A later
 stop (`stop_hook_active`) makes no model call and runs only the judge-free
-first-cause rule, once per turn: when the transcript shows a Stop hook return in
-this turn and none of them was first-cause; so a flagged reply costs at most two
-extra turns, never a loop. A judge error, timeout or
+first-cause rule, at most twice per turn: when the transcript shows a Stop hook
+return in this turn and fewer than two of them were first-cause; so a flagged
+reply costs at most three extra turns, never a loop. A judge error, timeout or
 unparsable verdict passes the reply (fail open) and is logged; every record
 names the rules that fired. Measurement and acceptance condition: ORIGINS.md.
 Not claims (2026-10-15): Russian not-verified disclosures, done words as
@@ -87,8 +87,8 @@ def pinned_while_working(payload):
 
 
 def first_cause_open(transcript_path):
-    """At a later stop: a Stop hook returned this turn and none of its returns was first-cause; False when the
-    transcript is missing or unreadable."""
+    """At a later stop: a Stop hook returned this turn and fewer than two of its returns were first-cause; False
+    when the transcript is missing or unreadable."""
     try:
         if not os.path.isfile(transcript_path):
             return False
