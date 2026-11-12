@@ -687,6 +687,29 @@ class BuilderEventsTest(unittest.TestCase):
                                      ("Bash", {"command": run}))
                 self.assertEqual(gate_policy.checks_decision(self.CHECK, events)["decision"], "allow")
 
+    def test_a_script_changed_after_its_last_whole_write_credits_nothing(self):
+        write = ("Write", {"file_path": "/repo/tmp/check.sh", "content": self.CHECK_SCRIPT})
+        edit, run = ("Edit", {"file_path": "/repo/src/a.rs"}), ("Bash", {"command": "check-run -- bash tmp/check.sh"})
+        for change in (("Bash", {"command": "sed -i '' '/clippy/d' tmp/check.sh"}),
+                       ("Edit", {"file_path": "/repo/tmp/check.sh", "old_string": "cargo clippy --all-targets\n",
+                                 "new_string": ""}),
+                       ("Bash", {"command": "printf 'cargo test -p a\\n' > tmp/check.sh"}),
+                       ("Bash", {"command": "cat >> tmp/check.sh <<'EOF'\nls\nEOF"}),
+                       ("Bash", {"command": "rm tmp/check.sh"})):
+            with self.subTest(change=change):
+                events = self._calls(write, edit, change, run)
+                self.assertEqual(gate_policy.checks_decision(self.CHECK, events)["decision"], "return")
+        rewrite = ("Bash", {"command": "cat > tmp/check.sh <<'EOF'\n" + self.CHECK_SCRIPT + "EOF"})
+        events = self._calls(write, edit, ("Bash", {"command": "sed -i '' '/clippy/d' tmp/check.sh"}), rewrite, run)
+        self.assertEqual(gate_policy.checks_decision(self.CHECK, events)["decision"], "allow")
+
+    def test_a_note_written_to_an_unresolved_path_is_no_script_for_an_unresolved_run(self):
+        events = self._calls(("Edit", {"file_path": "/repo/src/a.rs"}),
+                             ("Bash", {"command": "cd \"$WT\" && cat > orch-notes/HANDOFF.md <<'EOF'\n"
+                                                  "Run `cargo test -p a` and `cargo clippy --all-targets`.\nEOF"}),
+                             ("Bash", {"command": "cd \"$WT\" && ./gradlew build"}))
+        self.assertEqual(gate_policy.checks_decision(self.CHECK, events)["decision"], "return")
+
     def test_a_declared_command_only_in_a_written_script_that_did_not_run_is_returned(self):
         events = self._calls(("Write", {"file_path": "/repo/tmp/check.sh", "content": self.CHECK_SCRIPT}),
                              ("Edit", {"file_path": "/repo/src/a.rs"}),

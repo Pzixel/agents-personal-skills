@@ -1952,7 +1952,10 @@ def bash_effects(command, cwd="", scripts=None):
     ``NAME=`` bindings the command runs, a cd target taken as given; None
     where the target is unknown, a relative one after a cd the text does not
     resolve included. Other programs are not read for writes. ``wrote``: the heredoc
-    bodies ``cat``/``tee`` wrote, by path. ``ran``: the bodies of the
+    bodies ``cat``/``tee`` wrote, by path, and None for a path the command
+    wrote partly (redirect, ``sed -i``, ``tee``) or removed (``rm``): its kept
+    body no longer holds. A target that does not resolve keeps nothing, and a
+    run whose path does not resolve credits nothing. ``ran``: the bodies of the
     session-written script files the command runs (``_script_run``). A pure function of its arguments:
     it never reads the disk (a cd target is normalised, not resolved).
     """
@@ -1965,6 +1968,7 @@ def bash_effects(command, cwd="", scripts=None):
     ctx = _new_ctx(os.path.normpath(cwd) if cwd else "", 0, command,
                    {"TMPDIR": os.environ.get("TMPDIR") or "/tmp"})
     check, writes, wrote, piped, ran = False, [], {}, None, []
+    known = dict(scripts or {})
     for tokens, before, after in _segments_meta(script):
         _scope(before, ctx)
         _chain_step(ctx, before)
@@ -1985,18 +1989,26 @@ def bash_effects(command, cwd="", scripts=None):
         check = check or program == "check-run"
         operands = [_resolve_write(t, ctx) for t in _write_operands(program, args)]
         writes += operands
+        removed = [_resolve_write(a, ctx) for a in args if not a.startswith("-")] if program == "rm" else []
+        whole = body is not None and program in _HEREDOC_DATA_SINKS and not any(a.startswith(">>") for a in args)
+        for target in operands + removed:  # a partial write, an append or a removal: the kept body no longer holds
+            if target is not None and not whole:
+                known[target] = wrote[target] = None
         reads_code = program in _SHELLS or _INLINE_INTERPRETER_RE.match(program)
         if body is None and piped is not None and reads_code:
             body = piped
         piped = body if program in _HEREDOC_DATA_SINKS and _lone("|", after) else None
         run = _script_run(program, args, words) if body is None else None
-        kept = {**(scripts or {}), **wrote}.get(_resolve_write(run, ctx)) if run else None
+        path = _resolve_write(run, ctx) if run else None
+        kept = known.get(path) if path is not None else None
         if kept is not None:  # a script file this session (or this command) wrote
             ran.append(kept)
             if reads_code:
                 writes += _heredoc_writes(program, args, kept, ctx)
-        if body is not None and program in _HEREDOC_DATA_SINKS:
-            wrote.update((target, body) for target in operands)
+        if whole:
+            for target in operands:
+                if target is not None:
+                    known[target] = wrote[target] = body
         if body is not None:
             writes += _heredoc_writes(program, args, body, ctx)
     return {"check": check, "writes": writes, "wrote": wrote, "ran": ran}
@@ -2029,7 +2041,9 @@ def builder_events(tool, tool_input, cwd="", scripts=None):
     scratch (``scratch_path``), whichever tool made it; ``check`` for a
     ``check-run`` command, else ``command``; ``script`` (``path``, ``body``)
     for each file the call wrote whole (Write, a heredoc into cat/tee), which
-    the caller keeps as ``scripts`` for later calls (``bash_effects``); the
+    the caller keeps as ``scripts`` for later calls (``bash_effects``), with
+    body None for a kept file another edit tool changed or a command wrote
+    partly or removed; the
     run event carries ``scripts``, the bodies of those files it runs. Reads
     and spawns give none."""
     tool_input = tool_input if isinstance(tool_input, dict) else {}
@@ -2039,6 +2053,8 @@ def builder_events(tool, tool_input, cwd="", scripts=None):
         if tool == "Write" and path:
             events.append({"kind": "script", "path": os.path.normpath(path),
                            "body": str(tool_input.get("content") or "")})
+        elif path and (scripts or {}).get(os.path.normpath(path)) is not None:  # an edit drops the kept body
+            events.append({"kind": "script", "path": os.path.normpath(path), "body": None})
         return events
     command = str(tool_input.get("command") or "") if tool == "Bash" else ""
     if not command:
