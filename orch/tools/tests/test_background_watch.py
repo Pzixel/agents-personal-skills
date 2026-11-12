@@ -126,9 +126,15 @@ class StopFeedbackThisTurnTest(unittest.TestCase):
         self.assertEqual(self._feedback(entries), ["Stop hook feedback:\nreply-lint: x"])
 
     def test_returns_of_an_earlier_turn_are_not(self):
-        for boundary in (turn_end(), owner("next question")):
-            entries = [owner("go"), dict(owner("Stop hook feedback:\nreply-lint: x"), isMeta=True), boundary]
-            self.assertEqual(self._feedback(entries), [], boundary)
+        entries = [owner("go"), dict(owner("Stop hook feedback:\nreply-lint: x"), isMeta=True), turn_end()]
+        self.assertEqual(self._feedback(entries), [])
+
+    def test_a_user_entry_inside_the_turn_keeps_its_returns(self):
+        compact = dict(owner("This session is being continued"), isCompactSummary=True)
+        notice = dict(owner("<task-notification>done</task-notification>"), origin={"kind": "task-notification"})
+        for entry in (owner("typed while the turn runs"), compact, notice):
+            entries = [owner("go"), dict(owner("Stop hook feedback:\nreply-lint: x"), isMeta=True), entry]
+            self.assertEqual(self._feedback(entries), ["Stop hook feedback:\nreply-lint: x"], entry)
 
 
 class LaunchAckTest(unittest.TestCase):

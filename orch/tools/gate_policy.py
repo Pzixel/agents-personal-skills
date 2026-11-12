@@ -2537,8 +2537,9 @@ _PROVEN_FORM = "`Proven: <cause> — <command or query>, <time> → <quoted frag
 # Starts both first-cause reasons; a later stop of the same turn finds it in the transcript (``first_cause_open``).
 FIRST_CAUSE_MARKER = REPLY_LINT_MARKER + " (first-cause)"
 _FIRST_LINE_NEXT = (
-    "Whatever else this return asks for, the last message you send in this turn opens with that corrected "
-    "first paragraph, or with the kept one and its one line."
+    "The last message you send in this turn is the whole reply again, opening with that corrected first "
+    "paragraph (or with the kept one and its one line); this overrides \"do not repeat the reply\" and \"append "
+    "only the missing part\" in any other part of this return."
 )
 _FIRST_CAUSE_REASON = (
     FIRST_CAUSE_MARKER + " the first paragraph of the reply says what held, caused or broke something, and a cause "
@@ -2773,7 +2774,6 @@ _NEGATION_BEFORE_RE = re.compile(r"(?:(?<![\w-])(?:не|ни|not|never|no)|n't)\
 _NEGATION_AFTER_RE = re.compile(r"\s+(?:не|not)(?![\w-])", re.IGNORECASE)
 # "держали не X, а Y" / "held not by X but by Y": the contrast names the cause.
 _CONTRAST_RE = re.compile(r",\s+а\s|\sbut\s", re.IGNORECASE)
-_SENTENCE_STOP_RE = re.compile(r"[.;!?]")
 # The agent or its tool as the subject of a cause verb: an action, not a cause. Searched in the verb's clause.
 _AGENT_SUBJECT_RE = re.compile(
     r"(?<![\w-])(?:я|мы|скрипт\w*|воркер\w*|агент\w*|хук\w*|джоб\w*|cron\w*|команд\w*)(?![\w-])", re.IGNORECASE
@@ -2781,10 +2781,18 @@ _AGENT_SUBJECT_RE = re.compile(
 _CLAUSE_STOPS = ",.;:!?—–()\n"
 # An open question that names no cause: "Неизвестно: что (именно) держало отправку", "Unknown: what caused it".
 _OPEN_WHAT_RE = re.compile(r"(?<![\w-])(?:что(?:\s+именно)?|what)\s+$", re.IGNORECASE)
-_BACKTICK_SPAN_RE = re.compile(r"`[^`]*(?:`|$)")
-_SPACED_DASH_RE = re.compile(r"[ \t][—–][ \t]")
+# The same question untyped: «что» / `what` opens the sentence, and the sentence says the answer is not known
+# («Что держало отправку …, всё ещё не установлено.»). Narrow on purpose: «лимиты, что держали отправку» asserts,
+# and a contrast in the sentence («…, пока не доказано, но причина почти наверняка в лимитах») names the cause.
+_SENTENCE_WHAT_RE = re.compile(r"(?:^|[.!?]\s+|\n)[^\w\n]*(?:что(?:\s+именно)?|what)\s+$", re.IGNORECASE)
+_NOT_KNOWN_RE = re.compile(
+    r"(?<![\w-])(?:не\s+(?:установлен|выяснен|известн|найден|доказан|ясн)\w*|неизвестн\w*|неясн\w*|unknown"
+    r"|not\s+(?:yet\s+)?(?:known|established|found|proven|clear))(?![\w-])",
+    re.IGNORECASE,
+)
+_OPEN_BUT_RE = re.compile(r",\s+(?:но|а)\s|\sbut\s", re.IGNORECASE)
+_SPACED_DASH_RE =re.compile(r"[ \t][—–][ \t]")
 _CLOCK_RE = re.compile(r"(?<!\d)\d{1,2}:\d{2}(?!\d)")
-_QUOTED_RE = re.compile(r"`[^`]+`|«[^»]+»|\"[^\"]+\"|“[^”]+”")
 _COUNT = r"(\d{1,3}(?:[ ,.  ]\d{3})+|\d+)"
 # Applied to the short text after the last ";" only, anchored at both ends.
 _PROVEN_TAIL_RE = re.compile(
@@ -2797,17 +2805,23 @@ PROVEN_FORM_MISSING = "proven-form"
 
 def _asserted_cause(text, open_question=False):
     """The first cause word of ``text`` that is asserted: not negated, a verb whose clause before it names no
-    agent subject, and, when ``open_question``, not right after «что» / `what`; else ""."""
+    agent subject, not right after «что» / `what` when ``open_question``, and not right after a sentence-opening
+    «что» / `what` whose sentence says the answer is not known; else ""."""
     for match in _CAUSE_WORD_RE.finditer(text):
         before = text[: match.start()]
         if _NEGATION_BEFORE_RE.search(before):
             continue
         if open_question and _OPEN_WHAT_RE.search(before):
             continue
+        if _SENTENCE_WHAT_RE.search(before):
+            end = _SENTENCE_END_RE.search(text, match.end())
+            sentence = re.split(r"[:;]", text[match.end(): end.start() if end else len(text)], 1)[0]
+            if _NOT_KNOWN_RE.search(sentence) and not _OPEN_BUT_RE.search(sentence):
+                continue
         if match.group(2) and _AGENT_SUBJECT_RE.search(before[max(before.rfind(c) for c in _CLAUSE_STOPS) + 1:]):
             continue
         if _NEGATION_AFTER_RE.match(text, match.end()):
-            stop = _SENTENCE_STOP_RE.search(text, match.end())
+            stop = _SENTENCE_END_RE.search(text, match.end())
             if not _CONTRAST_RE.search(text[match.end(): stop.start() if stop else len(text)]):
                 continue
         return match.group(0)
@@ -2816,7 +2830,8 @@ def _asserted_cause(text, open_question=False):
 
 def _proven_form_ok(rest):
     """The text after a `Proven:` label has the full form: <cause> — <command or query>, <HH:MM> → <quoted
-    fragment>; explains <X> of <Y>, counts with 1 <= X <= Y. A split parse, linear in the line length."""
+    fragment>; explains <X> of <Y>, counts with 1 <= X <= Y; the fragment is one or more closed quoted spans
+    (``_blank_quoted``). A split parse, linear in the line length."""
     head, sep, tail = rest.rpartition(";")
     counts = _PROVEN_TAIL_RE.fullmatch(tail) if sep else None
     if not counts:
@@ -2824,7 +2839,7 @@ def _proven_form_ok(rest):
     explained, total = (int(re.sub(r"\D", "", counts.group(i))) for i in (1, 2))
     if not 1 <= explained <= total:
         return False
-    blank = _BACKTICK_SPAN_RE.sub(lambda span: " " * len(span.group(0)), head)
+    blank = _blank_quoted(head)
     dash = _SPACED_DASH_RE.search(blank)
     if not dash or not blank[: dash.start()].strip():
         return False
@@ -2832,21 +2847,22 @@ def _proven_form_ok(rest):
     clock = _CLOCK_RE.search(blank, dash.end(), arrow) if arrow >= 0 else None
     if not clock or not head[dash.end(): clock.start()].strip(" \t,"):
         return False
-    return bool(_QUOTED_RE.fullmatch(head[arrow + 1:].strip()))
+    fragment = head[arrow + 1:].strip()
+    return len(fragment) > 2 and not _blank_quoted(fragment).strip()
 
 
 def first_paragraph_cause(reply):
     """The first-cause rule. For a reply whose first non-empty line is typed `Proven:` / `Доказано:`:
     ``PROVEN_FORM_MISSING`` unless that line has its full form (``_proven_form_ok``), then "". For any other
     reply: the first asserted cause word (``_asserted_cause``) of its first paragraph (up to the first blank line,
-    backticked spans removed), with the open-question exemption when the paragraph opens with `Unknown:` /
-    `Неизвестно:`; "" when none."""
+    every closed quoted span blanked by ``_blank_quoted``), with the open-question exemption when the paragraph
+    opens with `Unknown:` / `Неизвестно:`; "" when none."""
     paragraph = _PARAGRAPH_BREAK_RE.split((reply or "").strip(), 1)[0]
     line = next((ln for ln in paragraph.splitlines() if ln.strip()), "")
     label = _PROVEN_LINE_RE.match(line)
     if label:
         return "" if _proven_form_ok(line[label.end():]) else PROVEN_FORM_MISSING
-    body = _BACKTICK_SPAN_RE.sub(" ", paragraph)
+    body = _blank_quoted(paragraph)
     return _asserted_cause(body, open_question=bool(_UNKNOWN_LINE_RE.match(body)))
 
 

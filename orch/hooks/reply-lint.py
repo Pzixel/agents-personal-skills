@@ -170,7 +170,8 @@ def main():
             pinned = pinned_while_working(payload)
         except Exception as exc:  # the hand-off rule stays in force; the failure is logged
             scan_error = "%s: %s" % (type(exc).__name__, exc)
-    reopen = stop_hook_active and first_cause_open(payload.get("transcript_path") or "")
+    reopen = (stop_hook_active and bool(gate_policy.first_paragraph_cause(text))
+              and first_cause_open(payload.get("transcript_path") or ""))
     decision = gate_policy.reply_lint_decision(text, stop_hook_active, verdict, next_step, lever,
                                             timed_step=timed_step, pinned_while_working=pinned,
                                             first_cause_open=reopen)

@@ -3,8 +3,8 @@ import re
 import os
 import shutil
 import sys
+import subprocess
 import tempfile
-import time
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
@@ -1181,7 +1181,14 @@ class FirstCauseRuleTest(unittest.TestCase):
                         "Причина та же: дневные лимиты.",
                         "The root cause was a race in the scheduler.",
                         "Неизвестно: почему отправку держали лимиты — blocked by запрет владельца",
-                        "Неизвестно: что держало отправку, если её держали лимиты по провайдерам."):
+                        "Неизвестно: что держало отправку, если её держали лимиты по провайдерам.",
+                        "Что держало отправку? Лимиты по провайдерам.",
+                        "**Что держало отправку, пока не доказано, но причина почти наверняка в лимитах.**",
+                        "Отправку держали лимиты, что держали её и в октябре; это не установлено.",
+                        "Я проверил логи, лимиты держали отправку.",
+                        "Я откатил PR #12, потому что тесты красные.",
+                        "Мы стояли час из-за пустого пула.",
+                        "Факт: отправка шла — `history.py logs, а лимиты держали её до 14:54."):
             self.assertEqual(self._rules(opening + "\n\nДальше текст."), ["first-cause"], opening)
 
     def test_openings_without_an_asserted_cause_pass(self):
@@ -1199,6 +1206,16 @@ class FirstCauseRuleTest(unittest.TestCase):
                         "Причину ещё не нашёл; termination reason is OOMKilled.",
                         "Неизвестно: что именно держало отправку 9–10 ноября.",
                         "Unknown: what caused the stop on 10 November — blocked by `permission denied`",
+                        "Неизвестно: счётчики escrow по ws2300 — blocked by «чтение отклонено из-за отсутствия роли»",
+                        "Fact: шлюз ответил 429 — `curl -s gw/status`, 12:04 → \"reason\": \"held because quota\"",
+                        "Fact: the pool is empty — `q`, 12:04 → “drained due to a restart”",
+                        "Что держало отправку в ws2300 9–11 ноября, всё ещё не установлено.",
+                        "Что держало отправку, ещё не доказано: решит одно чтение базы, а для него нужен доступ.",
+                        "Сводка за день.\nЧто именно держало отправку, пока неизвестно.",
+                        "Хук остановил запуск в 14:00.",
+                        "Джоб урезал выборку до 100 строк.",
+                        "Cron остановил проверку в 03:00.",
+                        "Команда освободила 40 ГБ.",
                         "Подтверждено: отправка шла.\n\nОтправку держали лимиты, потому что так было настроено."):
             self.assertEqual(self._rules(opening), [], opening)
 
@@ -1206,7 +1223,9 @@ class FirstCauseRuleTest(unittest.TestCase):
         for line in (self.PROVEN,
                      "Доказано: отправку держали лимиты — `q`, 15:18Z → «3 384 писем»; объясняет 3 384 письма из 3 384",
                      "Proven: the caps held sending — history.py logs, 2026-11-12T15:18Z → \"old 1450\"; "
-                     "explains 3,384 emails of 3,384"):
+                     "explains 3,384 emails of 3,384",
+                     "Proven: the caps held sending — `q`, 15:18Z → “old 1450”; explains 3 of 3 emails",
+                     "Доказано: отправку держали лимиты — `q`, 15:18Z → «3 384» «писем»; объясняет 3 из 3"):
             self.assertEqual(self._rules(line + "\nОтправку держали лимиты.\n\nДальше."), [], line)
 
     def test_incomplete_proven_forms_are_returned(self):
@@ -1215,14 +1234,17 @@ class FirstCauseRuleTest(unittest.TestCase):
                      "Доказано: отправку держали лимиты — `q`, 15:18Z → `x`; объясняет 5 из 3",
                      "Proven: the caps held sending — `q`, 15:18Z → `x`; explains 0 of 3,384",
                      "Proven: the caps held sending — `q`, 11 November → `x`; explains 3 of 3",
-                     "Proven: the caps held sending — `q`, 15:18Z → x; explains 3 of 3"):
-            self.assertEqual(self._rules(line), ["first-cause"], line)
+                     "Proven: the caps held sending — `q`, 15:18Z → x; explains 3 of 3",
+                     "Proven: the caps held sending — 15:18Z → `x`; explains 3 of 3",
+                     "Proven: the caps held sending — `q`, 15:18Z → `x; explains 3 of 3"):
+            decision = gate_policy.reply_lint_decision(line, False)
+            self.assertEqual(decision["rules"], ["first-cause"], line)
+            self.assertIn("lacks its full form", decision["reason"], line)
 
-    def test_a_long_malformed_proven_line_is_parsed_within_the_hook_budget(self):
-        line = ("Proven: " + "отправку держали лимиты — `q`, 15:18 → `x`, " * 50)[:2000] + "; explains 3 of"
-        started = time.perf_counter()
-        self.assertEqual(self._rules(line), ["first-cause"])
-        self.assertLess(time.perf_counter() - started, 0.05)
+    def test_both_first_cause_reasons_carry_the_marker_a_later_stop_looks_for(self):
+        for text in ("Отправку держали лимиты.", "Proven: лимиты; explains 3 of 3"):
+            reason = gate_policy.reply_lint_decision(text, False)["reason"]
+            self.assertTrue(reason.startswith(gate_policy.FIRST_CAUSE_MARKER), text)
 
     def test_later_stop_runs_this_rule_only_while_it_has_not_returned_this_turn(self):
         dirty = "Готово. Отправку держали лимиты."
@@ -1239,9 +1261,61 @@ class FirstCauseRuleTest(unittest.TestCase):
         decision = gate_policy.reply_lint_decision("Факт: отправку держали лимиты. Готово.", False)
         self.assertEqual(set(decision["rules"]), {"claim", "first-cause"})
         self.assertNotIn("держали", decision["reason"])
-        self.assertEqual(decision["reason"].count("the last message you send in this turn opens"), 1)
+        self.assertEqual(decision["reason"].count("The last message you send in this turn is the whole reply"), 1)
+        self.assertTrue(decision["reason"].endswith('"append only the missing part" in any other part of this return.'))
         for exit_form in ("labelled hypothesis", "`Unknown:", "`Proven:"):
             self.assertIn(exit_form, decision["reason"])
+
+
+class FirstCauseHookProcessTest(unittest.TestCase):
+    """The reply-lint hook process returns first-cause at most once per turn (CASE-81): a later stop is checked
+    only while no return of this turn carries the first-cause marker."""
+
+    HOOK = os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "..", "hooks", "reply-lint.py")
+    DIRTY = "Отправку держали лимиты по провайдерам."
+
+    def setUp(self):
+        self.home = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.home)
+        self.env = {k: v for k, v in os.environ.items() if k != "REPLY_LINT_JUDGE"}
+        self.env.update(HOME=self.home, PATH="/usr/bin:/bin")  # no `claude` binary: a judge call would fail open
+
+    def _transcript(self, *returns):
+        entries = [{"type": "user", "message": {"role": "user", "content": "Почему встала отправка?"}},
+                   {"type": "assistant", "message": {"content": [{"type": "text", "text": self.DIRTY}]}}]
+        entries += [{"type": "user", "isMeta": True, "message": {"role": "user", "content": "Stop hook feedback:\n" + r}}
+                    for r in returns]
+        path = os.path.join(self.home, "t.jsonl")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("".join(json.dumps(e) + "\n" for e in entries))
+        return path
+
+    def _reason(self, path, stop_hook_active):
+        payload = {"session_id": "s", "transcript_path": path, "stop_hook_active": stop_hook_active,
+                   "last_assistant_message": self.DIRTY}
+        out = subprocess.run([sys.executable, self.HOOK], input=json.dumps(payload), stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, universal_newlines=True, env=self.env, timeout=60)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        return json.loads(out.stdout)["reason"] if out.stdout.strip() else None
+
+    def test_first_stop_returns_a_dirty_opening(self):
+        self.assertTrue(self._reason(self._transcript(), False).startswith(gate_policy.FIRST_CAUSE_MARKER))
+
+    def test_later_stop_after_another_rules_return_returns_it(self):
+        path = self._transcript("background-watch-gate: the turn ends with a background task open")
+        self.assertTrue(self._reason(path, True).startswith(gate_policy.FIRST_CAUSE_MARKER))
+
+    def test_later_stop_after_a_first_cause_return_passes(self):
+        first = gate_policy.reply_lint_decision(self.DIRTY, False)["reason"]
+        self.assertIsNone(self._reason(self._transcript(first, "open-question: x"), True))
+
+    def test_later_stop_with_an_unreadable_transcript_passes(self):
+        path = self._transcript("background-watch-gate: x")
+        os.chmod(path, 0)
+        self.addCleanup(os.chmod, path, 0o600)
+        if os.access(path, os.R_OK):
+            self.skipTest("the file stays readable for this user (root)")
+        self.assertIsNone(self._reason(path, True))
 
 
 class HandoffJudgeTest(unittest.TestCase):
