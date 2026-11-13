@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """PreToolUse gate on AskUserQuestion. First the ask-after-pin rule (gate_policy.ask_after_pin_decision) over
-the session's pin file and its transcript read backwards (at most PIN_SCAN_BYTES; any read error passes). Then
+the mtime of the session's pin file and its transcript read backwards to the pin (at most PIN_SCAN_BYTES; no
+pin or any read error passes). Then
 the rule, fail-open on a payload without a stem included, gate_policy.ask_existing_decision. A question that
 passes the spend prefilter (gate_policy.spend_candidate) is judged by the small model (model_judge, the
 session's own login); a judge error or timeout passes it (fail open). Every judged call is logged (judged /
@@ -20,8 +21,8 @@ LOG_PATH = os.path.expanduser("~/.claude/ask-existing-gate-log.jsonl")
 JUDGE_ENV = "ASK_SPEND_JUDGE"
 # 5 s under the hook's 30 s timeout; the shared runner's history: p50 3.9 s, p99 9.5 s.
 JUDGE_TIMEOUT_S = 25
-# The scan stops at the first tool call, the push or the turn start: the largest scan over 1399 stored dialogs
-# (28 d) read 1.05 MB; 12 MB is over 10x that. A scan cut by the bound passes the call.
+# The scan stops at the first work call or the first entry older than the pin: the largest read over 1404
+# stored dialogs (28 d, `replay.py ask-after-pin`) was 16.6 KB; 12 MB is far over 10x. A cut read passes.
 PIN_SCAN_BYTES = 12 << 20
 JUDGE_ARGS = model_judge.BASE_ARGS + ["--system-prompt", "You classify one question. Respond with JSON only."]
 
@@ -41,8 +42,10 @@ def pin_reason(payload):
         if not gate_policy.session_id_ok(session) or not isinstance(path, str) or not os.path.isfile(path):
             return None
         pin = gate_policy.open_question_path(os.path.expanduser("~"), session)
-        pinned = os.path.isfile(pin) and bool(open(pin, errors="replace").read().strip())
-        return gate_policy.ask_after_pin_decision(payload, pinned, transcript.entries_from_end(path, PIN_SCAN_BYTES))
+        if not os.path.isfile(pin) or not open(pin, errors="replace").read().strip():
+            return None
+        return gate_policy.ask_after_pin_decision(payload, os.path.getmtime(pin),
+                                                  transcript.entries_from_end(path, PIN_SCAN_BYTES))
     except OSError:
         return None
 

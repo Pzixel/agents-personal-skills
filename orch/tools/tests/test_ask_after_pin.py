@@ -1,6 +1,7 @@
 """The ask-after-pin rule on transcript shapes captured from a real session (push and dialog in one assistant
 message, push result in between; texts replaced) and the `metadata.source` clause grammar shared with the
 `Existing:` rule."""
+import datetime
 import json
 import os
 import subprocess
@@ -21,6 +22,15 @@ PUSH = "QUESTION: merge #12 (export button on the report page)? Recommended: mer
 STEM = "Part two of the report export (#12): merge?"
 
 
+T0 = 1_800_000_000.0  # epoch of the fixtures' clock; times below are seconds after it
+PIN = T0 + 10  # mtime of the pin file: the push's PostToolUse wrote it
+
+
+def at(t, entry):
+    stamp = datetime.datetime.fromtimestamp(T0 + t, datetime.timezone.utc).isoformat(timespec="milliseconds")
+    return dict(entry, timestamp=stamp.replace("+00:00", "Z"))
+
+
 def assistant(msg, block):
     return {"type": "assistant", "isSidechain": False, "message": {"id": msg, "role": "assistant", "content": [block]}}
 
@@ -36,11 +46,6 @@ def result(use_id, text, error=False):
     return {"type": "user", "isSidechain": False, "message": {"role": "user", "content": [block]}}
 
 
-def push(msg="m1", use_id="p1", message=PUSH):
-    return [call(msg, use_id, "PushNotification", {"message": message}),
-            result(use_id, "Terminal notification sent. Mobile push not sent (Remote Control inactive).")]
-
-
 def dialog(msg="m1", use_id="d1", source=None):
     args = {"questions": [{"question": STEM, "options": [{"label": "Merge"}, {"label": "Hold"}]}]}
     if source is not None:
@@ -54,85 +59,83 @@ def payload(source=None, **extra):
                  "tool_use_id": "d2"}, **extra)
 
 
-def decide(entries, pinned=True, **kwargs):
-    return gate_policy.ask_after_pin_decision(payload(**kwargs), pinned, reversed(entries))
+def decide(entries, pin=PIN, **kwargs):
+    return gate_policy.ask_after_pin_decision(payload(**kwargs), pin, reversed(entries))
 
 
 REFUSED = "PreToolUse:AskUserQuestion hook error: [python3 ask-existing-gate.py]: Refused by ask-existing-gate"
-BASH = [call("m2", "b1", "Bash", {"command": "git worktree add .worktrees/next"}), result("b1", "ok")]
-TURN_END = {"type": "system", "subtype": "turn_duration", "durationMs": 1000}
-TYPED = {"type": "user", "message": {"role": "user", "content": "go on"}}
+REJECTED = ("The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file"
+            " edit, the new_string was NOT written to the file). To tell you how to proceed, the user said:\n"
+            "first finish the export tests")
+# What is on disk when the dialog of the push's own assistant message hits PreToolUse: the earlier work only;
+# the push and the dialog blocks of the running message are not written yet.
+ON_DISK = [at(1, call("m0", "b0", "Bash", {"command": "git status"})), at(2, result("b0", "clean"))]
+# The same message after the flush: push, its result, the refused dialog.
+FLUSHED = [*ON_DISK, at(9, call("m1", "p1", "PushNotification", {"message": PUSH})),
+           at(11, result("p1", "Terminal notification sent.")), at(11.5, dialog())]
 
 
 class AskAfterPinDecisionTest(unittest.TestCase):
-    def test_dialog_in_the_push_message_is_refused_before_the_pin_file_exists(self):
-        self.assertTrue(decide([*push(), dialog()], pinned=False).startswith("Refused by ask-existing-gate (ask-after-pin"))
+    def test_dialog_in_the_push_message_is_refused_from_the_pin_alone(self):
+        self.assertTrue(decide(ON_DISK).startswith("Refused by ask-existing-gate (ask-after-pin"))
 
-    def test_a_tool_call_after_the_push_lets_the_dialog_through(self):
-        self.assertIsNone(decide([*push(), *BASH, dialog("m3")]))
+    def test_work_written_after_the_pin_lets_the_dialog_through(self):
+        work = [at(20, call("m2", "b1", "Bash", {"command": "git worktree add .worktrees/next"})), at(21, result("b1", "ok"))]
+        self.assertIsNone(decide([*FLUSHED, at(12, result("d1", REFUSED, error=True)), *work]))
 
-    def test_no_push_lets_the_dialog_through(self):
-        for pinned in (False, True):
-            with self.subTest(pinned=pinned):
-                self.assertIsNone(decide([*BASH, dialog("m3")], pinned=pinned))
-
-    def test_a_notification_without_the_question_prefix_is_no_pin(self):
-        self.assertIsNone(decide([*push(message="Rollout done"), dialog()]))
+    def test_no_pin_passes(self):
+        self.assertIsNone(decide(ON_DISK, pin=None))
 
     def test_bare_retry_after_the_refusal_is_refused_again(self):
-        entries = [*push(), dialog(), result("d1", REFUSED, error=True), dialog("m2", "d2")]
-        self.assertIsNotNone(decide(entries))
+        self.assertIsNotNone(decide([*FLUSHED, at(12, result("d1", REFUSED, error=True))]))
+
+    def test_work_in_the_refused_dialogs_own_message_passes_the_retry_after_the_flush(self):
+        # Accepted cost: that work was not on disk when the first dialog was judged, so it was refused once.
+        entries = [*ON_DISK, at(9, call("m1", "p1", "PushNotification", {"message": PUSH})), at(11, result("p1", "sent")),
+                   at(20, call("m2", "b1", "Bash", {"command": "ls"})), at(20, dialog("m2", "d1")),
+                   at(21, result("b1", "ok")), at(21, result("d1", REFUSED, error=True))]
+        self.assertIsNone(decide(entries))
 
     def test_named_reason_passes_on_the_first_call_and_on_a_retry(self):
-        for entries in ([*push(), dialog()], [*push(), dialog(), result("d1", REFUSED, error=True), dialog("m2", "d2")]):
+        for entries in (ON_DISK, [*FLUSHED, at(12, result("d1", REFUSED, error=True))]):
             with self.subTest(n=len(entries)):
                 self.assertIsNone(decide(entries, source="blocked: the next slice edits the files this answer picks"))
 
-    def test_answered_dialog_after_the_push_ends_the_pin(self):
-        entries = [*push(), dialog(), result("d1", 'Your questions have been answered: "merge?"="Merge"'), dialog("m2", "d2")]
-        self.assertIsNone(decide(entries))
-
-    def test_dialog_the_owner_rejected_counts_as_answered(self):
-        rejected = ("The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a"
-                    " file edit, the new_string was NOT written to the file). To tell you how to proceed, the user"
-                    " said:\nfirst finish the export tests")
-        for text in (rejected, rejected.split(" To tell")[0]):
+    def test_dialog_the_owner_rejected_after_the_pin_passes(self):
+        # An answered dialog clears the pin file (no pin passes); a dismissed or rejected one leaves it.
+        for text in (REJECTED, REJECTED.split(" To tell")[0]):
             with self.subTest(comment="said" in text):
-                self.assertIsNone(decide([*push(), dialog(), result("d1", text, error=True), dialog("m2", "d2")]))
+                self.assertIsNone(decide([*FLUSHED, at(30, result("d1", text, error=True))]))
 
     def test_malformed_input_passes(self):
-        junk = [1, "x", {"type": "assistant", "message": "s"}, call("m1", "p1", "PushNotification", "s"), dialog()]
-        cases = {"string tool_input": (dict(payload(), tool_input="x"), [*push(), dialog()]),
-                 "list payload": ([], [*push(), dialog()]),
-                 "junk transcript entries": (payload(), junk)}
-        for name, (body, entries) in cases.items():
+        junk = [1, "x", {"type": "assistant", "message": "s"}, {"type": "assistant", "timestamp": "yesterday"},
+                at(20, {"type": "user", "message": "s"})]
+        cases = {"string tool_input": (dict(payload(), tool_input="x"), PIN, ON_DISK),
+                 "list payload": ([], PIN, ON_DISK),
+                 "pin time not a number": (payload(), "10", ON_DISK),
+                 "junk transcript entries": (payload(), PIN, junk)}
+        for name, (body, pin, entries) in cases.items():
             with self.subTest(name):
-                self.assertIsNone(gate_policy.ask_after_pin_decision(body, True, reversed(entries)))
+                self.assertIsNone(gate_policy.ask_after_pin_decision(body, pin, reversed(entries)))
+
+    def test_a_read_that_ends_before_the_pin_passes(self):
+        self.assertIsNone(decide([at(11, result("p1", "sent"))]))
 
     def test_non_string_session_id_is_no_session(self):
         self.assertEqual([gate_policy.session_id_ok(v) for v in (5, None, ["x"], SID)], [False, False, False, True])
 
     def test_subagent_payload_passes(self):
-        self.assertIsNone(decide([*push(), dialog()], agent_id="ab12cd34", agent_type="orch:builder"))
-
-    def test_push_of_an_earlier_turn_counts_only_while_the_file_holds_the_pin(self):
-        # Stop with a live agent keeps the pin; the session wakes on its notification and asks at once.
-        notification = {"type": "user", "message": {"role": "user", "content": "<task-notification>done</task-notification>"}}
-        entries = [*push(), TURN_END, notification, dialog("m2", "d2")]
-        self.assertEqual((decide(entries, pinned=True) is None, decide(entries, pinned=False) is None), (False, True))
-
-    def test_typed_prompt_after_the_push_without_a_pin_file_passes(self):
-        self.assertIsNone(decide([*push(), TYPED, dialog("m2", "d2")], pinned=False))
+        self.assertIsNone(decide(ON_DISK, agent_id="ab12cd34", agent_type="orch:builder"))
 
     def test_subagent_calls_in_the_main_transcript_are_not_work(self):
-        side = dict(call("s1", "s1", "Bash", {"command": "ls"}), isSidechain=True)
-        self.assertIsNotNone(decide([*push(), side, dialog("m2", "d2")]))
+        side = at(20, dict(call("s1", "s1", "Bash", {"command": "ls"}), isSidechain=True))
+        self.assertIsNotNone(decide([*ON_DISK, side]))
 
 
 class SourceClausesTest(unittest.TestCase):
     def ask_both(self, source, stem=STEM):
         tool_input = {"questions": [{"question": stem, "options": []}], "metadata": {"source": source}}
-        pin = gate_policy.ask_after_pin_decision(dict(payload(), tool_input=tool_input), True, reversed([*push(), dialog()]))
+        pin = gate_policy.ask_after_pin_decision(dict(payload(), tool_input=tool_input), PIN, reversed(ON_DISK))
         return pin, gate_policy.ask_existing_decision(tool_input)
 
     def test_both_clauses_pass_both_rules_in_either_order(self):
@@ -155,7 +158,7 @@ class SourceClausesTest(unittest.TestCase):
 
 class BackwardReaderTest(unittest.TestCase):
     def test_reads_every_entry_newest_first_across_block_edges(self):
-        entries = [*push(), *BASH, dialog("m3")]
+        entries = FLUSHED
         with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as fh:
             fh.write("\n".join(json.dumps(e) for e in entries) + "\nnot json\n")
         self.addCleanup(os.remove, fh.name)
@@ -173,11 +176,16 @@ class BackwardReaderTest(unittest.TestCase):
 
 
 class HookTest(unittest.TestCase):
-    def test_hook_refuses_from_the_transcript_and_passes_with_a_reason(self):
+    def test_hook_refuses_from_the_pin_file_and_passes_with_a_reason(self):
         with tempfile.TemporaryDirectory() as home:
             path = os.path.join(home, SID + ".jsonl")
             with open(path, "w") as fh:
-                fh.write("\n".join(json.dumps(e) for e in [*push(), dialog()]) + "\n")
+                fh.write("\n".join(json.dumps(e) for e in ON_DISK) + "\n")
+            pin = gate_policy.open_question_path(home, SID)
+            os.makedirs(os.path.dirname(pin), exist_ok=True)
+            with open(pin, "w") as fh:
+                fh.write(PUSH + "\n")
+            os.utime(pin, (PIN, PIN))
             env = dict(os.environ, HOME=home, ASK_SPEND_JUDGE="1")
             outs = [subprocess.run([sys.executable, str(HOOK)], input=json.dumps(dict(payload(source=s), transcript_path=path)),
                                    capture_output=True, text=True, timeout=20, env=env)

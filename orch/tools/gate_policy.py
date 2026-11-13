@@ -5840,62 +5840,47 @@ _ASK_AFTER_PIN_REASON = (
     " `blocked: <why nothing can run without the answer>` added to `metadata.source` (clauses separated by `;`,"
     " the ones already there kept, e.g. `existing: n/a; blocked: ...`)."
 )
-# The harness's tool_result when the owner dismisses a dialog or rejects it with a comment (112 of the 243
-# error results of main-session dialogs in 28 d; hook refusals and failed dialogs start otherwise).
+# The harness's tool_result when the owner dismisses a dialog or rejects it with a comment; a hook refusal and
+# a failed dialog start otherwise (stored main-session dialog results, read 2026-11-13; ORIGINS, CASE-80).
 _OWNER_REJECTED = "The user doesn't want to proceed with this tool use."
 
 
-def ask_after_pin_decision(payload, pinned, entries_from_end):
+def ask_after_pin_decision(payload, pin_written, entries_from_end):
     """PreToolUse rule on AskUserQuestion: the refusal text, or None.
 
-    Refuses a main-session call when the last pinned-form `QUESTION:` push (``question_line``) is followed by
-    no other tool call and ``metadata.source`` holds no non-empty ``blocked`` clause (``source_clauses``).
-    ``entries_from_end``: the session's transcript entries, newest first, consumed only as far as needed.
-    ``pinned``: the session's open-question file is non-empty; it decides only how far back the push may
-    lie: across turns when pinned, else within the current run of assistant work (a ``turn_duration``
-    entry or a user entry that carries no tool_result ends it), so a push in the dialog's own assistant
-    message counts before its PostToolUse wrote the file. Not work: an AskUserQuestion the owner never saw
-    (its result absent, as for this call, or an error other than the owner's rejection: a hook refusal, a
-    failed dialog), another PushNotification; an AskUserQuestion the owner saw (answered, or rejected with
-    ``_OWNER_REJECTED``, with or without a comment) or any other call ends the condition. Sidechain entries
-    are skipped. A subagent payload, a malformed input and a transcript with no such push pass."""
+    ``pin_written``: the epoch mtime of the session's open-question file when it holds a pin, else None. The
+    file is written by the `QUESTION:` push's PostToolUse, which ends before this call's PreToolUse starts;
+    the transcript is not: the blocks of the assistant message being run are not on disk yet, so the decision
+    reads only what was written after the pin. ``entries_from_end``: the transcript entries, newest first,
+    consumed only back to the first entry older than the pin.
+
+    Refuses a main-session call while a pin is held, ``metadata.source`` holds no non-empty ``blocked`` clause
+    (``source_clauses``), and no entry written after the pin shows work or the owner: a tool call other than
+    AskUserQuestion and PushNotification, or a result the owner dismissed or rejected (``_OWNER_REJECTED``,
+    with or without a comment; read from the result alone). An answered dialog clears the pin file. A dialog refused by a hook or failed
+    is not work, nor a result whose call lies before the pin (launched before the push). Sidechain entries and
+    entries without a timestamp are skipped. No pin, a subagent payload, a malformed input and a read that ends before
+    an entry older than the pin pass."""
     import transcript  # pure parsing, stdlib only; imported here as chat_policy is
 
-    if not isinstance(payload, dict) or is_delegate(payload):
+    if not isinstance(payload, dict) or is_delegate(payload) or not isinstance(pin_written, (int, float)):
         return None
     tool_input = payload.get("tool_input")
     if not isinstance(tool_input, dict) or source_clauses(tool_input).get("blocked"):
         return None
-    seen = {}  # tool_use id -> the owner saw that dialog; results come after their call, so before it here
     for entry in entries_from_end:
         if not isinstance(entry, dict) or entry.get("isSidechain"):
             continue
-        kind = entry.get("type")
-        if kind == "system" and entry.get("subtype") == "turn_duration":
-            if not pinned:
+        written = transcript.epoch(entry.get("timestamp"))
+        if written is None:
+            continue
+        if written < pin_written:
+            return _ASK_AFTER_PIN_REASON
+        for block in transcript.blocks_of(entry):
+            kind = block.get("type")
+            if kind == "tool_result" and block.get("is_error") and (
+                    transcript.result_text(block).startswith(_OWNER_REJECTED)):
                 return None
-            continue
-        blocks = transcript.blocks_of(entry)
-        if kind == "user":
-            results = [b for b in blocks if b.get("type") == "tool_result"]
-            for block in results:
-                seen[block.get("tool_use_id")] = (not block.get("is_error")
-                                                  or transcript.result_text(block).startswith(_OWNER_REJECTED))
-            if not results and not entry.get("isMeta") and not pinned:
-                return None
-            continue
-        if kind != "assistant":
-            continue
-        for block in reversed(blocks):
-            if block.get("type") != "tool_use":
-                continue
-            name = block.get("name")
-            if name == "AskUserQuestion":
-                if seen.get(block.get("id")):
-                    return None
-            elif name == "PushNotification":
-                if question_line(name, block.get("input")):
-                    return _ASK_AFTER_PIN_REASON
-            else:
+            if kind == "tool_use" and block.get("name") not in ("AskUserQuestion", "PushNotification"):
                 return None
     return None

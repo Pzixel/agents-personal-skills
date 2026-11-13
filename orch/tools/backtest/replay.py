@@ -10,6 +10,7 @@ usage: python3 replay.py <loop.tsv> <control.jsonl> [variants]
        python3 replay.py lever [days] [--judge] [--cap N]
        python3 replay.py ask-spend [days] [--judge] [--out <tsv>]   (default 28 days, ask-spend.tsv)
        python3 replay.py ask-spend-pins <pins.jsonl> [k]
+       python3 replay.py ask-after-pin [days]   (default 28 days)
 
 loop.tsv: start_utc, duration_s, agent, agent_type, command (one looping
 session, all rows one repository). control.jsonl: rows of extract.py (every
@@ -161,6 +162,76 @@ def main_transcripts(days, skip_dir=None):
                 continue
             paths.add(os.path.realpath(path))
     return sorted(paths)
+
+
+def ask_after_pin(days):
+    """Replay gate_policy.ask_after_pin_decision at every main-session AskUserQuestion as the hook sees it: the
+    transcript cut before the dialog's own assistant message (its blocks are not on disk while it runs) and the
+    pin rebuilt from the pushes and clears before the dialog: a `QUESTION:` push sets the pin time to its
+    result's timestamp (its PostToolUse writes the file); an answered dialog and a typed prompt clear it; a
+    Stop with nothing running is not modelled (the pin outlives it, an upper bound on fires). Prints fires by
+    class: immediate (no work call between the push and the dialog), work between, no pin; and, for the push
+    and dialog of one message, the dialog entry's timestamp against the push result's."""
+    sid = "00000000-0000-4000-8000-000000000000"
+    counts, rows, max_read, order = collections.Counter(), [], 0, collections.Counter()
+    for path in main_transcripts(days):
+        raw = transcript.entries_of(path)
+        entries = [e for _, e in raw if not e.get("isSidechain")]
+        sizes = [len(r) for r, e in raw if not e.get("isSidechain")]
+        result_at = {}
+        for e in entries:
+            for b in transcript.blocks_of(e):
+                if b.get("type") == "tool_result":
+                    result_at.setdefault(b.get("tool_use_id"), (transcript.epoch(e.get("timestamp")), b))
+        first_of_msg = {}
+        for i, e in enumerate(entries):
+            first_of_msg.setdefault((e.get("message") or {}).get("id") or i, i)
+        pin, push_msg, push_idx, work_since, seen = None, None, None, False, set()
+        for i, e in enumerate(entries):
+            blocks = transcript.blocks_of(e)
+            if e.get("type") == "user" and not e.get("isMeta") and isinstance((e.get("message") or {}).get("content"), str) \
+                    and not e["message"]["content"].lstrip().startswith("<"):
+                pin = None
+            if e.get("type") != "assistant":
+                continue
+            for b in blocks:
+                if b.get("type") != "tool_use" or b.get("id") in seen:
+                    continue
+                seen.add(b.get("id"))
+                name, msg = b.get("name"), (e.get("message") or {}).get("id")
+                if g.question_line(name, b.get("input")):
+                    pin, push_msg, push_idx, work_since = (result_at.get(b.get("id")) or (None,))[0], msg, i, False
+                    continue
+                if name != "AskUserQuestion":
+                    work_since = work_since or name != "PushNotification"
+                    continue
+                cut = first_of_msg.get(msg or i, i)
+                read = [0]
+
+                def back(n=cut):
+                    for k in range(n - 1, -1, -1):
+                        read[0] += sizes[k]
+                        yield entries[k]
+                fired = bool(g.ask_after_pin_decision({"session_id": sid, "tool_input": b.get("input") or {}}, pin, back()))
+                max_read = max(max_read, read[0])
+                kind = "no pin" if pin is None else ("work between" if work_since else "immediate")
+                counts[kind, fired] += 1
+                if pin is not None and msg == push_msg:
+                    dialog_at = transcript.epoch(e.get("timestamp"))
+                    order["dialog entry before push result" if dialog_at is not None and dialog_at < pin else "dialog entry after push result"] += 1
+                if pin is not None:
+                    rows.append({"session": os.path.basename(path)[:8], "time": (e.get("timestamp") or "")[:19], "class": kind,
+                                 "same_message": msg == push_msg, "fired": fired})
+                answer = result_at.get(b.get("id"))
+                if answer and not answer[1].get("is_error"):
+                    pin = None
+    print("dialogs replayed (%d d, main sessions): %d" % (days, sum(counts.values())))
+    for kind in ("immediate", "work between", "no pin"):
+        print("%s: %d dialogs, %d refused" % (kind, counts[kind, True] + counts[kind, False], counts[kind, True]))
+    print("largest backward read before a decision, bytes:", max_read)
+    print("push and dialog in one message, timestamps:", dict(order))
+    for r in rows:
+        print(json.dumps(r))
 
 
 def background_watch(days):
@@ -885,6 +956,8 @@ def main():
             sys.exit("usage: python3 replay.py ask-spend [days] [--judge] [--out <tsv>]")
         out = args[args.index("--out") + 1] if "--out" in args else "ask-spend.tsv"
         return ask_spend(int(args[0]) if args and args[0].isdigit() else 28, out, "--judge" in args)
+    if sys.argv[1] == "ask-after-pin":
+        return ask_after_pin(int(sys.argv[2]) if len(sys.argv) > 2 else 28)
     if sys.argv[1] == "ask-spend-pins":
         return ask_spend_pins(sys.argv[2], int(sys.argv[3]) if len(sys.argv) > 3 else 3)
     if sys.argv[1] == "judge-diff":

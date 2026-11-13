@@ -44,6 +44,14 @@ def _instant(timestamp):
         return None
 
 
+def epoch(timestamp):
+    """Epoch seconds of an entry's ISO timestamp (UTC, `Z` suffix), fraction kept; None when absent or malformed."""
+    try:
+        return datetime.datetime.fromisoformat(str(timestamp).replace("Z", "+00:00")).timestamp()
+    except (TypeError, ValueError):
+        return None
+
+
 def entries_of(path):
     """(raw line, parsed entry) pairs in transcript order."""
     out = []
