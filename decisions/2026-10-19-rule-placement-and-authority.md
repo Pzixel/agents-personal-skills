@@ -41,6 +41,10 @@ One owner file per rule. A rule lives where the harness injects it at the latest
 
 `wc -c`: `rules/always-on.md` 3833 -> 3844 (+11, the authority parenthetical now points at the rule); `rules/always-on-claude.md` 2498 -> 2245 (-253). Net -242. The removal paying for growth: the delegate-brief bullet (old line 15), whose owner is the spawn gate's refusal.
 
+## Merge of a plan part without the owner's word (addendum)
+
+Evidence: `~/.codex/AGENTS.md` lets a cheap, reversible write run without a permission pause, while `rules/always-on.md` (the step-that-changes-production bullet) asked for the owner's word after the result; agents took the stricter line. Over 28 d (retro-evals cases/CASE-80/merge_q.py, re-run 2026-11-13, Russian question text with a PR number; one of its 9 rows grades an eval) 8 merge questions were answered, 8 of 8 with the recommended "merge", 10.5 h of waits, 3 waits of 30 min or more; one plan asked 4 times for 4 parts. Decision (owner): a merge of one part of an approved plan needs no owner word when reads of the merged revision show its checks and reviews ran and passed, nothing a client meets changes, and the whole undo is a revert (a data migration, a one-way state change or a consumer acting first breaks it); a condition no read settles keeps the word, and the report right after names the merge. Owner of this scope: `rules/always-on.md`, that bullet; its owner-only neighbour on cheap guesses points to it. Rejected: a merge-gate check of the owner's word (the owner asked for the rule; text first, re-count the merge questions after 7 days).
+
 ## Rejected alternatives
 
 - Shrinking always-on text to save tokens: always-on text measured at 3 % of spend; the gain does not pay for lost rules.
