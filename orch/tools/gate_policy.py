@@ -1384,7 +1384,7 @@ def plan_lines_decision(text):
 
 
 # Measured refusal (retro-evals runs/case76-askq/refusal.txt, CASE-76): replays 0/3 -> 2/3; keep it verbatim.
-_ASK_EXISTING_REASON = "Refused by ask-existing-gate: a question to the owner that offers how to define, count or label something, or which mechanism to build or use, must say in its stem what the project already has for it: a line `Existing: <path:line> <the meaning or mechanism in force, in the owner's words>`, found in the decision or semantics record the repository's AGENTS.md names and in the code that shows it. The option that keeps it unchanged comes first. An option that departs from it is one of: `changed for all` (it names every place that changes) or `new and distinct` (a name that does not contain the old one, and the fact, with a number, by which it differs); a meaning changed only inside the new work is not offered. A question that offers nothing of that kind (a confirmation, a permission, a priority) carries `metadata.source: \"existing: n/a\"` instead. Then call AskUserQuestion again."
+_ASK_EXISTING_REASON = "Refused by ask-existing-gate: a question to the owner that offers how to define, count or label something, or which mechanism to build or use, must say in its stem what the project already has for it: a line `Existing: <path:line> <the meaning or mechanism in force, in the owner's words>`, found in the decision or semantics record the repository's AGENTS.md names and in the code that shows it. The option that keeps it unchanged comes first. An option that departs from it is one of: `changed for all` (it names every place that changes) or `new and distinct` (a name that does not contain the old one, and the fact, with a number, by which it differs); a meaning changed only inside the new work is not offered. A question that offers nothing of that kind (a confirmation, a permission, a priority) adds the clause `existing: n/a` to `metadata.source` instead (clauses separated by `;`, the ones already there kept). Then call AskUserQuestion again."
 
 
 def _existing_value(text):
@@ -1396,7 +1396,7 @@ _ASK_SPEND_REASON = (
     "Refused by ask-existing-gate (spend rule): this question asks the owner to approve spending company money"
     " inside a question about something else, or without the spend stated. Ask the spend as its own question: one"
     " question in the call, whose stem has a line `Spend: <sum>, ceiling <max>; account: <where it is paid from>,"
-    " left <balance after>; later: <renewals, monthly fees, or none>`, and `metadata.source: \"existing: n/a\"`."
+    " left <balance after>; later: <renewals, monthly fees, or none>`, and the clause `existing: n/a` in `metadata.source` (clauses separated by `;`, the ones already there kept)."
     " Past the ceiling, stop and ask again. If the question spends nothing of ours, reword the stem or option so"
     " it says who pays or that nothing is bought (a model, labelling or eval run on the agent's own login or"
     " subscription charges nothing: say so); never write a `Spend:` line for a spend that does not exist."
@@ -1513,20 +1513,32 @@ def spend_stated(tool_input):
     return False
 
 
+def source_clauses(tool_input):
+    """The clauses of an AskUserQuestion ``metadata.source``: ``key: value`` parts separated by ``;``, in any
+    order, keys case-folded, values stripped; the one grammar of the field every AskUserQuestion rule reads.
+    A part without a colon is no clause; an absent or non-string field has none."""
+    metadata = tool_input.get("metadata") if isinstance(tool_input, dict) else None
+    source = metadata.get("source") if isinstance(metadata, dict) else None
+    clauses = {}
+    for part in source.split(";") if isinstance(source, str) else ():
+        key, colon, value = part.partition(":")
+        if colon and key.strip():
+            clauses.setdefault(key.strip().lower(), value.strip())
+    return clauses
+
+
 def ask_existing_decision(tool_input, spend=None):
     """AskUserQuestion gate, one refusal at a time. Spend rule first: when the judge ``spend`` verdict
     (``parse_spend_verdict``; None when not judged or failed: fail open) says the question commits our
     money and the call is not one question with a full `Spend:` stem line, the spend refusal. Then the
-    `Existing:` rule: None when `metadata.source` starts with `existing: n/a` or a line of some
+    `Existing:` rule: None when ``source_clauses`` hold `existing: n/a` or a line of some
     question stem starts with a non-empty `Existing:`; else the measured refusal. A citation only in
     metadata does not pass: the owner never sees metadata. Fails open (None) on an input with no
     non-empty string stem: a harness shape change must not block every question to the owner."""
     tool_input = tool_input if isinstance(tool_input, dict) else {}
     if isinstance(spend, dict) and spend.get("spend") is True and not spend_stated(tool_input):
         return _ASK_SPEND_REASON
-    metadata = tool_input.get("metadata")
-    source = metadata.get("source") if isinstance(metadata, dict) else None
-    if isinstance(source, str) and re.match(r"existing:\s*n/a\b", source.strip(), re.I):
+    if re.match(r"n/a\b", source_clauses(tool_input).get("existing", ""), re.I):
         return None
     questions = tool_input.get("questions")
     stems = [q.get("question") for q in questions if isinstance(q, dict)] if isinstance(questions, list) else []
@@ -5186,7 +5198,7 @@ _SESSION_ID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[
 def session_id_ok(session_id):
     """True for a Claude Code session id (a UUID); a hand-piped hook payload
     carries another shape and neither logs nor reads or writes approvals."""
-    return bool(_SESSION_ID_RE.match(session_id or ""))
+    return isinstance(session_id, str) and bool(_SESSION_ID_RE.match(session_id))
 
 
 _NO_WORKAROUND = ("\nDo not work around this refusal (other spellings, wrappers, eval, variables,"
@@ -5776,6 +5788,16 @@ def question_pinned_while_working(pinned_text, facts):
     return bool((pinned_text or "").strip() and facts and (live_mechanisms(facts) or live_clocks(facts)))
 
 
+def question_line(tool, tool_input):
+    """The pinned line of an owner-question notification: a PushNotification whose message starts with
+    ``QUESTION:``, prefix stripped, whitespace folded to one line; None for any other call or an empty
+    question. The one definition of "a pinned question" for the pin and the ask-after-pin gate."""
+    message = tool_input.get("message") if isinstance(tool_input, dict) else None
+    if tool != "PushNotification" or not isinstance(message, str) or not message.startswith(OPEN_QUESTION_PREFIX):
+        return None
+    return " ".join(message[len(OPEN_QUESTION_PREFIX):].split()) or None
+
+
 def open_question_decision(payload, facts=None):
     """What a hook event does to the session's open-question file:
     ``("append", line)``, ``("clear", None)`` or ``("none", None)``.
@@ -5797,14 +5819,81 @@ def open_question_decision(payload, facts=None):
         tool = payload.get("tool_name")
         if tool == "AskUserQuestion":
             return ("clear", None)
-        message = (payload.get("tool_input") or {}).get("message")
-        if tool == "PushNotification" and isinstance(message, str) and message.startswith(OPEN_QUESTION_PREFIX):
-            line = " ".join(message[len(OPEN_QUESTION_PREFIX):].split())
-            return ("append", line) if line else none
-        return none
+        line = question_line(tool, payload.get("tool_input"))
+        return ("append", line) if line else none
     if event == "UserPromptSubmit":
         return ("clear", None) if chat_policy.typed_by_owner(payload.get("prompt"), facts) else none
     if event == "Stop":
         running = facts is not None and (live_mechanisms(facts) or live_clocks(facts))
         return none if running else ("clear", None)
     return none
+
+
+_ASK_AFTER_PIN_REASON = (
+    "Refused by ask-existing-gate (ask-after-pin rule): this session pinned an owner question with a `QUESTION:`"
+    " notification and has run no tool call since, so this dialog would stop the session while work that does not"
+    " need the answer may be left. Run that work first: the work every answer needs, then the work the recommended"
+    " answer needs up to the point where a wrong guess stops being cheap to discard; open the dialog when none is"
+    " left. If no work can run without the answer, call AskUserQuestion again with the clause"
+    " `blocked: <why nothing can run without the answer>` added to `metadata.source` (clauses separated by `;`,"
+    " the ones already there kept, e.g. `existing: n/a; blocked: ...`)."
+)
+# The harness's tool_result when the owner dismisses a dialog or rejects it with a comment (112 of the 243
+# error results of main-session dialogs in 28 d; hook refusals and failed dialogs start otherwise).
+_OWNER_REJECTED = "The user doesn't want to proceed with this tool use."
+
+
+def ask_after_pin_decision(payload, pinned, entries_from_end):
+    """PreToolUse rule on AskUserQuestion: the refusal text, or None.
+
+    Refuses a main-session call when the last pinned-form `QUESTION:` push (``question_line``) is followed by
+    no other tool call and ``metadata.source`` holds no non-empty ``blocked`` clause (``source_clauses``).
+    ``entries_from_end``: the session's transcript entries, newest first, consumed only as far as needed.
+    ``pinned``: the session's open-question file is non-empty; it decides only how far back the push may
+    lie: across turns when pinned, else within the current run of assistant work (a ``turn_duration``
+    entry or a user entry that carries no tool_result ends it), so a push in the dialog's own assistant
+    message counts before its PostToolUse wrote the file. Not work: an AskUserQuestion the owner never saw
+    (its result absent, as for this call, or an error other than the owner's rejection: a hook refusal, a
+    failed dialog), another PushNotification; an AskUserQuestion the owner saw (answered, or rejected with
+    ``_OWNER_REJECTED``, with or without a comment) or any other call ends the condition. Sidechain entries
+    are skipped. A subagent payload, a malformed input and a transcript with no such push pass."""
+    import transcript  # pure parsing, stdlib only; imported here as chat_policy is
+
+    if not isinstance(payload, dict) or is_delegate(payload):
+        return None
+    tool_input = payload.get("tool_input")
+    if not isinstance(tool_input, dict) or source_clauses(tool_input).get("blocked"):
+        return None
+    seen = {}  # tool_use id -> the owner saw that dialog; results come after their call, so before it here
+    for entry in entries_from_end:
+        if not isinstance(entry, dict) or entry.get("isSidechain"):
+            continue
+        kind = entry.get("type")
+        if kind == "system" and entry.get("subtype") == "turn_duration":
+            if not pinned:
+                return None
+            continue
+        blocks = transcript.blocks_of(entry)
+        if kind == "user":
+            results = [b for b in blocks if b.get("type") == "tool_result"]
+            for block in results:
+                seen[block.get("tool_use_id")] = (not block.get("is_error")
+                                                  or transcript.result_text(block).startswith(_OWNER_REJECTED))
+            if not results and not entry.get("isMeta") and not pinned:
+                return None
+            continue
+        if kind != "assistant":
+            continue
+        for block in reversed(blocks):
+            if block.get("type") != "tool_use":
+                continue
+            name = block.get("name")
+            if name == "AskUserQuestion":
+                if seen.get(block.get("id")):
+                    return None
+            elif name == "PushNotification":
+                if question_line(name, block.get("input")):
+                    return _ASK_AFTER_PIN_REASON
+            else:
+                return None
+    return None

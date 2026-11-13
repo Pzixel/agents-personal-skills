@@ -59,6 +59,30 @@ def entries_of(path):
     return out
 
 
+def entries_from_end(path, max_bytes, block_size=1 << 16):
+    """Parsed entries newest first, read backwards in blocks so a consumer that stops early reads only the
+    tail; stops after ``max_bytes`` read. Lines that are not JSON objects are skipped."""
+    with open(path, "rb") as fh:
+        fh.seek(0, 2)
+        position, read, rest = fh.tell(), 0, b""
+        while position > 0 and read < max_bytes:
+            step = min(block_size, position)
+            position -= step
+            read += step
+            fh.seek(position)
+            lines = (fh.read(step) + rest).split(b"\n")
+            rest = lines.pop(0) if position > 0 else b""
+            for line in reversed(lines):
+                line = line.strip()
+                if not line.startswith(b"{"):
+                    continue
+                try:
+                    entry = json.loads(line.decode("utf-8", errors="replace"))
+                except ValueError:
+                    continue
+                yield entry
+
+
 def blocks_of(entry):
     message = entry.get("message")
     if not isinstance(message, dict):
