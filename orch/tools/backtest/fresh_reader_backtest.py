@@ -7,7 +7,7 @@ A list file has one turn per line: `<name> <transcript path> <reply line | owner
 is the 1-based JSONL line of the reply; a timestamp prefix names the owner message, and the turn's reply is the last
 main-thread text before the next owner message). `packets` builds every packet with no model call, prints per turn
 the trigger result and the section sizes, and exits 1 when an `--expect` text is missing from its packet, when a
-turn with an `--expect` builds no packet, or when no packet is built at all; a missing transcript prints
+turn with an `--expect` builds no packet or is absent from the lists, or when no packet is built at all; a missing transcript prints
 "skipped: transcript not found". With no list it prints the usage and exits 2. The CASE-84 list is
 retro-evals `cases/CASE-84/judged-turns.txt`. `rerun` also runs the hook's judge and writes
 <name>.prompt.txt and <name>.verdict.txt (the judge's stdout or its error) into out_dir."""
@@ -133,6 +133,9 @@ def main(argv):
             line += " wall=%.0fs verdict=%s" % (time.monotonic() - started,
                                                 (parsed or {}).get("verdict") or "unparsable " + str(error))
         print(line)
+    for name in sorted(set(expects) - {n for n, _p, _k in turns(paths, ())}):
+        print(name, "expectation for a turn absent from the lists")
+        failed += 1
     if not built_count:
         print("no packet built", file=sys.stderr)
         return 1

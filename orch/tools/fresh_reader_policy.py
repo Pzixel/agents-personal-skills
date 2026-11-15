@@ -39,16 +39,21 @@ _SCRIPT_SUFFIXES = (".sh", ".py", ".sql")
 
 # A number the reply states as its answer: the prototype's rule (trigger_count.py) after blanking code, paths,
 # dates, times, line refs, PR and issue ids, hashes, versions, and counts of the agent's own work (tests, commits,
-# files, lines). A path is a slash token with a letter in it; `249/250` is a ratio and stays.
+# files, lines). A path is a slash token with a letter in it; `249/250.` is a ratio and stays, `11/16/2026` a date.
 _FENCE_RE = re.compile(r"```.*?```", re.S)
 _BTICK_RE = re.compile(r"`[^`\n]*`")
 _PATH_RE = re.compile(r"(?:[\w.\-~]*/)+[\w.\-]*")
-_MONTHS = r"(?:январ|феврал|март|апрел|мая|июн|июл|август|сентябр|октябр|ноябр|декабр|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)"
+# A whole month word: English capitalised (so `may`, `marked`, `separate` are not months), Russian in any case.
+_MONTHS = (r"(?:(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|June?|July?|Aug(?:ust)?|Sept?(?:ember)?"
+           r"|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)|(?i:января|февраля|марта|апреля|мая|июня|июля|августа"
+           r"|сентября|октября|ноября|декабря|январь|февраль|март|апрель|май|июнь|июль|август|сентябрь|октябрь"
+           r"|ноябрь|декабрь|янв|фев|апр|авг|сент?|окт|нояб?|дек))\.?(?![\w])")
 _BLANKS = [
     re.compile(r"\b\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2})?Z?)?\b"),
     re.compile(r"\b\d{1,2}\.\d{1,2}\.\d{2,4}\b"),
-    re.compile(r"\b\d{1,2}(?:\s?[–-]\s?\d{1,2})?\s+" + _MONTHS + r"\w*", re.I),
-    re.compile(r"\b" + _MONTHS + r"[a-z]*\.?\s+\d{1,2}(?:st|nd|rd|th)?\b", re.I),
+    re.compile(r"\b\d{4}/\d{1,2}/\d{1,2}\b|\b\d{1,2}/\d{1,2}/\d{2,4}\b"),
+    re.compile(r"\b\d{1,2}(?:\s?[–-]\s?\d{1,2})?\s+" + _MONTHS),
+    re.compile(_MONTHS + r"\s+\d{1,2}(?:st|nd|rd|th)?\b"),
     re.compile(r"\b\d{1,2}:\d{2}(?::\d{2})?\b"),
     re.compile(r"\bL\d+\b|:\d+\b"),
     re.compile(r"(?:\b(?:PRs?|pull request|issues?|tickets?)\s*)?#\d+\b|\b(?:PRs?|pull request|issues?)\s+\d+\b", re.I),
@@ -167,7 +172,7 @@ def data_queries(entries, clients):
 
 def states_number(reply):
     text = _BTICK_RE.sub(" ", _FENCE_RE.sub(" ", reply or ""))
-    text = _PATH_RE.sub(lambda m: " " if re.search(r"[^\d/]", m.group()) else m.group(), text)
+    text = _PATH_RE.sub(lambda m: " " if re.search(r"[A-Za-z_~]", m.group()) else m.group(), text)
     for pattern in _BLANKS:
         text = pattern.sub(" ", text)
     return any(pattern.search(text) for pattern in _NUMBER_RES)

@@ -32,8 +32,8 @@ STATE_DIR = os.path.expanduser("~/.claude/fresh-reader")
 STATE_KEEP_S = 30 * 86400  # a session idle this long has no owner turn left to resume
 JUDGE_ENV = "FRESH_READER_JUDGE"
 JUDGE_MODEL = "opus"
-# Measured opus wall time 4-31 s over 48 calls at 16-215k chars (CASE-84); about twice the maximum. The hook's
-# timeout in hooks.json is 70 s.
+# Measured opus wall time 4-33 s over the 48 judged turns at the shipped revision, 17-253k chars (CASE-84); about
+# twice the maximum. The hook's timeout in hooks.json is 70 s.
 JUDGE_TIMEOUT_S = 60
 JUDGE_ARGS = model_judge.judge_args(JUDGE_MODEL, "You check numbers in one reply. Answer in the requested line format.")
 
@@ -63,15 +63,25 @@ def read_state(session):
 
 
 def write_state(session, state):
-    """Writes the session's state and drops the files of sessions idle for STATE_KEEP_S."""
-    os.makedirs(STATE_DIR, exist_ok=True)
-    with open(state_path(session), "w") as fh:
-        json.dump(state, fh)
+    """Writes the session's state, then drops the files of sessions idle for STATE_KEEP_S; a failure of either
+    is quiet (the log row and the return are already out)."""
+    try:
+        os.makedirs(STATE_DIR, exist_ok=True)
+        with open(state_path(session), "w") as fh:
+            json.dump(state, fh)
+    except OSError:
+        return
     cutoff = time.time() - STATE_KEEP_S
-    for name in os.listdir(STATE_DIR):
-        stale = os.path.join(STATE_DIR, name)
-        if os.path.getmtime(stale) < cutoff:
-            os.unlink(stale)
+    try:
+        for name in os.listdir(STATE_DIR):
+            stale = os.path.join(STATE_DIR, name)
+            try:
+                if os.path.isfile(stale) and os.path.getmtime(stale) < cutoff:
+                    os.unlink(stale)
+            except OSError:
+                continue
+    except OSError:
+        pass
 
 
 def judge(prompt):
@@ -102,7 +112,6 @@ def main():
     verdict, error = judge(prompt)
     judge_ms = int((time.monotonic() - started) * 1000)
     outcome = policy.decision(verdict)
-    write_state(session, policy.next_state(state, found, outcome["returned"]))
     record = {
         "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "session_id": session, "transcript_path": path, "reply_uuid": reply_uuid,
@@ -119,6 +128,8 @@ def main():
         pass
     if outcome["returned"]:
         json.dump({"decision": "block", "reason": outcome["reason"]}, sys.stdout)
+        sys.stdout.flush()
+    write_state(session, policy.next_state(state, found, outcome["returned"]))
 
 
 if __name__ == "__main__":

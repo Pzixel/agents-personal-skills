@@ -144,7 +144,9 @@ class Trigger(unittest.TestCase):
 class Number(unittest.TestCase):
     def test_answer_numbers_count(self):
         for text in ("There are 8012345 emails", "1234567 rows", "The pool has 1,234 mailboxes", "Total 8,012,345 rows",
-                     "$1,200 a month", "249/250 mailboxes are warm", "20/20 ящиков", "About 7.96 million emails a day",
+                     "$1,200 a month", "249/250 mailboxes are warm", "20/20 ящиков",
+                     "Warm mailboxes: 249/250.", "Delivered 20/20.", "Found 25 marked as spam.", "30 separate senders",
+                     "20 declined mailboxes", "About 45 may be warm.", "About 7.96 million emails a day",
                      "p99 is 1.5 seconds", "The share is 0.93", "Bounce rate 0.8 percent",
                      "The API logged 4 312 errors yesterday.", "Yesterday 450 failed and 7 bounced.", "8 млн писем"):
             with self.subTest(text=text):
@@ -154,7 +156,9 @@ class Number(unittest.TestCase):
         for text in ("Committed 3 commits; 133 tests pass.", "133 passed, 2 failed", "See PR #512 and PR 4521.",
                      "Filed issue #88 and issue 77.", "Bumped to v1.2.3, then v2.10.", "Pushed a1b2c3d4 on top.",
                      "commit 1234567 is on main", "Since 2026-11-16 it ran.", "On 16.11.2026.", "On 16 Nov.",
-                     "Since Nov 16 it is green.", "At 12:40, then at 23:59:01.", "See orch/tools/x.py:88 and L171.",
+                     "Since Nov 16 it is green.", "On 16 May.", "On 16 мая.",
+                     "Since 3 Sept it ran.", "Since November 16 it ran.", "On 2026/11/16.", "On 11/16/2026.",
+                     "See a/b.py.", "At 12:40, then at 23:59:01.", "See orch/tools/x.py:88 and L171.",
                      "Wrote 12 files and 340 lines.", "Merged deadbeef1234."):
             with self.subTest(text=text):
                 self.assertFalse(fr.states_number(text))
@@ -272,6 +276,24 @@ class Preset(unittest.TestCase):
 
     def test_absent_line_keeps_it_off(self):
         self.assertFalse(fr.enabled("# Rules\nThe fresh reader rule is described elsewhere.\n"))
+
+
+class HookState(unittest.TestCase):
+    def test_state_is_written_and_stale_files_dropped_while_a_directory_in_the_state_dir_stays(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("fresh_reader_hook", os.path.join(
+            os.path.dirname(os.path.realpath(__file__)), "..", "..", "hooks", "fresh-reader.py"))
+        hook = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(hook)
+        hook.STATE_DIR = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, hook.STATE_DIR)
+        stale, folder = os.path.join(hook.STATE_DIR, "old.json"), os.path.join(hook.STATE_DIR, "sub")
+        open(stale, "w").close()
+        os.mkdir(folder)
+        for path in (stale, folder):
+            os.utime(path, (0, 0))
+        hook.write_state("s1", {"query": "q1", "held_turn": None})
+        self.assertEqual(sorted(os.listdir(hook.STATE_DIR)), ["s1.json", "sub"])
 
 
 class JudgeTransport(unittest.TestCase):
