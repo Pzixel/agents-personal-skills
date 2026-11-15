@@ -65,8 +65,9 @@ def match(kind: str, value: str, sessions: List[Session]) -> List[Session]:
 
 
 def human_text(record):
-    """Owner text of a transcript record, or None: user messages and mid-turn queued_command attachments."""
-    if record.get("isSidechain"):
+    """Owner text of a transcript record, or None: user messages and mid-turn queued_command attachments; a
+    compaction summary (``isCompactSummary``) is a user entry the harness wrote, not owner text."""
+    if record.get("isSidechain") or record.get("isCompactSummary"):
         return None
     if record.get("type") == "user":
         content = record.get("message", {}).get("content")

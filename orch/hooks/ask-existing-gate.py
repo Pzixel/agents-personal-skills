@@ -24,7 +24,7 @@ JUDGE_TIMEOUT_S = 25
 # The scan stops at the first work call or the first entry older than the pin: the largest read over 1404
 # stored dialogs (28 d, `replay.py ask-after-pin`) was 16.6 KB; 12 MB is far over 10x. A cut read passes.
 PIN_SCAN_BYTES = 12 << 20
-JUDGE_ARGS = model_judge.BASE_ARGS + ["--system-prompt", "You classify one question. Respond with JSON only."]
+JUDGE_ARGS = model_judge.judge_args("haiku", "You classify one question. Respond with JSON only.")
 
 
 def log(record):

@@ -230,6 +230,11 @@
           },
           {
             "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/fresh-reader.py\"",
+            "timeout": 70
+          },
+          {
+            "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/worktree-dirty-gate.py\"",
             "timeout": 15
           },

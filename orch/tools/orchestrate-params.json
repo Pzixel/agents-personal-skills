@@ -5,6 +5,10 @@
     "reviewer"
   ],
   "_doc_work_agents": "Work agents are budgeted by context size and cumulative cost, never by tool-call count: a turn gets dearer only through context, and late turns are the productive ones.",
+  "fresh_reader": {
+    "_doc": "fresh-reader Stop hook (fresh_reader_policy.data_queries): a main-thread Bash call is a data query when it holds SQL `SELECT ... FROM`, `/api/v1/query`, or one of query_clients as a command word, or runs a script written earlier in the session that does. MCP calls are not read: none ran SQL in the measured 14 days. Own list, not offline.db_clients: a client added for the offline gate must not change how often the opus judge runs. Review count with this form: 286 owner turns in 14 days against the prototype's 219 (retro-evals CASE-84).",
+    "query_clients": ["clickhouse-client", "psql", "mysql", "fdbcli", "mongosh"]
+  },
   "context_soft": 150000,
   "context_hard": 220000,
   "cost_ceiling_usd": {

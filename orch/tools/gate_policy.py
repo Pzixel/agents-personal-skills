@@ -1148,6 +1148,7 @@ DEFAULT_PARAMS = {
     # Loop-cost gate (loop_cost_decision): minutes waited on long Bash
     # commands per repository. Set from no prior default; the backtest
     # numbers are in ORIGINS.md.
+    "fresh_reader": {"query_clients": ["clickhouse-client", "psql", "mysql", "fdbcli", "mongosh"]},
     "loop_cost": {
         "long_command_min_seconds": 120,
         "window_seconds": 21600,
@@ -1476,15 +1477,22 @@ def spend_judge_prompt(tool_input):
     return SPEND_JUDGE_PROMPT.format(question=json.dumps(questions, ensure_ascii=False, indent=1))
 
 
-def _judge_object(cli_stdout):
-    """The JSON object a `claude -p --output-format json` run answered, or None."""
+def judge_result_text(cli_stdout):
+    """The answer text of a `claude -p --output-format json` run, stripped, or None for a failed run."""
     try:
         envelope = json.loads(cli_stdout)
     except ValueError:
         return None
     if not isinstance(envelope, dict) or envelope.get("is_error") or not isinstance(envelope.get("result"), str):
         return None
-    result = envelope["result"].strip()
+    return envelope["result"].strip()
+
+
+def _judge_object(cli_stdout):
+    """The JSON object a `claude -p --output-format json` run answered, or None."""
+    result = judge_result_text(cli_stdout)
+    if result is None:
+        return None
     fenced = _JSON_FENCE_RE.match(result)
     try:
         verdict = json.loads(fenced.group(1) if fenced else result)

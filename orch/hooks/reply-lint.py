@@ -49,12 +49,7 @@ LOG_PATH = os.path.expanduser("~/.claude/reply-lint-log.jsonl")
 JUDGE_ENV = "REPLY_LINT_JUDGE"
 # 5 s under the hook's 30 s timeout; sized from the judge wall time in decisions/lever-starts-from-who-consumes-the-work.md.
 JUDGE_TIMEOUT_S = 25
-JUDGE_ARGS = [
-    "claude", "-p", "--model", "haiku", "--tools", "", "--no-session-persistence",
-    "--setting-sources", "", "--settings", '{"disableAllHooks":true}', "--strict-mcp-config",
-    "--disable-slash-commands", "--output-format", "json",
-    "--system-prompt", "You classify one reply. Respond with JSON only.",
-]
+JUDGE_ARGS = model_judge.judge_args("haiku", "You classify one reply. Respond with JSON only.")
 
 
 def candidates(text, transcript_path):
