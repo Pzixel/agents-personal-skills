@@ -2966,6 +2966,9 @@ _TIMED_STEP_REASON = (
     "yours runs before the owner's word at that time. Append only the missing part; do not repeat the reply."
 )
 
+# Starts a deferral-family return of a later stop; the next later stop of the turn finds it (``later_deferral_open``).
+LATER_DEFERRAL_MARKER = REPLY_LINT_MARKER + " (later stop)"
+
 _PROVEN_FORM = "`Proven: <cause> — <command or query>, <time> → <quoted fragment>; explains <X> of <Y>`"
 # Starts both first-cause reasons; a later stop of the same turn finds it in the transcript (``first_cause_open``).
 FIRST_CAUSE_MARKER = REPLY_LINT_MARKER + " (first-cause)"
@@ -3349,15 +3352,22 @@ def first_paragraph_cause(reply):
     return _asserted_cause(body, open_question=unknown or bool(_OPEN_UNKNOWN_RE.match(paragraph)))
 
 
-FIRST_CAUSE_RETURNS_PER_TURN = 2
+def _returns_open(stop_feedback_texts, marker, cap):
+    """Some Stop hook returned this turn (``transcript.stop_feedback_this_turn``) and fewer than ``cap`` of
+    this turn's returns carry ``marker``."""
+    return bool(stop_feedback_texts) and sum(marker in t for t in stop_feedback_texts) < cap
 
 
 def first_cause_open(stop_feedback_texts):
-    """A later stop of this turn may run the first-cause rule: some Stop hook returned this turn
-    (``transcript.stop_feedback_this_turn``) and fewer than ``FIRST_CAUSE_RETURNS_PER_TURN`` returns of this
-    turn carry ``FIRST_CAUSE_MARKER``."""
-    returned = sum(t.count(FIRST_CAUSE_MARKER) for t in stop_feedback_texts)
-    return bool(stop_feedback_texts) and returned < FIRST_CAUSE_RETURNS_PER_TURN
+    """A later stop of this turn may run the first-cause rule: fewer than two returns of this turn were
+    first-cause (``FIRST_CAUSE_MARKER``)."""
+    return _returns_open(stop_feedback_texts, FIRST_CAUSE_MARKER, 2)
+
+
+def later_deferral_open(stop_feedback_texts):
+    """A later stop of this turn may run the deferral family: no later-stop deferral return
+    (``LATER_DEFERRAL_MARKER``) yet this turn."""
+    return _returns_open(stop_feedback_texts, LATER_DEFERRAL_MARKER, 1)
 
 
 def live_clocks(facts):
@@ -3668,6 +3678,14 @@ def needs_judge(reply):
     return addresses_owner(reply) or bool(_PROMISE_RE.search(_blank_quoted(reply)))
 
 
+def reply_lint_judge_needed(reply, stop_hook_active, later_deferral_open, next_step="", lever="", timed_step=""):
+    """The judge is called: a candidate or ``needs_judge``, and on a later stop only while
+    ``later_deferral_open`` (the only judged rules there are the deferral family)."""
+    if stop_hook_active and not later_deferral_open:
+        return False
+    return bool(next_step or lever or timed_step) or needs_judge(reply)
+
+
 def judge_prompt(reply, next_step="", lever="", *, timed_step=""):
     """The judge prompt for one final reply; the reply goes in as a JSON string. Question C is
     asked only for a next-step candidate (``next_step`` = its trigger sentence), question D only
@@ -3711,8 +3729,27 @@ def _first_cause_fired(text):
     return [("first-cause", reason)]
 
 
+def _deferral_fired(verdict, next_step):
+    """[] or one of ("next-step", reason), ("deferral", reason): next-step replaces deferral for a candidate."""
+    if next_step and verdict and verdict["next_step"]:
+        sentence = verdict["next_step_sentence"] or next_step
+        return [("next-step", _NEXT_STEP_REASON.format(sentence=sentence.replace('"', "'")))]
+    if verdict and verdict["deferral"]:
+        return [("deferral", _DEFERRAL_REASON.format(sentence=verdict["deferral_sentence"].replace('"', "'")))]
+    return []
+
+
+def _timed_step_fired(verdict, timed_step):
+    """[] or [("timed-step", reason)] for a timed-step candidate the judge confirmed."""
+    if timed_step and verdict and verdict.get("timed_step"):
+        sentence = verdict.get("timed_step_sentence") or timed_step
+        return [("timed-step", _TIMED_STEP_REASON.format(sentence=sentence.replace('"', "'")))]
+    return []
+
+
 def reply_lint_decision(last_assistant_text, stop_hook_active, verdict=None, next_step="", lever="", *,
-                        timed_step="", pinned_while_working=False, first_cause_open=False):
+                        timed_step="", pinned_while_working=False, first_cause_open=False,
+                        later_deferral_open=False):
     """Return the main session once when its final reply claims completion
     without an observation, or the judge ``verdict`` (``parse_judge_verdict``,
     None when no verdict exists) finds a plain-text hand-off to the owner or an
@@ -3729,32 +3766,35 @@ def reply_lint_decision(last_assistant_text, stop_hook_active, verdict=None, nex
     Not claims: a Russian not-verified disclosure (a first-person "не открывал / читал / запускал" only in the done
     word's sentence), a done word as a section label, with a manner, source or pre-existing-state complement, or
     after a question or condition word with at most one word between.
-    A later stop (``stop_hook_active``) runs only the first-cause rule, and only when ``first_cause_open``
-    (``first_cause_open``: a return of this turn exists and fewer than two were first-cause), so that rule
-    returns at most twice per turn; otherwise it passes."""
+    A later stop (``stop_hook_active``) runs only two rule groups, each on its own per-turn budget: the deferral
+    family (``deferral`` / ``next-step``, ``timed-step``) while ``later_deferral_open`` (no later-stop deferral
+    return yet this turn) and the verdict does not say ``handoff`` (work waiting on the owner is not a deferral),
+    its reason led by ``LATER_DEFERRAL_MARKER``; and first-cause while ``first_cause_open`` (fewer than two
+    first-cause returns this turn). handoff, claim and lever are first-stop only. So reply-lint returns at most
+    four times per turn: the first stop, two first-cause, one later deferral."""
     text = (last_assistant_text or "").strip()
-    if not text or (stop_hook_active and not first_cause_open):
+    if not text:
         return {"decision": "allow", "rules": []}
     if stop_hook_active:
-        fired = _first_cause_fired(text)
+        fired = []
+        if later_deferral_open and not (verdict and verdict["handoff"]):
+            family = _deferral_fired(verdict, next_step) + _timed_step_fired(verdict, timed_step)
+            if family:
+                fired.append(([r for r, _ in family], LATER_DEFERRAL_MARKER + " " + " ".join(m for _, m in family)))
+        if first_cause_open:
+            fired += [([r], m) for r, m in _first_cause_fired(text)]
         if not fired:
             return {"decision": "allow", "rules": []}
-        return {"decision": "block", "rules": [r for r, _ in fired], "reason": " ".join(m for _, m in fired)}
+        return {"decision": "block", "rules": [r for rs, _ in fired for r in rs], "reason": " ".join(m for _, m in fired)}
     fired = []
     if _has_done_claim(text) and not _OBSERVATION_RE.search(text):
         fired.append(("claim", _CLAIM_REASON))
     if verdict and verdict["handoff"] and not pinned_while_working:
         fired.append(("handoff", _HANDOFF_REASON.format(sentence=verdict["sentence"].replace('"', "'"))))
-    if next_step and verdict and verdict["next_step"]:
-        sentence = verdict["next_step_sentence"] or next_step
-        fired.append(("next-step", _NEXT_STEP_REASON.format(sentence=sentence.replace('"', "'"))))
-    elif verdict and verdict["deferral"]:
-        fired.append(("deferral", _DEFERRAL_REASON.format(sentence=verdict["deferral_sentence"].replace('"', "'"))))
+    fired += _deferral_fired(verdict, next_step)
     if lever and verdict and verdict.get("lever"):
         fired.append(("lever", _LEVER_REASON))
-    if timed_step and verdict and verdict.get("timed_step"):
-        sentence = verdict.get("timed_step_sentence") or timed_step
-        fired.append(("timed-step", _TIMED_STEP_REASON.format(sentence=sentence.replace('"', "'"))))
+    fired += _timed_step_fired(verdict, timed_step)
     fired += _first_cause_fired(text)
     if not fired:
         return {"decision": "allow", "rules": []}

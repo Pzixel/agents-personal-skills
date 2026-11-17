@@ -8,14 +8,15 @@ finds either an owner hand-off (work cannot continue now until the owner's
 choice, answer, approval or input, asked in plain text instead of
 AskUserQuestion, or a pointer to an earlier message) or an unbacked deferral
 (work the agent could do this turn, waiting on nothing, tracked nowhere). The
-judge is called only when gate_policy.needs_judge holds (the reply addresses
-the owner or holds a first-person commitment): `claude -p --model haiku` sees
+judge is called only when gate_policy.reply_lint_judge_needed holds (a rule
+candidate, or the reply addresses the owner or holds a first-person commitment):`claude -p --model haiku` sees
 only the final reply (gate_policy.judge_prompt), runs with no hooks, plugins,
 MCP or settings, and is guarded by REPLY_LINT_JUDGE against recursion. A later
-stop (`stop_hook_active`) makes no model call and runs only the judge-free
-first-cause rule, at most twice per turn: when the transcript shows a Stop hook
-return in this turn and fewer than two of them were first-cause; so a flagged
-reply costs at most three extra turns, never a loop. A judge error, timeout or
+stop (`stop_hook_active`) runs two rule groups, each on a budget counted from
+this turn's Stop-hook feedback in the transcript: the deferral family
+(deferral, next-step, timed-step; judged, once per turn, not when the verdict
+says handoff) and first-cause (at most twice per turn); handoff, claim and lever
+stay first-stop only. So a turn holds at most four returns, never a loop. A judge error, timeout or
 unparsable verdict passes the reply (fail open) and is logged; every record
 names the rules that fired. Measurement and acceptance condition: ORIGINS.md.
 Not claims (2026-10-15): Russian not-verified disclosures, done words as
@@ -81,16 +82,15 @@ def pinned_while_working(payload):
     return gate_policy.question_pinned_while_working(pinned_text, facts)
 
 
-def first_cause_open(transcript_path):
-    """At a later stop: a Stop hook returned this turn and fewer than two of its returns were first-cause; False
-    when the transcript is missing or unreadable."""
+def stop_feedback(transcript_path):
+    """This turn's Stop-hook feedback texts at a later stop; [] when the transcript is missing or unreadable,
+    which closes both later-stop budgets."""
     try:
         if not os.path.isfile(transcript_path):
-            return False
-        texts = transcript_scan.stop_feedback_this_turn(transcript_scan.entries_of(transcript_path))
-        return gate_policy.first_cause_open(texts)
+            return []
+        return transcript_scan.stop_feedback_this_turn(transcript_scan.entries_of(transcript_path))
     except Exception:
-        return False
+        return []
 
 
 def judge(text, next_step="", lever="", timed_step=""):
@@ -148,29 +148,32 @@ def main():
             return 0
         text = last_assistant_text(transcript)
     stop_hook_active = bool(payload.get("stop_hook_active"))
+    transcript_path = payload.get("transcript_path") or ""
+    feedback = stop_feedback(transcript_path) if stop_hook_active else []
+    cause_open = stop_hook_active and gate_policy.first_cause_open(feedback)
+    deferral_open = stop_hook_active and gate_policy.later_deferral_open(feedback)
     next_step, lever, timed_step, scan_error = "", "", "", None
-    if not stop_hook_active:
+    if not stop_hook_active or deferral_open:
         try:
-            next_step, timed_step = candidates(text, payload.get("transcript_path") or "")
-            lever = gate_policy.lever_candidate(text)
+            next_step, timed_step = candidates(text, transcript_path)
+            lever = "" if stop_hook_active else gate_policy.lever_candidate(text)
         except Exception as exc:  # the reply passes; the failure is logged
             scan_error = "%s: %s" % (type(exc).__name__, exc)
-    skip_judge = stop_hook_active or not (next_step or lever or timed_step or gate_policy.needs_judge(text))
+    run_judge = gate_policy.reply_lint_judge_needed(text, stop_hook_active, deferral_open, next_step, lever,
+                                                    timed_step)
     started = time.monotonic()
-    verdict, judge_error = (None, None) if skip_judge else judge(text, next_step, lever, timed_step)
-    judge_ms = None if skip_judge else int((time.monotonic() - started) * 1000)
+    verdict, judge_error = judge(text, next_step, lever, timed_step) if run_judge else (None, None)
+    judge_ms = int((time.monotonic() - started) * 1000) if run_judge else None
     pinned = False
-    if verdict and verdict["handoff"]:
+    if verdict and verdict["handoff"] and not stop_hook_active:
         try:
             pinned = pinned_while_working(payload)
         except Exception as exc:  # the hand-off rule stays in force; the failure is logged
             scan_error = "%s: %s" % (type(exc).__name__, exc)
-    reopen = (stop_hook_active and bool(gate_policy.first_paragraph_cause(text))
-              and first_cause_open(payload.get("transcript_path") or ""))
     decision = gate_policy.reply_lint_decision(text, stop_hook_active, verdict, next_step, lever,
                                             timed_step=timed_step, pinned_while_working=pinned,
-                                            first_cause_open=reopen)
-    if os.path.isfile(payload.get("transcript_path") or ""):
+                                            first_cause_open=cause_open, later_deferral_open=deferral_open)
+    if os.path.isfile(transcript_path):
         log(
             {
                 "session_id": payload.get("session_id") or "",

@@ -1429,6 +1429,59 @@ class ReplyLintDecisionTest(unittest.TestCase):
         self.assertEqual(decision["decision"], "allow")
 
 
+class LaterStopDeferralTest(unittest.TestCase):
+    """A reply rewritten after a Stop-hook return is returned once per turn when it still defers own work."""
+
+    REPLY = "Готово, PR влит. Логи я ещё не читал, прочитаю следующим шагом."
+    FIRST_STOP_FEEDBACK = "Stop hook feedback:\nreply-lint: the reply leaves work waiting on the owner in plain text"
+
+    @staticmethod
+    def _verdict(handoff=False, deferral=False, next_step=False, lever=False):
+        return {"handoff": handoff, "sentence": "Решение за вами.", "deferral": deferral,
+                "deferral_sentence": "прочитаю следующим шагом", "next_step": next_step,
+                "next_step_sentence": "прочитаю следующим шагом", "lever": lever, "lever_sentence": "",
+                "timed_step": False, "timed_step_sentence": ""}
+
+    def _later(self, verdict, next_step="", lever="", open_=True, cause_open=False, text=REPLY):
+        return gate_policy.reply_lint_decision(text, True, verdict, next_step, lever,
+                                               first_cause_open=cause_open, later_deferral_open=open_)
+
+    def test_open_budget_returns_the_deferral_family(self):
+        for verdict, next_step, rules in ((self._verdict(deferral=True), "", ["deferral"]),
+                                          (self._verdict(deferral=True, next_step=True), "прочитаю", ["next-step"])):
+            decision = self._later(verdict, next_step)
+            self.assertEqual((decision["decision"], decision["rules"]), ("block", rules), rules)
+
+    def test_closed_budget_passes(self):
+        self.assertEqual(self._later(self._verdict(deferral=True), open_=False), {"decision": "allow", "rules": []})
+
+    def test_a_handoff_verdict_suppresses_the_deferral(self):
+        self.assertEqual(self._later(self._verdict(handoff=True, deferral=True)), {"decision": "allow", "rules": []})
+
+    def test_claim_handoff_and_lever_stay_first_stop_only(self):
+        decision = self._later(self._verdict(lever=True), lever="Рычаги: флаг пропуска прогрева")
+        self.assertEqual(decision, {"decision": "allow", "rules": []})
+
+    def test_the_return_closes_the_budget_and_a_first_stop_deferral_does_not(self):
+        later = self._later(self._verdict(deferral=True))["reason"]
+        first = gate_policy.reply_lint_decision(self.REPLY, False, self._verdict(deferral=True))["reason"]
+        self.assertFalse(gate_policy.later_deferral_open([]))
+        self.assertTrue(gate_policy.later_deferral_open([self.FIRST_STOP_FEEDBACK, "Stop hook feedback:\n" + first]))
+        self.assertFalse(gate_policy.later_deferral_open([self.FIRST_STOP_FEEDBACK, "Stop hook feedback:\n" + later]))
+
+    def test_deferral_and_first_cause_return_together(self):
+        decision = self._later(self._verdict(deferral=True), cause_open=True,
+                               text="Отправку держали лимиты.\n\nПрочитаю логи следующим шагом.")
+        self.assertEqual(decision["rules"], ["deferral", "first-cause"])
+
+    def test_judge_runs_on_a_later_stop_only_while_the_budget_is_open(self):
+        owner_reply = "Если вас устроит, прочитаю логи."
+        self.assertTrue(gate_policy.reply_lint_judge_needed(owner_reply, True, True))
+        self.assertFalse(gate_policy.reply_lint_judge_needed(owner_reply, True, False, next_step="прочитаю"))
+        self.assertFalse(gate_policy.reply_lint_judge_needed("Таблица ниже.", True, True))
+        self.assertTrue(gate_policy.reply_lint_judge_needed("Таблица ниже.", False, False, lever="Рычаги: x"))
+
+
 class FirstCauseRuleTest(unittest.TestCase):
     """A cause stands in the first paragraph of a reply only in the full `Proven:` form (CASE-81)."""
 
