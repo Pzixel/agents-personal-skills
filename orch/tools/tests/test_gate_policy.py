@@ -5,6 +5,7 @@ import shutil
 import sys
 import subprocess
 import tempfile
+import time
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), ".."))
@@ -2393,9 +2394,9 @@ class DestructiveProbeTest(unittest.TestCase):
             "echo 'it; helm uninstall prod":
                 "the hook cannot pair the quotes of this command, so what it runs is not known; put the quoted"
                 " text in a file or a quoted heredoc",
-            "( echo 'SELECT 1;' ) | kubectl --context k3s-production exec -i pg-0 -- psql":
+            "( echo 'SELECT 1;' ) | kubectl --context prod-cluster exec -i pg-0 -- psql":
                 "SQL on the client's stdin is not visible; pass the SQL as a literal heredoc attached to the client",
-            "echo 'SELECT 1;' > /tmp/q.sql; cat /tmp/q.sql | kubectl --context k3s-production exec -i pg-0 -- psql":
+            "echo 'SELECT 1;' > /tmp/q.sql; cat /tmp/q.sql | kubectl --context prod-cluster exec -i pg-0 -- psql":
                 "SQL from a file this command also names elsewhere: the text the client will read is not known;"
                 " write the file in one Bash call and run the client in the next",
         }
@@ -2404,12 +2405,62 @@ class DestructiveProbeTest(unittest.TestCase):
                 result = _probe_decision({"cmd": command, "files": {"/tmp/q.sql": "SELECT 1;\n"}})
                 self.assertEqual((result["decision"], result["reason"]), ("ask", reason))
 
+    def test_boundary_rows_decide_as_the_contract_says(self):
+        for label, entry in _PROBES["destructive"].items():
+            if entry["group"] != "boundary":
+                continue
+            with self.subTest(label):
+                result = _probe_decision(entry)
+                self.assertEqual(result["decision"], entry["expect"])
+                if "reason" in entry:
+                    self.assertEqual(result["reason"], entry["reason"])
+
+    def test_review_probes_refused_at_3814e3e_stay_refused(self):
+        # Every probe and fuzz row of the fix-round reviews with its 3814e3e decision; the rows marked
+        # not_run_by_the_shell were refused at 3814e3e for a command the shell does not run.
+        for label, entry in _PROBES["review_probes"].items():
+            if entry["base"] == "allow" or "not_run_by_the_shell" in entry:
+                continue
+            with self.subTest(label):
+                self.assertIn(_probe_decision(entry)["decision"], ("ask", "deny"))
+
+    def test_own_remedy_refusals_in_bypass_mode_name_only_their_remedy(self):
+        cases = {
+            "echo 'it; helm uninstall prod":
+                "the hook cannot pair the quotes of this command, so what it runs is not known; put the quoted"
+                " text in a file or a quoted heredoc",
+            "( echo 'SELECT 1;' ) | kubectl --context prod-cluster exec -i pg-0 -- psql":
+                "SQL on the client's stdin is not visible; pass the SQL as a literal heredoc attached to the client",
+            "echo 'SELECT 1;' > /tmp/q.sql; cat /tmp/q.sql | kubectl --context prod-cluster exec -i pg-0 -- psql":
+                "SQL from a file this command also names elsewhere: the text the client will read is not known;"
+                " write the file in one Bash call and run the client in the next",
+        }
+        for command, reason in cases.items():
+            with self.subTest(command):
+                texts = {p: "SELECT 1;\n" for p in gate_policy.sql_file_paths(command)}
+                result = gate_policy.destructive_decision(
+                    command, "", None, None, None, "bypassPermissions", texts, False, None)
+                self.assertEqual((result["decision"], result["reason"]), ("deny", reason))
+
+    def test_many_unterminated_heredoc_operators_are_denied_within_the_hook_budget(self):
+        # The hook has 5 s; at d58915a 8,000 such lines took 3.1 s. Measured at c387a77: 22 ms (64 KB: 45 ms).
+        command = "<<a\n" * 8000
+        started = time.perf_counter()
+        texts = {p: None for p in gate_policy.sql_file_paths(command)}
+        result = gate_policy.destructive_decision(command, "", None, None, None, "", texts, False, None)
+        elapsed = time.perf_counter() - started
+        self.assertEqual(result["decision"], "deny")
+        self.assertLess(elapsed, 0.2)
+
     def test_other_gates_keep_the_3814e3e_result(self):
-        e1, l3 = _PROBES["other_gates"]["E1"], _PROBES["other_gates"]["L3"]
+        e1, l3, x1 = (_PROBES["other_gates"][k] for k in ("E1", "L3", "X1"))
         self.assertEqual(gate_policy.builder_events("Bash", {"command": e1["cmd"]}, "/repo/x", None),
                          e1["builder_events"])
         self.assertEqual(gate_policy.landing_target(l3["cmd"], "/repo/x"), l3["landing_target"])
         self.assertEqual(gate_policy.merge_gate_decision(l3["cmd"]), l3["merge_gate_decision"])
+        self.assertEqual(gate_policy.kubectl_exec_targets(x1["cmd"]), x1["kubectl_exec_targets"])
+        self.assertEqual(gate_policy.destructive_decision(x1["cmd"], "", None, None)["exec_targets"],
+                         x1["kubectl_exec_targets"])
 
 
 class PlanFormTest(unittest.TestCase):
