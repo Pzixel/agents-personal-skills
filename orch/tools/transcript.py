@@ -134,6 +134,15 @@ def launch_id(block):
     return task if "/tasks/%s.output" % task in text else None
 
 
+def _send_failed(text):
+    """A SendMessage result that reports a failure: the JSON object ``{"success": false, ...}``."""
+    try:
+        reply = json.loads(text)
+    except ValueError:
+        return False
+    return isinstance(reply, dict) and reply.get("success") is False
+
+
 def _snapshot(state, turn_start, marker, index, timestamp, now):
     last_event = max(
         [t["launch"] for t in state["tasks"].values()]
@@ -165,7 +174,10 @@ def background_watch_scan(entries, marker):
     tasks: id -> {launch, command, closed}; monitors: id -> {armed, ended};
     crons: indexes of CronCreate calls; turn_start: first index of the turn;
     agents: async Agent id -> {launch, closed, call} (call: the Agent tool_use id; closed by its notification or a
-    TaskStop, re-opened by a SendMessage to it); agent_calls: Agent calls with no
+    TaskStop or an `agents_killed` record, re-opened by a SendMessage to it whose result is not a failure);
+    a notification closes every task id it names and is read from text blocks and from `queued_command`
+    attachments; an `api-request-blob` entry re-logs earlier messages, so its notice already applied is skipped
+    and a tool result applies once; agent_calls: Agent calls with no
     tool_result yet; cron_jobs: one-shot job id -> {created, closed, prompt, fired} (closed by
     its `scheduled_task_fire` entry, which also sets fired, or CronDelete); recurring_jobs: recurring
     job id -> {created, closed, prompt} (closed by CronDelete); wakeup_prompt: the ``prompt`` of the
@@ -184,6 +196,23 @@ def background_watch_scan(entries, marker):
     commands = {}  # Bash tool_use id -> command
     monitor_uses = set()
     cron_prompts = {}  # CronCreate tool_use id -> the prompt the job will submit
+    sends = {}  # SendMessage tool_use id -> the agent it addresses, until its result
+    applied = set()  # notification bodies already applied
+
+    def notices(text, index, blob):
+        for body in _NOTIFICATION_RE.findall(text):
+            if blob and body in applied:
+                continue
+            applied.add(body)
+            for task in _TASK_ID_RE.findall(body):
+                if task in state["agents"]:
+                    state["agents"][task]["closed"] = True
+                if task in state["tasks"]:
+                    state["tasks"][task]["closed"] = True
+                monitor = state["monitors"].get(task)
+                if monitor and monitor["ended"] is None and ("<status>" in body or "[Monitor expired" in body):
+                    monitor["ended"] = index
+
     turn_start = 0
     for index, (_, entry) in enumerate(entries):
         kind = entry.get("type")
@@ -192,6 +221,14 @@ def background_watch_scan(entries, marker):
         if kind == "system" and entry.get("subtype") == "turn_duration":
             yield _snapshot(state, turn_start, marker, index, entry.get("timestamp") or "", now)
             turn_start = index + 1
+            continue
+        if kind == "system" and entry.get("subtype") == "agents_killed":
+            for agent in state["agents"].values():
+                agent["closed"] = True
+            continue
+        attachment = entry.get("attachment")
+        if kind == "attachment" and isinstance(attachment, dict) and attachment.get("type") == "queued_command":
+            notices(str(attachment.get("prompt") or ""), index, False)
             continue
         if kind == "system" and entry.get("subtype") == "scheduled_task_fire":
             job = state["cron_jobs"].get(str(entry.get("taskId") or ""))
@@ -226,7 +263,7 @@ def background_watch_scan(entries, marker):
                 elif name == "Agent":
                     state["agent_calls"].add(block.get("id"))
                 elif name == "SendMessage" and str(args.get("to") or "") in state["agents"]:
-                    state["agents"][str(args["to"])]["closed"] = False
+                    sends[block.get("id")] = str(args["to"])
                 elif name in ("TaskStop", "KillShell"):
                     target = str(args.get("task_id") or args.get("shell_id") or "")
                     if target in state["agents"]:
@@ -245,6 +282,11 @@ def background_watch_scan(entries, marker):
             state["markers"].append(index)
         for block in blocks_of(entry):
             if block.get("type") == "tool_result":
+                if block.get("tool_use_id") in sends:
+                    target = sends.pop(block.get("tool_use_id"))
+                    if not _send_failed(result_text(block)):
+                        state["agents"][target]["closed"] = False
+                    continue
                 if block.get("tool_use_id") in state["agent_calls"]:
                     state["agent_calls"].discard(block.get("tool_use_id"))
                     spawned = _AGENT_LAUNCHED_RE.match(result_text(block).strip())
@@ -280,19 +322,6 @@ def background_watch_scan(entries, marker):
                     if started:
                         state["monitors"][started.group(1)] = {"armed": index, "ended": None}
             elif block.get("type") == "text":
-                for body in _NOTIFICATION_RE.findall(str(block.get("text") or "")):
-                    found = _TASK_ID_RE.search(body)
-                    if not found:
-                        continue
-                    task = found.group(1)
-                    if task in state["agents"]:
-                        state["agents"][task]["closed"] = True
-                    if task in state["tasks"]:
-                        state["tasks"][task]["closed"] = True
-                    monitor = state["monitors"].get(task)
-                    if monitor and monitor["ended"] is None and (
-                        "<status>" in body or "[Monitor expired" in body
-                    ):
-                        monitor["ended"] = index
+                notices(str(block.get("text") or ""), index, kind == "api-request-blob")
     yield _snapshot(state, turn_start, marker, len(entries), "", now)
 

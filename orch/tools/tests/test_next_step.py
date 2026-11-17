@@ -122,7 +122,41 @@ class LiveMechanismsTest(unittest.TestCase):
         self.assertEqual(live(AGENT_LAUNCH + [tool_use("t1", "TaskStop", {"task_id": "ag1"})]), [])
 
     def test_send_message_reopens_a_finished_agent(self):
-        self.assertEqual(live(AGENT_LAUNCH + [notification("ag1"), tool_use("s1", "SendMessage", {"to": "ag1"})]), ["ag1"])
+        resumed = [tool_use("s1", "SendMessage", {"to": "ag1"}),
+                   tool_result("s1", '{"success":true,"message":"Resuming agent ag1","resumedAgentId":"ag1"}')]
+        self.assertEqual(live(AGENT_LAUNCH + [notification("ag1"), *resumed]), ["ag1"])
+
+    def test_failed_send_message_leaves_the_agent_closed(self):
+        # bd088567: the stopped agent stayed live for 7 h on this result.
+        failed = [tool_use("s1", "SendMessage", {"to": "ag1"}), tool_result(
+            "s1", '{"success":false,"message":"Agent ag1 was stopped and won\'t be resumed. Treat its work as cancelled."}')]
+        self.assertEqual(live(AGENT_LAUNCH + [notification("ag1", "stopped"), *failed]), [])
+
+    def test_agents_killed_record_closes_every_open_agent(self):
+        second = [tool_use("g3", "Agent", {"prompt": "y"}), tool_result("g3", "Async agent launched successfully.\nagentId: ag3 (internal)")]
+        self.assertEqual(live(AGENT_LAUNCH + second + [{"type": "system", "subtype": "agents_killed"}]), [])
+
+    def test_restart_notice_closes_every_id_it_names(self):
+        armed = [tool_use("m1", "Monitor", {"command": "x"}), tool_result("m1", "Monitor started (task mo1, timeout 300s)"),
+                 tool_use("m2", "Monitor", {"command": "y"}), tool_result("m2", "Monitor started (task mo2, timeout 300s)")]
+        notice = {"type": "user", "message": {"content": "<task-notification>\n<task-id>mo1</task-id><task-id>mo2</task-id>"
+                  "<task-id>ag1</task-id><task-id>__orphan_summary__:shell</task-id>\n<status>stopped</status>\n</task-notification>"}}
+        self.assertEqual(live(AGENT_LAUNCH + armed + [notice]), [])
+
+    def test_notice_delivered_from_the_queue_closes_the_agent(self):
+        queued = {"type": "attachment", "attachment": {"type": "queued_command", "prompt":
+                  "<task-notification>\n<task-id>ag1</task-id>\n<status>completed</status>\n</task-notification>"}}
+        self.assertEqual(live(AGENT_LAUNCH + [queued]), [])
+
+    def test_re_logged_notice_does_not_close_an_agent_resumed_since(self):
+        # 7593cb69: the harness re-logs the earlier request (same notice) as an api-request-blob after the resume.
+        resumed = [tool_use("s1", "SendMessage", {"to": "ag1"}), tool_result("s1", '{"success":true,"message":"Resuming agent ag1"}')]
+        blob = dict(notification("ag1"), type="api-request-blob")
+        replayed = dict(tool_result("s1", '{"success":true,"message":"Resuming agent ag1"}'), type="api-request-blob")
+        self.assertEqual(live(AGENT_LAUNCH + [notification("ag1"), *resumed, blob, replayed]), ["ag1"])
+
+    def test_notice_carried_only_by_a_blob_closes_the_agent(self):
+        self.assertEqual(live(AGENT_LAUNCH + [dict(notification("ag1"), type="api-request-blob")]), [])
 
     def test_agent_call_without_result_is_live(self):
         self.assertEqual(live([tool_use("g2", "Agent", {"prompt": "x"})]), ["Agent call"])

@@ -211,6 +211,13 @@ class DelegateFactsTest(unittest.TestCase):
         entries = [_spawn("toolu_1", "orch:builder", WT), _launched("toolu_1", "a1"), _notified("a1")]
         self.assertEqual(delegate_facts(entries)[1], [("a1", "orch:builder", {WT}, False)])
 
+    def test_failed_resume_leaves_the_agent_closed(self):
+        entries = [_spawn("toolu_1", "orch:builder", WT), _launched("toolu_1", "a1"), _notified("a1"),
+                   _main([{"type": "tool_use", "id": "toolu_2", "name": "SendMessage", "input": {"to": "a1", "message": "go on"}}]),
+                   _main([{"type": "tool_result", "tool_use_id": "toolu_2", "content": [{"type": "text", "text":
+                          '{"success":false,"message":"Agent a1 could not be resumed: No transcript found"}'}]}])]
+        self.assertEqual(delegate_facts(entries)[1], [("a1", "orch:builder", {WT}, False)])
+
     def test_session_edit_inside_the_worktree_is_own(self):
         entries = [_main([{"type": "tool_use", "id": "toolu_3", "name": "Edit",
                            "input": {"file_path": WT + "/src/a.py", "old_string": "a", "new_string": "b"}}])]

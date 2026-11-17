@@ -81,6 +81,11 @@ class BackgroundWatchTest(unittest.TestCase):
                    notification("m1", "<status>completed</status><summary>stream ended</summary>")]
         self.assertEqual(decide(entries), "block")
 
+    def test_restart_notice_naming_the_monitor_second_ends_the_watch(self):
+        entries = [owner("go"), *launch("b1"), *monitor("m1"), turn_end(),
+                   notification("b9", "<task-id>m1</task-id><status>stopped</status>")]
+        self.assertEqual(decide(entries), "block")
+
     def test_rearmed_monitor_after_expiry_allows(self):
         entries = [owner("go"), *launch("b1"), *monitor("m1"), turn_end(),
                    notification("m1", "<event>[Monitor expired after 30m]</event>"), *monitor("m2")]

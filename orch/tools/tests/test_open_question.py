@@ -107,6 +107,12 @@ class DecisionTest(unittest.TestCase):
         payload = {"session_id": SID, "hook_event_name": "Stop"}
         self.assertEqual(gate_policy.open_question_decision(payload, facts_of([entry("user", "go"), *AGENT])), ("none", None))
 
+    def test_stop_after_an_owner_kill_of_the_agent_clears(self):
+        payload = {"session_id": SID, "hook_event_name": "Stop"}
+        killed = {"type": "system", "subtype": "agents_killed"}
+        self.assertEqual(gate_policy.open_question_decision(payload, facts_of([entry("user", "go"), *AGENT, killed])),
+                         ("clear", None))
+
     def test_stop_with_nothing_running_clears(self):
         payload = {"session_id": SID, "hook_event_name": "Stop"}
         self.assertEqual(gate_policy.open_question_decision(payload, facts_of([entry("user", "go")])), ("clear", None))
