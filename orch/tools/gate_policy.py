@@ -5275,7 +5275,7 @@ _STDIN_PATHS = frozenset({"-", "/dev/stdin", "/dev/fd/0", "/proc/self/fd/0"})
 _REWRITTEN_HIT = ("approval", "SQL from a file this command also names elsewhere: the text the client will read is not"
                   " known; write the file in one Bash call and run the client in the next")
 _UNREAD_STDIN_HIT = ("approval", "SQL on the client's stdin is not visible; pass the SQL as a literal heredoc attached to"
-                     " the client, or from a file written in an earlier Bash call")
+                     " the client")
 # A quote left open as the hook reads the command text (``_lex_scan``): the
 # shell either rejects the text or pairs its quotes by a construct the scan
 # does not model, so what follows the quote is not known.

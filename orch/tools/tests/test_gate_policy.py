@@ -2341,6 +2341,76 @@ _PLAN_MENTIONS = (
 _NOT_SHELL_BLANK = ("\xa0", "\x0b", "\x0c", "\r", "\x1c", "\u2003")
 
 
+with open(os.path.join(os.path.dirname(os.path.realpath(__file__)), "fixtures", "destructive_probes.json")) as _fh:
+    _PROBES = json.load(_fh)
+
+
+def _probe_decision(entry):
+    """The hook's decision on a probe, with the SQL files it reads given from the fixture (absent: unreadable)."""
+    files = {os.path.realpath(p): text for p, text in entry.get("files", {}).items()}
+    texts = {p: files.get(p) for p in gate_policy.sql_file_paths(entry["cmd"])}
+    return gate_policy.destructive_decision(entry["cmd"], "", None, None, None, "", texts, False, None)
+
+
+class DestructiveProbeTest(unittest.TestCase):
+    """fixtures/destructive_probes.json: "hole" are commands 3814e3e allowed that reach a production deletion
+    (a comment quote, an unterminated heredoc operator, SQL on an exec'd client's stdin, a psql shell escape,
+    a quote inside $( ) within double quotes); "blocker" the probes the design reviews required refused;
+    "read" reads that must stay allowed; "gap" the known gaps of
+    decisions/destructive-gate-threat-model-is-agent-mistakes.md, pinned as allow so that closing one is seen."""
+
+    def _decisions(self, group):
+        return {label: _probe_decision(e)["decision"] for label, e in _PROBES["destructive"].items()
+                if e["group"] == group}
+
+    def test_hole_shapes_are_refused(self):
+        for label, decision in self._decisions("hole").items():
+            with self.subTest(label):
+                self.assertIn(decision, ("ask", "deny"))
+
+    def test_review_blocker_probes_are_refused(self):
+        for label, decision in self._decisions("blocker").items():
+            with self.subTest(label):
+                self.assertIn(decision, ("ask", "deny"))
+
+    def test_reads_stay_allowed(self):
+        for label, decision in self._decisions("read").items():
+            with self.subTest(label):
+                self.assertEqual(decision, "allow")
+
+    def test_known_gaps_still_pass(self):
+        # Known gaps, not wanted behaviour: a script written and run in one command (A2, A3, A5), argv
+        # through xargs (P17), $(cat file) as an argument (T10, T14), a file rewritten under another
+        # spelling (T17, T18, X11, X12), stdin redirected into a group, subshell, function or exec
+        # (F07-F09, F24), a client file path read on the far side of a carrier (G1, G2, G4).
+        for label, decision in self._decisions("gap").items():
+            with self.subTest(label):
+                self.assertEqual(decision, "allow")
+
+    def test_new_refusals_name_one_remedy(self):
+        cases = {
+            "echo 'it; helm uninstall prod":
+                "the hook cannot pair the quotes of this command, so what it runs is not known; put the quoted"
+                " text in a file or a quoted heredoc",
+            "( echo 'SELECT 1;' ) | kubectl --context k3s-production exec -i pg-0 -- psql":
+                "SQL on the client's stdin is not visible; pass the SQL as a literal heredoc attached to the client",
+            "echo 'SELECT 1;' > /tmp/q.sql; cat /tmp/q.sql | kubectl --context k3s-production exec -i pg-0 -- psql":
+                "SQL from a file this command also names elsewhere: the text the client will read is not known;"
+                " write the file in one Bash call and run the client in the next",
+        }
+        for command, reason in cases.items():
+            with self.subTest(command):
+                result = _probe_decision({"cmd": command, "files": {"/tmp/q.sql": "SELECT 1;\n"}})
+                self.assertEqual((result["decision"], result["reason"]), ("ask", reason))
+
+    def test_other_gates_keep_the_3814e3e_result(self):
+        e1, l3 = _PROBES["other_gates"]["E1"], _PROBES["other_gates"]["L3"]
+        self.assertEqual(gate_policy.builder_events("Bash", {"command": e1["cmd"]}, "/repo/x", None),
+                         e1["builder_events"])
+        self.assertEqual(gate_policy.landing_target(l3["cmd"], "/repo/x"), l3["landing_target"])
+        self.assertEqual(gate_policy.merge_gate_decision(l3["cmd"]), l3["merge_gate_decision"])
+
+
 class PlanFormTest(unittest.TestCase):
     def test_off_form_launch_is_refused_with_the_accepted_form(self):
         for command in _OFF_FORM_LAUNCHES:
