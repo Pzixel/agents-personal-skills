@@ -3780,7 +3780,8 @@ def reply_lint_decision(last_assistant_text, stop_hook_active, verdict=None, nex
         if later_deferral_open and not (verdict and verdict["handoff"]):
             family = _deferral_fired(verdict, next_step) + _timed_step_fired(verdict, timed_step)
             if family:
-                fired.append(([r for r, _ in family], LATER_DEFERRAL_MARKER + " " + " ".join(m for _, m in family)))
+                joined = " ".join(m for _, m in family)  # each family reason starts with REPLY_LINT_MARKER
+                fired.append(([r for r, _ in family], LATER_DEFERRAL_MARKER + joined[len(REPLY_LINT_MARKER):]))
         if first_cause_open:
             fired += [([r], m) for r, m in _first_cause_fired(text)]
         if not fired:
