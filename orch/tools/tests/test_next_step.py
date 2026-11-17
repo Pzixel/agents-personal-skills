@@ -155,6 +155,16 @@ class LiveMechanismsTest(unittest.TestCase):
         replayed = dict(tool_result("s1", '{"success":true,"message":"Resuming agent ag1"}'), type="api-request-blob")
         self.assertEqual(live(AGENT_LAUNCH + [notification("ag1"), *resumed, blob, replayed]), ["ag1"])
 
+    def test_re_logged_launch_does_not_re_open_a_finished_task(self):
+        # ccfa36a5: a blob re-logs the launch acknowledgement after the task's notice.
+        relogged = dict(BASH_LAUNCH[1], type="api-request-blob")
+        self.assertEqual(live(BASH_LAUNCH + [notification("bx1"), relogged]), [])
+
+    def test_blob_written_before_the_launch_entry_does_not_hide_the_launch(self):
+        # bd088567: the request blob holding the launch result precedes the agent call and its own result entry.
+        early = dict(AGENT_LAUNCH[1], type="api-request-blob")
+        self.assertEqual(live([early, *AGENT_LAUNCH]), ["ag1"])
+
     def test_notice_carried_only_by_a_blob_closes_the_agent(self):
         self.assertEqual(live(AGENT_LAUNCH + [dict(notification("ag1"), type="api-request-blob")]), [])
 

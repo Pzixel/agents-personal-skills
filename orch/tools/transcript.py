@@ -198,6 +198,7 @@ def background_watch_scan(entries, marker):
     cron_prompts = {}  # CronCreate tool_use id -> the prompt the job will submit
     sends = {}  # SendMessage tool_use id -> the agent it addresses, until its result
     applied = set()  # notification bodies already applied
+    results = set()  # tool_use ids whose result was applied
 
     def notices(text, index, blob):
         for body in _NOTIFICATION_RE.findall(text):
@@ -282,6 +283,9 @@ def background_watch_scan(entries, marker):
             state["markers"].append(index)
         for block in blocks_of(entry):
             if block.get("type") == "tool_result":
+                if kind == "api-request-blob" and block.get("tool_use_id") in results:
+                    continue  # a re-logged copy of a result already applied (a blob may also precede its entry)
+                results.add(block.get("tool_use_id"))
                 if block.get("tool_use_id") in sends:
                     target = sends.pop(block.get("tool_use_id"))
                     if not _send_failed(result_text(block)):

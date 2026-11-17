@@ -11,6 +11,7 @@ usage: python3 replay.py <loop.tsv> <control.jsonl> [variants]
        python3 replay.py ask-spend [days] [--judge] [--out <tsv>]   (default 28 days, ask-spend.tsv)
        python3 replay.py ask-spend-pins <pins.jsonl> [k]
        python3 replay.py ask-after-pin [days]   (default 28 days)
+       python3 replay.py ask-live-work [days]   (default 6 days)
 
 loop.tsv: start_utc, duration_s, agent, agent_type, command (one looping
 session, all rows one repository). control.jsonl: rows of extract.py (every
@@ -232,6 +233,61 @@ def ask_after_pin(days):
     print("push and dialog in one message, timestamps:", dict(order))
     for r in rows:
         print(json.dumps(r))
+
+
+def ask_live_work(days):
+    """Replay gate_policy.ask_live_work_decision at every answered main-session AskUserQuestion asked in the last
+    ``days`` days, each tool_use id once (forked transcripts copy history). The transcript is cut before the
+    dialog's own assistant message, as the hook sees it. Prints dialogs and fires per day, the wait for the answer
+    of every fired dialog, waits of 30 min or more by fired, and the scan against the harness's
+    ``pendingBackgroundAgentCount`` at the turn ends that carry it (open agents equal, lower, higher)."""
+    cutoff, sid = time.time() - days * 86400, "00000000-0000-4000-8000-000000000000"
+    seen, per_day, fired_rows, long_waits, harness = set(), collections.Counter(), [], collections.Counter(), collections.Counter()
+    turn_ends = set()
+    for path in main_transcripts(days):
+        raw = [(r, e) for r, e in transcript.entries_of(path) if not e.get("isSidechain")]
+        answers = {}
+        for _, e in raw:
+            for b in transcript.blocks_of(e):
+                if b.get("type") == "tool_result" and not b.get("is_error"):
+                    answers.setdefault(b.get("tool_use_id"), transcript.epoch(e.get("timestamp")))
+        snaps = transcript.background_watch_scan(raw, "\x00")
+        for (_, e), snap in zip((x for x in raw if x[1].get("subtype") == "turn_duration"), snaps):
+            if "pendingBackgroundAgentCount" in e and e.get("uuid") not in turn_ends and (transcript.epoch(e.get("timestamp")) or 0) >= cutoff:
+                turn_ends.add(e.get("uuid"))
+                scan = sum(1 for a in snap["agents"].values() if not a["closed"])
+                want = e["pendingBackgroundAgentCount"]
+                harness["equal" if scan == want else "scan lower" if scan < want else "scan higher"] += 1
+        first = {}
+        for i, (_, e) in enumerate(raw):
+            first.setdefault((e.get("message") or {}).get("id") or i, i)
+        for i, (_, e) in enumerate(raw):
+            if e.get("type") != "assistant":
+                continue
+            for b in transcript.blocks_of(e):
+                asked, answered = transcript.epoch(e.get("timestamp")), answers.get(b.get("id"))
+                if (b.get("type") != "tool_use" or b.get("name") != "AskUserQuestion" or b.get("id") in seen
+                        or asked is None or asked < cutoff or answered is None):
+                    continue
+                seen.add(b.get("id"))
+                facts = None
+                for facts in transcript.background_watch_scan(raw[:first.get((e.get("message") or {}).get("id") or i, i)], "\x00"):
+                    pass
+                fired = g.ask_live_work_decision({"session_id": sid, "tool_input": b.get("input") or {}}, facts) is not None
+                day, wait = e["timestamp"][:10], (answered - asked) / 60
+                per_day[day, fired] += 1
+                long_waits[fired] += wait >= 30
+                if fired:
+                    fired_rows.append((e["timestamp"][:19], os.path.basename(path)[:8], round(wait, 1), g.live_work(facts)))
+    days_seen = sorted({d for d, _ in per_day})
+    print("answered dialogs (%d d, main sessions, one per tool_use id): %d, fired %d"
+          % (days, sum(per_day.values()), sum(n for (_, f), n in per_day.items() if f)))
+    for d in days_seen:
+        print("%s: %d dialogs, %d fired" % (d, per_day[d, True] + per_day[d, False], per_day[d, True]))
+    print("waits of 30 min or more: %d, of them fired %d" % (long_waits[True] + long_waits[False], long_waits[True]))
+    print("scan open agents against pendingBackgroundAgentCount at turn ends carrying it:", dict(harness))
+    for row in sorted(fired_rows):
+        print("fired %s %s wait_min=%s live=%s" % row)
 
 
 def background_watch(days):
@@ -956,6 +1012,8 @@ def main():
             sys.exit("usage: python3 replay.py ask-spend [days] [--judge] [--out <tsv>]")
         out = args[args.index("--out") + 1] if "--out" in args else "ask-spend.tsv"
         return ask_spend(int(args[0]) if args and args[0].isdigit() else 28, out, "--judge" in args)
+    if sys.argv[1] == "ask-live-work":
+        return ask_live_work(int(sys.argv[2]) if len(sys.argv) > 2 else 6)
     if sys.argv[1] == "ask-after-pin":
         return ask_after_pin(int(sys.argv[2]) if len(sys.argv) > 2 else 28)
     if sys.argv[1] == "ask-spend-pins":
