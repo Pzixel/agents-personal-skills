@@ -5567,7 +5567,10 @@ def _shell_heredocs(command):
                 if starts[k] + m.start() in quoted:
                     line = line[:m.start()] + _KEPT_OPERATOR + line[m.start() + 2:]
                 else:
-                    line = line[:m.start()] + " " * (m.end() - m.start()) + line[m.end():]
+                    # The delimiter word runs to the end of the glued word: a `#` glued to it starts
+                    # no comment once the operator is blanked.
+                    end = m.end() + len(re.match(r"""[^\s;&|()<>'"\\]*""", line[m.end():]).group(0))
+                    line = line[:m.start()] + " " * (end - m.start()) + line[end:]
             script.append(line)
     return "\n".join(script), heredocs
 
