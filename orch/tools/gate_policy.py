@@ -3907,6 +3907,8 @@ _SECRET_WRITE_REASON = "the command writes a live Secret: the previous value can
 _PLAN_INDIRECT_RE = re.compile(r"^\s*(?:(?:source|\.|exec|eval)\s|(?:bash|sh|zsh)\s+\S)")
 _SEGMENT_PUNCT = frozenset(";&|()\n`{}")
 _HEREDOC_RE = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
+# A heredoc body that is only ``$(cat <path>)`` or ``$(< <path>)``: the path.
+_CAT_BODY_RE = re.compile(r"^\s*\$\(\s*(?:cat\s+([^\s;&|<>()$`'\"\\]+)|<\s*([^\s;&|<>()$`'\"\\]+))\s*\)\s*$")
 _SHELLS = frozenset({"bash", "sh", "zsh"})
 _INNER_SUBST_RE = re.compile(r"`([^`]*)`|\$\(([^()]*)\)")
 _KUBECTL_VALUE_FLAGS = frozenset({
@@ -4042,18 +4044,66 @@ def _off_form_plan_launch(command):
     return script.count(_PLAN_TOKEN) > _strip_comments(script).count(_PLAN_TOKEN)
 
 
-def _segments_meta(command):
-    """[tokens, separators before, separators after] per shell segment; quoted
-    text stays one token, so a quoted word never becomes a command head.
-    Backticks split like ``;``."""
+def _lex(command):
     lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()\n`{}")
     lexer.whitespace = " \t\r"
     lexer.whitespace_split = True
     lexer.commenters = ""
-    try:
-        tokens = list(lexer)
-    except ValueError:
-        tokens = command.split()
+    return list(lexer)
+
+
+def _lexable(command):
+    """``command`` rewritten so the strict lexer reads it as the shell does
+    where the lexer alone fails: quotes and backslashes in a comment are
+    comment text, an ANSI-C ``$'...'`` string takes backslash escapes, a
+    trailing lone backslash is dropped and an unclosed quote runs to the end
+    of the text (``_classify_text`` asks for such a text: see ``_UNPAIRED_HIT``)."""
+    text, quote = _lex_scan(command)
+    return text + ("'" if quote == "$" else quote or "")
+
+
+def _lex_scan(command):
+    """(``_lexable`` text before closing, the quote left open or None)."""
+    out, quote, i, n = [], None, 0, len(command)
+    while i < n:
+        ch = command[i]
+        if quote is None and ch == "#" and (i == 0 or command[i - 1] in " \t\r\n;&|()`{}"):
+            end = command.find("\n", i)
+            end = n if end < 0 else end
+            out.append(re.sub(r"[\"'\\]", "", command[i:end]))
+            i = end
+            continue
+        if quote is None and command.startswith("$'", i):
+            quote, ch, i = "$", "'", i + 1
+        elif ch == "\\" and quote != "'":
+            if i + 1 < n:
+                out.append("'\"'\"'" if quote == "$" and command[i + 1] == "'" else command[i:i + 2])
+            i += 2
+            continue
+        elif quote == "$":
+            quote = None if ch == "'" else quote
+        elif ch == quote:
+            quote = None
+        elif quote is None and ch in "'\"":
+            quote = ch
+        out.append(ch)
+        i += 1
+    return "".join(out), quote
+
+
+def _segments_meta(command, shell_reading=False):
+    """[tokens, separators before, separators after] per shell segment; quoted
+    text stays one token, so a quoted word never becomes a command head.
+    Backticks split like ``;``. ``shell_reading`` (the destructive decision
+    only) lexes the text as the shell reads it (``_lexable``): comment quotes
+    would otherwise swallow the commands between them or fail the lexer."""
+    if shell_reading:
+        tokens = _lex(_lexable(command))
+    else:
+        try:
+            tokens = _lex(command)
+        except ValueError:
+            tokens = command.split()
     # A comment ends at the next separator, not only at a newline: over-reading
     # a comment as a command can only raise a class, never hide one.
     segments, current, comment, punct = [], None, False, ""
@@ -4077,9 +4127,9 @@ def _segments_meta(command):
     return segments
 
 
-def _shell_segments(command):
+def _shell_segments(command, shell_reading=False):
     """Token lists per shell segment (see ``_segments_meta``)."""
-    return [seg[0] for seg in _segments_meta(command)]
+    return [seg[0] for seg in _segments_meta(command, shell_reading)]
 
 
 def _command_head(tokens):
@@ -4119,6 +4169,14 @@ def _command_head(tokens):
         else:
             return word, tokens[i + 1:], via_xargs
     return "", [], via_xargs
+
+
+def _shell_head(tokens):
+    """``_command_head`` for the destructive reading: ``gosu USER cmd`` runs ``cmd``."""
+    program, args, via_xargs = _command_head(tokens)
+    while program == "gosu" and len(args) > 1:
+        program, args, via_xargs = _command_head(args[1:])
+    return program, args, via_xargs
 
 
 _REDIRECT = re.compile(r"^(\d*|&)(>>?|<)(&?\d+|&-)?$|^(\d*|&)(>>?|<)(.+)$")
@@ -4293,9 +4351,10 @@ _KUBECTL_BOOL_FLAGS = frozenset({
 })
 
 
-def _kubectl_class(args, cfg, ctx):
-    """Options, redirects and the verb are read before ``--``; what follows
-    ``--`` is the command an exec runs, its redirects included."""
+def _kubectl_words(args):
+    """(end, rest, words) of a kubectl run: ``end`` the index of ``--`` (else
+    len), ``rest`` the arguments before it without kubectl's options and
+    redirects, ``words`` its positional words (verb first)."""
     end = args.index("--") if "--" in args else len(args)
     rest, i = [], 0
     while i < end:
@@ -4309,7 +4368,13 @@ def _kubectl_class(args, cfg, ctx):
         if args[i] != "\\":
             rest.append(args[i])
         i += 1
-    words = [a.rstrip("\\") for a in rest if not a.startswith("-")]
+    return end, rest, [a.rstrip("\\") for a in rest if not a.startswith("-")]
+
+
+def _kubectl_class(args, cfg, ctx):
+    """Options, redirects and the verb are read before ``--``; what follows
+    ``--`` is the command an exec runs, its redirects included."""
+    end, rest, words = _kubectl_words(args)
     if not words:
         return []
     verb = words[0]
@@ -4323,6 +4388,8 @@ def _kubectl_class(args, cfg, ctx):
     if verb == "exec":
         cfg.setdefault("exec_targets", []).append(_exec_target(
             args[:end], words[1:2], args[end + 1:] if end < len(args) else words[2:], ctx.get("stdin_body")))
+        if cfg.get("shell_reading"):  # without ``--`` too: the words after the pod
+            return _classify_inner(args[end + 1:] if end < len(args) else words[2:], cfg, ctx)
         return _classify_inner(args[end + 1:], cfg, ctx) if end < len(args) else []
     if verb in _KUBECTL_READS:
         return []
@@ -4515,10 +4582,25 @@ def _read_only_marker(program, args, file_texts):
     return not _PG_READ_ONLY_BREAK_RE.search(text) and not _SQL_SIDE_EFFECT_RE.search(text)
 
 
-def _client_sql_hits(program, args, file_texts):
-    """Hits of one SQL client run. ``clickhouse local`` without a --path has
-    no server and no stored data: it is flagged only when a table function
-    reaches outside it."""
+# A client meta-command that runs a shell command: ``\\! cmd``, output piped by ``\\o |cmd`` or ``\\g |cmd``.
+_CLIENT_SHELL_RE = re.compile(r"\\(?:!|(?:o|out|g|gx)\s*\|)([^\n]*)")
+
+
+def _client_sql_hits(program, args, file_texts, cfg, depth, own=()):
+    """Hits of one SQL client run: the shell commands its meta-commands run,
+    classed as commands of a shell whose directory is not known, then ``own``
+    (hits of the destructive reading's stdin rules) and its SQL, both dropped
+    when the server keeps the run read-only (``_read_only_marker``).
+    ``clickhouse local`` without a --path has no server and no stored data: it
+    is flagged only when a table function reaches outside it."""
+    hits = [hit for text in _sql_texts(args, file_texts) if text
+            for m in _CLIENT_SHELL_RE.finditer(text)
+            for hit in _classify_text(m.group(1), cfg, depth + 1, None, None, True)] if cfg.get("shell_reading") else []
+    own = [] if not own or _read_only_marker(program, args, file_texts) else list(own)
+    return hits + own + _client_sql_only_hits(program, args, file_texts)
+
+
+def _client_sql_only_hits(program, args, file_texts):
     if _read_only_marker(program, args, file_texts):
         return []
     if program == "clickhouse-local" or program == "clickhouse" and args[:1] == ["local"]:
@@ -4556,7 +4638,7 @@ def _classify_inner(tokens, cfg, ctx):
         elif tok.startswith("<") and not tok.startswith("<<") and len(tok) > 1:
             local[i] = "<" + (_resolve(tok[1:], ctx) or tok[1:])
     inner = _new_ctx(None, ctx["depth"], ctx["text"])
-    inner.update(cd_seen=True, raw=raw)
+    inner.update(cd_seen=True, raw=raw, stdin_fed=ctx.get("stdin_fed"))
     return _classify_tokens(local, cfg, inner)
 
 
@@ -4797,7 +4879,8 @@ def _runs_computed_command(text):
 def _classify_tokens(tokens, cfg, ctx):
     """Hits for one segment; ``ctx`` carries the raw text, the working
     directory, variables and the raw tokens of the segment (``raw``)."""
-    program, args, via_xargs = _command_head(tokens)
+    shell = cfg.get("shell_reading")
+    program, args, via_xargs = (_shell_head if shell else _command_head)(tokens)
     raw_args = ctx.get("raw", tokens)[len(tokens) - len(args):]
     if not program:
         return []
@@ -4834,7 +4917,7 @@ def _classify_tokens(tokens, cfg, ctx):
             return [("privileged", "eval runs a command named by a variable or substitution: run the command directly")]
         return _classify_text(text, cfg, ctx["depth"] + 1, ctx["dir"], None, ctx["cd_seen"])
     shell_flag = next((a for a in args if re.match(r"^-[a-z]*c[a-z]*$", a)), None)
-    if program in _SHELLS and shell_flag:
+    if (program in _SHELLS or shell and program == "su") and shell_flag:
         i = args.index(shell_flag) + 1
         if i >= len(raw_args):
             return []
@@ -4877,17 +4960,9 @@ def _classify_tokens(tokens, cfg, ctx):
         inner = args[args.index("--") + 1:]
         raw = ctx.get("raw", tokens)
         return _classify_tokens(inner, cfg, dict(ctx, raw=raw[len(raw) - len(inner):]))
-    if program == "docker":
-        rest = args[_after_options(args, _DOCKER_GLOBAL_VALUE_FLAGS):]
-        if rest[:1] == ["compose"]:
-            rest = rest[1:][_after_options(rest[1:], _COMPOSE_VALUE_FLAGS):]
-        if rest[:1] == ["exec"]:
-            i = _after_options(rest[1:], _DOCKER_VALUE_FLAGS)
-            return _classify_inner(rest[1:][i + 1:], cfg, ctx)
-        return []
-    if program == "ssh":
-        i = _after_options(args, _SSH_VALUE_FLAGS)
-        return _classify_inner(args[i + 1:], cfg, ctx)
+    if program in ("docker", "ssh"):
+        inner = _carried(program, args)
+        return [] if inner is None else _classify_inner(inner, cfg, ctx)
     if program in ("helm",) and args[:1] in (["uninstall"], ["delete"]) or (
         program == "flux" and args[:1] == ["delete"]
     ) or program == "rsync" and any(a.startswith("--delete") for a in args):
@@ -4898,15 +4973,46 @@ def _classify_tokens(tokens, cfg, ctx):
         )
         return _inline_code_hits(program, code)
     if program in cfg["sql_clients"]:
-        keys = [_sql_key(p, ctx) for p in _sql_file_args(args)]
+        paths = _sql_file_args(args)
+        # The destructive reading: a stdin alias is read through ``_stdin_hits``
+        # (nothing on stdin: empty), /dev/null is empty; a ``< path`` the
+        # command names elsewhere asks.
+        stdin = [bool(shell) and (p in _STDIN_PATHS and ctx.get("stdin_fed") or p == "/dev/null") for p in paths]
+        keys = [None if s else _sql_key(p, ctx) for p, s in zip(paths, stdin)]
         cfg["sql_paths"].extend(k for k in keys if k is not None)
-        return _client_sql_hits(program, args, [None if k is None else cfg["sql_files"].get(k) for k in keys])
+        texts = ["" if s else None if k is None else cfg["sql_files"].get(k) for k, s in zip(keys, stdin)]
+        redirected = {args[i + 1] for i, a in enumerate(args[:-1]) if a == "<"} | {
+            a[1:] for a in args if a.startswith("<") and not a.startswith("<<") and len(a) > 1}
+        own = [_REWRITTEN_HIT][:any(shell and _named_elsewhere(p, cfg) for p in redirected - {"/dev/null"})]
+        return _client_sql_hits(program, args, texts, cfg, ctx["depth"], own)
     if program in ("echo", "printf"):
         target = _redirect_target(args)
         key = target and _sql_key(target, ctx)
         if key:
             cfg["sql_files"][key] = " ".join(args[:args.index(target) - 1])
     return []
+
+
+def _carried(program, args):
+    """The command a carrier runs elsewhere: after ``--`` of a kubectl exec (without
+    ``--``: the words after the pod, kubectl's own options and redirects removed),
+    after the options and container of a docker [compose] exec, after the
+    options and host of ssh (empty: a login shell); None for any other command."""
+    if program == "kubectl":
+        end, _, words = _kubectl_words(args)
+        if words[:1] != ["exec"]:
+            return None
+        return args[end + 1:] if end < len(args) else words[2:]
+    if program == "docker":
+        rest = args[_after_options(args, _DOCKER_GLOBAL_VALUE_FLAGS):]
+        if rest[:1] == ["compose"]:
+            rest = rest[1:][_after_options(rest[1:], _COMPOSE_VALUE_FLAGS):]
+        if rest[:1] == ["exec"]:
+            return rest[1:][_after_options(rest[1:], _DOCKER_VALUE_FLAGS) + 1:]
+        return None
+    if program == "ssh":
+        return args[_after_options(args, _SSH_VALUE_FLAGS) + 1:]
+    return None
 
 
 def _redirect_target(args):
@@ -4944,7 +5050,7 @@ def sql_file_paths(command, params=None, cwd=None):
     """Paths SQL clients in ``command`` read from, resolved through the cd's
     the command runs (relative ones against ``cwd``); the hook reads them and
     passes their text to ``destructive_decision`` as ``sql_file_texts``."""
-    cfg = _decision_cfg(params, None)
+    cfg = _decision_cfg(params, None, command)
     _classify_text(command, cfg, 0, os.path.realpath(cwd) if cwd else "")
     return list(dict.fromkeys(cfg["sql_paths"]))
 
@@ -5033,9 +5139,26 @@ def _bind(tokens, ctx, before, after):
 
 
 def _walk(script, cfg, ctx):
-    hits, function = [], None
-    for tokens, before, after in _segments_meta(script):
-        if "|" not in before:
+    hits, function, shell = [], None, cfg.get("shell_reading")
+    for tokens, before, after in _segments_meta(script, shell):
+        # The destructive reading: what the previous command wrote into a pipe
+        # into this one; a group, subshell or loop before the pipe: not visible.
+        piped = (ctx.pop("pipe_in", None) or (None, None)) if shell and before.split()[-1:] in (["|"], ["|&"]) else None
+        ctx.pop("pipe_in", None)
+        popped = []
+        if shell:
+            # One body per operator, taken before any branch below skips the
+            # segment; a body whose holder is not read here is left to
+            # ``_heredoc_fallback_hits``.
+            operators = sum(len(_HEREDOC_RE.findall(t)) for t in tokens if not t.startswith("<<<"))
+            popped = [ctx["heredoc_bodies"].pop(0) for _ in range(min(operators, len(ctx["heredoc_bodies"])))]
+            if popped:
+                ctx["stdin_body"] = popped[0][1]
+                target = _redirect_target(tokens)
+                key = target and _sql_key(_substitute(target, ctx["vars"]), ctx)
+                if key:
+                    cfg["sql_files"][key] = popped[0][1]
+        if "|" not in before and not popped:
             ctx["stdin_body"] = None  # a heredoc reaches the next command only through a pipe
         _scope(before, ctx)
         _chain_step(ctx, before)
@@ -5058,9 +5181,11 @@ def _walk(script, cfg, ctx):
                 continue
         if len(tokens) == 1 and after.replace(" ", "").startswith("()"):
             function = tokens[0]
+            ctx["defined"].add(function)
             continue
         if tokens[:1] == ["function"] and len(tokens) == 2:
             function = tokens[1]
+            ctx["defined"].add(function)
             continue
         if tokens[0] in cfg["functions"]:
             tokens = cfg["functions"][tokens[0]] + tokens[1:]
@@ -5073,7 +5198,7 @@ def _walk(script, cfg, ctx):
             ))
         if _bind(tokens, ctx, before, after):
             continue
-        if any(t.startswith("<<") and not t.startswith("<<<") for t in tokens):
+        if not shell and any(t.startswith("<<") and not t.startswith("<<<") for t in tokens):
             # The next heredoc body in order is what a `> file` redirect here writes.
             body = ctx["heredoc_bodies"].pop(0) if ctx.get("heredoc_bodies") else None
             ctx["stdin_body"] = body
@@ -5081,6 +5206,10 @@ def _walk(script, cfg, ctx):
             key = target and body is not None and _sql_key(_substitute(target, ctx["vars"]), ctx)
             if key:
                 cfg["sql_files"][key] = body
+        quoted_operator = any(" " in t and _HEREDOC_RE.search(t) for t in tokens)
+        if shell:
+            # ``0< file`` is ``< file``: the client's stdin redirect, read as one.
+            tokens = [re.sub(r"^0<(?![<&])", "<", t) for t in _heredoc_free(tokens)]
         # A bound value with whitespace splits into words, as an unquoted
         # expansion does (for a quoted one each word is then judged alone).
         words, raw = [], []
@@ -5089,9 +5218,83 @@ def _walk(script, cfg, ctx):
             split = value.split() if value != t and not any(c.isspace() for c in t) else [value]
             words.extend(split)
             raw.extend([t] * len(split))
-        ctx.update(raw=raw, before=before, after=after)
+        ctx.update(raw=raw, before=before, after=after, stdin_fed=piped is not None or bool(popped))
         hits.extend(_classify_tokens(words, cfg, ctx))
+        if piped is not None:
+            hits.extend(_stdin_hits(words, piped[0], piped[1], cfg, ctx["depth"], ctx["dir"], True) or [])
+        program, args, _ = _shell_head(words) if shell else ("", [], False)
+        if program and program not in ctx["defined"] and not quoted_operator:
+            for index, body, quoted in popped:
+                ctx["heredoc_read"].add(index)
+                hits.extend(_stdin_hits(words, body, _heredoc_sql(body, quoted, ctx), cfg, ctx["depth"], ctx["dir"]) or [])
+        if shell and after.split()[:1] in (["|"], ["|&"]):
+            # ``cat`` with no file passes its heredoc on: a shell reads it, SQL not visible.
+            passes = popped and program == "cat" and not _path_args(args)
+            ctx["pipe_in"] = (popped[0][1], _heredoc_sql(popped[0][1], popped[0][2], ctx)) if passes \
+                else _pipe_output(words, ctx)
     return hits
+
+
+# What a SQL client reads on stdin (the destructive reading): the text itself,
+# None when not visible, or the list of file keys it is sent (read by the hook).
+_STDIN_PATHS = frozenset({"-", "/dev/stdin", "/dev/fd/0", "/proc/self/fd/0"})
+_REWRITTEN_HIT = ("approval", "SQL from a file this command also names elsewhere: the text the client will read is not"
+                  " known; write the file in one Bash call and run the client in the next")
+_UNREAD_STDIN_HIT = ("approval", "SQL on the client's stdin is not visible; pass the SQL as a literal heredoc attached to"
+                     " the client, or from a file written in an earlier Bash call")
+# A quote left open as the hook reads the text: the shell either rejects the
+# text or pairs its quotes otherwise (a quote inside ``$( )`` within double
+# quotes opens a new context, which the lexer does not model).
+_UNPAIRED_HIT = ("approval", "the hook cannot pair the quotes of this command (one left open, or a quote inside $( )"
+                 " within double quotes), so what it runs is not known; move the quoted part out of the $( ) or close"
+                 " the quote")
+# Hits that name their own remedy: no plan-script suffix (``_command_decision``).
+_OWN_REMEDY = frozenset({_REWRITTEN_HIT[1], _UNREAD_STDIN_HIT[1], _UNPAIRED_HIT[1]})
+
+
+def _heredoc_sql(body, quoted, ctx):
+    """The SQL source a heredoc body is: the body when literal (quoted
+    delimiter, or no expansion in it), the file a body of exactly
+    ``$(cat <path>)`` / ``$(< <path>)`` sends, else None (not visible)."""
+    m = None if quoted else _CAT_BODY_RE.match(body)
+    if m:
+        return [_sql_key(m.group(1) or m.group(2), ctx)]
+    return body if quoted or not re.search(r"[$`]", body) else None
+
+
+def _pipe_output(tokens, ctx):
+    """What ``tokens`` writes into a pipe, as (shell text, SQL source): one
+    ``echo`` / ``printf`` its literal words as written; ``cat <literal paths>``
+    the files; anything else (None, None), not visible."""
+    program, args, _ = _shell_head(tokens)
+    if program in ("echo", "printf"):
+        while program == "echo" and args and re.match(r"^-[neE]+$", args[0]):
+            args = args[1:]
+        # As written, escapes and conversions blanked (not decoded).
+        text = re.sub(r"\\[nt]|%[-0-9.]*[sdbq]", " ", " ".join(args))
+        return (None, None) if args[:1] == ["-v"] or re.search(r"[$`]", text) else (text, text)
+    paths = _path_args(args)
+    if program == "cat" and paths and len(paths) == len(args) and not _STDIN_PATHS & set(paths):
+        return None, [_sql_key(p, ctx) for p in paths]
+    return None, None
+
+
+def _stdin_sql(sql, cfg):
+    """(SQL text, hits) for a stdin source (see ``_STDIN_PATHS``): files are
+    registered for the hook to read; one the command names elsewhere asks."""
+    if not isinstance(sql, list):
+        return sql, []
+    cfg["sql_paths"].extend(k for k in sql if k)
+    texts = [cfg["sql_files"].get(k) if k else None for k in sql]
+    named = any(k and _named_elsewhere(k, cfg) for k in sql)
+    return (None if None in texts else "\n".join(texts)), [_REWRITTEN_HIT] if named else []
+
+
+def _named_elsewhere(path, cfg):
+    """True when the command text names ``path``'s basename more than once:
+    a write under any spelling (redirect, tee, cp, an interpreter) may change
+    the text between the hook's read and the client's."""
+    return cfg["command_text"].count(os.path.basename(path.rstrip("/")) or path) > 1
 
 
 def _quoted_positions(text):
@@ -5128,26 +5331,42 @@ def _expand_brace_lists(script):
 
 def _classify_text(command, cfg, depth=0, dir_="", variables=None, cd_seen=False):
     """``dir_`` is the working directory the text starts in (see ``_new_ctx``);
-    ``cd_seen``: a cd already ran, so relative prefixes no longer count."""
+    ``cd_seen``: a cd already ran, so relative prefixes no longer count.
+    ``cfg["shell_reading"]`` (the destructive decision) reads the text as the
+    shell does (``_lexable``, ``_shell_heredocs``) and classes what each
+    command reads on stdin (``_stdin_hits``) on top of the 3814e3e reading."""
     if depth > 3:
         return [("impossible", "command nesting too deep to classify")]
+    shell = cfg.get("shell_reading")
+    if shell:
+        command = command.replace(_KEPT_OPERATOR, "<<")
     ctx = _new_ctx(dir_, depth, command, variables)
-    ctx["cd_seen"] = cd_seen
-    script, heredocs = _split_heredocs(command)
-    ctx["heredoc_bodies"] = [body for _, body, _ in heredocs]
-    script = script.replace("\\\n", " ")
+    ctx.update(cd_seen=cd_seen, defined=set(), heredoc_read=set())
+    if shell:
+        script, heredocs = _shell_heredocs(command)
+        ctx["heredoc_bodies"] = [(i, body, quoted) for i, (_, body, quoted) in enumerate(heredocs)]
+        # A comment does not continue onto the next line: its backslashes go first.
+        script, open_quote = _lex_scan(script)
+        script = (script + ("'" if open_quote == "$" else open_quote or "")).replace("\\\n", " ")
+    else:
+        open_quote = None
+        script, heredocs = _split_heredocs(command)
+        ctx["heredoc_bodies"] = [body for _, body, _ in heredocs]
+        script = script.replace("\\\n", " ")
     script = _MKTEMP_RE.sub(lambda m: m.group(1) + "=" + _temp_prefixes()[0] + "mktemp", script)
     script = _BRACED_VAR_RE.sub(lambda m: "$" + m.group(1) + "\x01", script)
     script = _expand_brace_lists(script)
-    hits = _walk(script, cfg, ctx)
+    hits = _walk(script, cfg, ctx) + ([_UNPAIRED_HIT] if shell and open_quote else [])
     # Heredoc shells start where the command started unless a cd ran
     # somewhere in it: which cd applies to them is not tracked.
     inner_dir = dir_ if not ctx["cd_seen"] else None
-    for line, body, quoted in heredocs:
+    for index, (line, body, quoted) in enumerate(heredocs):
         if not quoted:
             for m in _INNER_SUBST_RE.finditer(body):
                 hits.extend(_classify_text(m.group(1) or m.group(2) or "", cfg, depth + 1, inner_dir))
         hits.extend(_heredoc_hits(line, body, cfg, depth, inner_dir))
+        if shell and index not in ctx["heredoc_read"]:
+            hits.extend(_heredoc_fallback_hits(line, body, cfg, depth, inner_dir))
     return hits
 
 
@@ -5169,6 +5388,43 @@ def _split_heredocs(command):
     return "\n".join(script), heredocs
 
 
+# A heredoc operator ``_shell_heredocs`` keeps inside a quoted word: not an
+# operator of this text (no body is taken for it), ``<<`` again when the word
+# is read as a script of its own.
+_KEPT_OPERATOR = "\x02\x02"
+
+
+def _shell_heredocs(command):
+    """``_split_heredocs`` as the shell reads it (the destructive reading): the
+    opening line includes the lines it continues with a trailing backslash;
+    an operator with no terminator line is not a heredoc here: outside quotes
+    it is blanked (the lines after it stay commands); inside a quoted word
+    (``sh -c "psql <<'SQL' ... SQL"``) it is kept, marked ``_KEPT_OPERATOR``,
+    for the nested reading of that word, and no body is taken for it."""
+    lines = command.split("\n")
+    script, heredocs, i, carried = [], [], 0, ""
+    quoted, starts = _quoted_positions(command), [0]
+    for one in lines:
+        starts.append(starts[-1] + len(one) + 1)
+    while i < len(lines):
+        line, start = lines[i], starts[i]
+        i += 1
+        opening = carried + line
+        carried = opening[:-1] + " " if line.endswith("\\") else ""
+        for m in _HEREDOC_RE.finditer(line):
+            end = next((k for k in range(i, len(lines)) if lines[k].strip() == m.group(2)), None)
+            if end is None:
+                if start + m.start() in quoted:
+                    line = line[:m.start()] + _KEPT_OPERATOR + line[m.start() + 2:]
+                else:
+                    line = line[:m.start()] + " " * (m.end() - m.start()) + line[m.end():]
+                continue
+            heredocs.append((opening, "\n".join(lines[i:end]), bool(m.group(1))))
+            i = end + 1
+        script.append(line)
+    return "\n".join(script), heredocs
+
+
 def _heredoc_hits(line, body, cfg, depth, dir_):
     """A heredoc body is data unless it feeds a shell, an interpreter, a remote
     shell or a SQL client; then it is classed as what that head runs. Every
@@ -5184,8 +5440,72 @@ def _heredoc_hits(line, body, cfg, depth, dir_):
         if _INLINE_INTERPRETER_RE.match(program) and _inline_code_hits(program, body):
             return _inline_code_hits(program, body)
         if program in cfg["sql_clients"]:
-            return _client_sql_hits(program, args, [None] * len(_sql_file_args(args)) + [body])
+            return _client_sql_hits(program, args, [None] * len(_sql_file_args(args)) + [body], cfg, depth)
     return []
+
+
+def _heredoc_fallback_hits(line, body, cfg, depth, dir_):
+    """A heredoc whose holder the walk does not read (a subshell, a group, a
+    loop or a function fed, an operator inside quotes): the first command of
+    its opening line that reads stdin reads it, its SQL not visible."""
+    for tokens in _shell_segments(line, True):
+        found = _stdin_hits(tokens, body, None, cfg, depth, dir_)
+        if found is not None:
+            return found
+    return []
+
+
+def _heredoc_free(tokens):
+    """``tokens`` without heredoc operators; a word glued before one stays (``psql<<SQL`` -> ``psql``)."""
+    out = []
+    for tok in tokens:
+        m = None if tok.startswith("<<<") or " " in tok else _HEREDOC_RE.search(tok)
+        if m is None:
+            out.append(tok)
+        elif tok[:m.start()]:
+            out.append(tok[:m.start()])
+    return out
+
+
+def _stdin_hits(tokens, text, sql, cfg, depth, dir_, piped=False):
+    """Hits of what the command ``tokens`` reads on stdin, None when it reads
+    it as data: ``text`` as a shell or interpreter reads it (None: not
+    visible), ``sql`` as a SQL client does (see ``_STDIN_PATHS``). A carrier
+    or ``sh -c`` passes stdin to the command it runs. A heredoc feeds a shell
+    or a carrier's remote shell whatever its arguments; a pipe (``piped``)
+    feeds a shell only when it has no script, an interpreter only when it has
+    no script file, a SQL client only when it has no query or file of its own
+    or reads ``-f -`` / ``-f /dev/stdin``."""
+    program, args, _ = _shell_head(_heredoc_free(tokens))
+    carried = _carried(program, args) if program in ("kubectl", "docker", "ssh") else None
+    if carried is not None:
+        reads = text is not None and not (piped and carried)
+        hits = _classify_text(text, cfg, depth + 1, None, None, True) if reads else []
+        inner = _path_args_keep_flags(carried)
+    elif program in _SHELLS or program == "su":
+        flag = next((a for a in args if re.match(r"^-[a-z]*c[a-z]*$", a)), None)
+        reads = text is not None and not (piped and (flag or program != "su" and _path_args(args)))
+        hits = _classify_text(text, cfg, depth + 1, dir_) if reads else []
+        inner = args[args.index(flag) + 1:args.index(flag) + 2] if flag else []
+    elif _INLINE_INTERPRETER_RE.match(program):
+        if text is None or piped and _path_args(args) not in ([], ["-"]):
+            return None
+        return _inline_code_hits(program, text) or None
+    elif program in cfg["sql_clients"]:
+        paths = _sql_file_args(args)
+        aliased = [p in _STDIN_PATHS for p in paths]
+        if piped and not any(aliased) and _sql_texts(args, [None] * len(paths)):
+            return None
+        text, own = _stdin_sql(sql, cfg)
+        files = [text if a else None for a in aliased] + ([] if any(aliased) else [text])
+        found = _client_sql_hits(program, args, files, cfg, depth, own)
+        # Stdin from a source that is no file (a generator, an expanding heredoc): its own remedy.
+        return [_UNREAD_STDIN_HIT if sql is None and "statements are not visible" in h[1] else h for h in found]
+    else:
+        return None
+    for segment in _shell_segments(inner[0], True) if len(inner) == 1 else [inner] if inner else []:
+        hits.extend(_stdin_hits(segment, text, sql, cfg, depth, None, piped) or [])
+    return hits
 
 
 _DECISION = {"ours": "allow", "approval": "ask", "impossible": "deny", "privileged": "deny"}
@@ -5319,7 +5639,7 @@ def _destructive_decision(
     against it and the cd's the command runs. A malformed params value raises.
     Returns {"decision": allow|ask|deny, "class", "reason"}.
     """
-    cfg = _decision_cfg(params, sql_file_texts)
+    cfg = _decision_cfg(params, sql_file_texts, command or "")
     if len((command or "").encode("utf-8", "surrogatepass")) > int(cfg["command_max_bytes"]):
         return {"decision": "deny", "class": "impossible",
                 "reason": "command too long for the destructive gate"}
@@ -5341,7 +5661,7 @@ def _destructive_decision(
             )}
     else:
         result = dict(_command_decision(command or "", cfg, os.path.realpath(cwd) if cwd else ""),
-                      exec_targets=cfg.get("exec_targets", []))
+                      exec_targets=kubectl_exec_targets(command, params) if cfg.get("exec_targets") else [])
     if (
         result["decision"] == "ask"
         and permission_mode == "bypassPermissions"
@@ -5354,10 +5674,14 @@ def _destructive_decision(
     return result
 
 
-def _decision_cfg(params, sql_file_texts):
+def _decision_cfg(params, sql_file_texts, shell_command=None):
+    """``shell_command``: the command the destructive decision reads as the
+    shell does (``shell_reading``, see ``_classify_text``); every other caller
+    keeps the reading its gate was measured on."""
     cfg = dict(_merged_params(params)["destructive"])
     cfg.update(
         sql_files=dict(sql_file_texts or {}), sql_paths=[], functions={},
+        shell_reading=shell_command is not None, command_text=shell_command or "",
         ours_paths=list(cfg["ours_paths"]) + _temp_prefixes() + [
             os.path.realpath(os.path.expanduser(p)) + "/"
             for p in cfg["ours_paths"] if p.startswith(("/", "~"))
@@ -5371,7 +5695,7 @@ def _command_decision(command, cfg, cwd):
     if not found:
         return {"decision": "allow", "class": "none", "reason": ""}
     cls, reason = max(found, key=lambda hit: _SEVERITY[hit[0]])
-    if cls == "approval":
+    if cls == "approval" and reason not in _OWN_REMEDY:
         reason += ": batch it into a plan script (" + _PLAN_HEADER_LIST + ") run from the main session"
     elif cls == "impossible":
         reason += ("; if the step is needed, write a plan script stating exactly what it does"
