@@ -4601,12 +4601,13 @@ def _sql_texts(program, args, file_texts):
     not visible); bodies with no file argument (stdin) come last."""
     files, texts = iter(file_texts), []
     flags = _CLIENT_TEXT_FLAGS.get(program, _SQL_TEXT_FLAGS)
+    assigned = tuple(f + "=" for f in flags if f.startswith("--"))
     for i, a in enumerate(args):
         if (a in flags or program == "psql" and _PSQL_BUNDLED_C_RE.match(a)) and i + 1 < len(args):
             texts.append(args[i + 1])
-        elif a.startswith(tuple(f + "=" for f in flags if f.startswith("--"))):
+        elif a.startswith(assigned):
             texts.append(a.split("=", 1)[1])
-        elif _sql_file_args(args[i:i + 2]) and (a in _SQL_FILE_FLAGS or a.startswith(("<", "--file=", "--queries-file="))):
+        elif (a in _SQL_FILE_FLAGS or a.startswith(("<", "--file=", "--queries-file="))) and _sql_file_args(args[i:i + 2]):
             texts.append(next(files, None))
     return texts + list(files)
 
@@ -4688,7 +4689,11 @@ def _classify_inner(tokens, cfg, ctx):
             local[i + 1] = _resolve(local[i + 1], ctx) or local[i + 1]
         elif tok.startswith("<") and not tok.startswith("<<") and len(tok) > 1:
             local[i] = "<" + (_resolve(tok[1:], ctx) or tok[1:])
-    inner = _new_ctx(None, ctx["depth"], ctx["text"])
+    if cfg.get("shell_reading"):
+        # The destructive reading counts each carrier as a level of nesting.
+        if ctx["depth"] >= 3:
+            return [("impossible", "command nesting too deep to classify")]
+    inner = _new_ctx(None, ctx["depth"] + bool(cfg.get("shell_reading")), ctx["text"])
     inner.update(cd_seen=True, raw=raw, stdin_fed=ctx.get("stdin_fed"))
     return _classify_tokens(local, cfg, inner)
 
@@ -5106,7 +5111,9 @@ def _sql_key(path, ctx):
 def sql_file_paths(command, params=None, cwd=None):
     """Paths SQL clients in ``command`` read from, resolved through the cd's
     the command runs (relative ones against ``cwd``); the hook reads them and
-    passes their text to ``destructive_decision`` as ``sql_file_texts``."""
+    passes their text to ``destructive_decision`` as ``sql_file_texts``.
+    Raises ``OutOfWork`` past the work budget: the hook denies with its text
+    without reading the command a second time."""
     cfg = _decision_cfg(params, None, command)
     _classify_text(command, cfg, 0, os.path.realpath(cwd) if cwd else "")
     return list(dict.fromkeys(cfg["sql_paths"]))
@@ -5126,7 +5133,7 @@ _MKTEMP_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)=\"?(?:\$\(\s*mktemp\b[^)`]*
 # split it at ``{``, hiding the alternatives from the operand checks).
 _BRACE_LIST_RE = re.compile(r"([^\s;&|()<>{}]*)\{([^{}\s]*,[^{}\s]*)\}([^\s;&|()<>]*)")
 # The destructive reading: a brace list never takes in a quote, so it never cuts a quoted word.
-_SHELL_BRACE_LIST_RE = re.compile(r"""([^\s;&|()<>{}'"]*)\{([^{}\s'"]*,[^{}\s'"]*)\}([^\s;&|()<>'"]*)""")
+_SHELL_BRACE_LIST_RE = re.compile(r"""(?<![^\s;&|()<>{}'"])([^\s;&|()<>{}'"]*)\{([^{}\s'"]*,[^{}\s'"]*)\}([^\s;&|()<>'"]*)""")
 _BLOCK_OPEN = frozenset({"if", "for", "while", "until", "case", "select"})
 _BLOCK_CLOSE = frozenset({"fi", "done", "esac"})
 
@@ -5197,31 +5204,38 @@ def _bind(tokens, ctx, before, after):
     return standalone
 
 
-def _inner_substitutions(text, shell):
+def _inner_substitutions(text, cfg):
     """Texts of the backtick and ``$( )`` substitutions in ``text``. The
-    destructive reading (``shell``) pairs a ``$( )`` as the shell does:
-    parentheses inside quotes, and a ``$( )`` inside double quotes within
-    it, do not end it; one left open runs to the end of the text."""
-    if not shell:
+    destructive reading (``shell_reading``) pairs a ``$( )`` as the shell
+    does: parentheses inside quotes, and a ``$( )`` inside double quotes
+    within it, do not end it; one left open runs to the end of the text.
+    Each scan draws its length from the decision's work (``_charge``)."""
+    if not cfg.get("shell_reading"):
         return [m.group(1) or m.group(2) or "" for m in _INNER_SUBST_RE.finditer(text)]
     out = re.findall(r"`([^`]*)`", text)
     start = text.find("$(")
     while start >= 0:
-        out.append(text[start + 2:_substitution_end(text, start + 2)])
+        end = _substitution_end(text, start + 2)
+        _charge(cfg, end - start)
+        out.append(text[start + 2:end])
         start = text.find("$(", start + 2)
     return out
 
 
 def _substitution_end(text, i):
-    """Index of the ``)`` that closes a ``$(`` whose text starts at ``i``."""
-    depth, quote, n = 1, None, len(text)
+    """Index of the ``)`` that closes a ``$(`` whose text starts at ``i``; a
+    ``$( )`` inside double quotes within it is skipped whole (a stack, not
+    recursion: the nesting is as deep as the text is long)."""
+    depth, quote, n, outer = 1, None, len(text), []
     while i < n:
         ch = text[i]
         if ch == "\\" and quote != "'":
             i += 2
             continue
         if quote == '"' and text.startswith("$(", i):
-            i = _substitution_end(text, i + 2) + 1
+            outer.append((depth, quote))
+            depth, quote = 1, None
+            i += 2
             continue
         if quote:
             quote = None if ch == quote else quote
@@ -5232,7 +5246,9 @@ def _substitution_end(text, i):
         elif ch == ")":
             depth -= 1
             if not depth:
-                return i
+                if not outer:
+                    return i
+                depth, quote = outer.pop()
         i += 1
     return n
 
@@ -5292,7 +5308,7 @@ def _walk(script, cfg, ctx):
             tokens = cfg["functions"][tokens[0]] + tokens[1:]
         # A quoted substitution runs here, with the directory and variables
         # of this point (an unquoted one is split into segments).
-        for inner in _inner_substitutions(" ".join(tokens), shell):
+        for inner in _inner_substitutions(" ".join(tokens), cfg):
             hits.extend(_classify_text(inner, cfg, ctx["depth"] + 1, ctx["dir"], dict(ctx["vars"]), ctx["cd_seen"], guess=True))
         if _bind(tokens, ctx, before, after):
             continue
@@ -5338,6 +5354,35 @@ def _walk(script, cfg, ctx):
     return hits
 
 
+# The destructive reading's work for one decision, in characters handed to its
+# readers: every text classed (the command, a body, a substitution, a nested
+# script, each plus ``_READING_WORK``), every body left open and every
+# substitution cut out, and the words brace expansion adds. A body or substitution left
+# open runs to the end of the text and is read again by what holds it, so a short
+# text can cost its length to a high power. Sized from the stored commands: see
+# decisions/destructive-gate-threat-model-is-agent-mistakes.md.
+_WORK_BUDGET = 100000
+# A reading's fixed cost (lexing setup, scans, context) in characters of text:
+# measured 100 us per reading, at 0.9 us per character of a stored command.
+_READING_WORK = 128
+_OUT_OF_WORK = ("the hook's reading of this command exceeds its work budget, so what it runs is not known; put the"
+                " script in a file and run that file in a separate Bash call")
+
+
+class OutOfWork(Exception):
+    """The destructive reading of a command exceeded ``_WORK_BUDGET``."""
+
+    reason = _OUT_OF_WORK
+
+
+def _charge(cfg, chars):
+    """Draw ``chars`` from the decision's work; past ``_WORK_BUDGET`` the
+    reading stops (``_destructive_decision`` denies)."""
+    cfg["work"] = cfg.get("work", 0) + chars
+    if cfg["work"] > _WORK_BUDGET:
+        raise OutOfWork
+
+
 # What a SQL client reads on stdin (the destructive reading): the text itself,
 # None when not visible, or the list of file keys it is sent (read by the hook).
 _STDIN_PATHS = frozenset({"-", "/dev/stdin", "/dev/fd/0", "/proc/self/fd/0"})
@@ -5351,7 +5396,7 @@ _UNREAD_STDIN_HIT = ("approval", "SQL on the client's stdin is not visible; pass
 _UNPAIRED_HIT = ("approval", "the hook cannot pair the quotes of this command, so what it runs is not known; put the"
                  " quoted text in a file or a quoted heredoc")
 # Hits that name their own remedy: no plan-script suffix (``_command_decision``).
-_OWN_REMEDY = frozenset({_REWRITTEN_HIT[1], _UNREAD_STDIN_HIT[1], _UNPAIRED_HIT[1]})
+_OWN_REMEDY = frozenset({_REWRITTEN_HIT[1], _UNREAD_STDIN_HIT[1], _UNPAIRED_HIT[1], _OUT_OF_WORK})
 
 
 def _heredoc_sql(body, quoted, ctx):
@@ -5420,9 +5465,11 @@ def _quoted_positions(text):
     return quoted
 
 
-def _expand_brace_lists(script, shell=False):
+def _expand_brace_lists(script, cfg=None):
     """Expand comma braces the shell expands (outside quotes; in the
-    destructive reading also not escaped: ``"\\{0,200\\}"`` is a grep bound)."""
+    destructive reading, ``cfg`` given, also not escaped: ``"\\{0,200\\}"`` is
+    a grep bound, and the words each pass adds draw from the decision's work)."""
+    shell = cfg is not None
     for _ in range(8):
         quoted = _quoted_positions(script)
         expanded = (_SHELL_BRACE_LIST_RE if shell else _BRACE_LIST_RE).sub(
@@ -5432,6 +5479,8 @@ def _expand_brace_lists(script, shell=False):
         )
         if expanded == script:
             return script
+        if shell:
+            _charge(cfg, len(expanded) - len(script))
         script = expanded
     return script
 
@@ -5452,14 +5501,12 @@ def _classify_text(command, cfg, depth=0, dir_="", variables=None, cd_seen=False
         return [("impossible", "command nesting too deep to classify")]
     shell = cfg.get("shell_reading")
     if shell:
+        _charge(cfg, len(command) + _READING_WORK)
         command = command.replace(_KEPT_OPERATOR, "<<")
     ctx = _new_ctx(dir_, depth, command, variables)
     ctx.update(cd_seen=cd_seen, defined=set(), heredoc_read=set())
     if shell:
-        script, heredocs = _shell_heredocs(command)
-        if heredocs is None:
-            return [("impossible", "command too long for the destructive gate: its heredoc operators with no"
-                     " terminator line are more text than the gate reads")]
+        script, heredocs = _shell_heredocs(command, cfg)
         ctx["heredoc_bodies"] = [(i, body, quoted) for i, (_, body, quoted, done) in enumerate(heredocs) if done]
         # A comment does not continue onto the next line: its backslashes go first.
         script, open_quote = _lex_scan(script)
@@ -5471,7 +5518,7 @@ def _classify_text(command, cfg, depth=0, dir_="", variables=None, cd_seen=False
         script = script.replace("\\\n", " ")
     script = _MKTEMP_RE.sub(lambda m: m.group(1) + "=" + _temp_prefixes()[0] + "mktemp", script)
     script = _BRACED_VAR_RE.sub(lambda m: "$" + m.group(1) + "\x01", script)
-    expanded = _expand_brace_lists(script, shell)
+    expanded = _expand_brace_lists(script, cfg if shell else None)
     if shell and expanded != script and not open_quote:
         try:
             _lex(expanded)
@@ -5484,7 +5531,7 @@ def _classify_text(command, cfg, depth=0, dir_="", variables=None, cd_seen=False
     inner_dir = dir_ if not ctx["cd_seen"] else None
     for index, (line, body, quoted, *_) in enumerate(heredocs):
         if not quoted:
-            for inner in _inner_substitutions(body, shell):
+            for inner in _inner_substitutions(body, cfg):
                 hits.extend(_classify_text(inner, cfg, depth + 1, inner_dir, guess=True))
         hits.extend(_heredoc_hits(line, body, cfg, depth, inner_dir))
         if shell and index not in ctx["heredoc_read"]:
@@ -5516,11 +5563,10 @@ def _split_heredocs(command):
 _KEPT_OPERATOR = "\x02\x02"
 
 
-def _shell_heredocs(command):
+def _shell_heredocs(command, cfg):
     """``_split_heredocs`` as the shell reads it (the destructive reading), as
-    (script, [(opening line, body, delimiter quoted, terminated)]), or
-    (script, None) when the bodies of the operators with no terminator line
-    exceed ``_UNTERMINATED_BUDGET`` characters. The opening line includes the
+    (script, [(opening line, body, delimiter quoted, terminated)]); each body
+    draws its length from the decision's work (``_charge``). The opening line includes the
     lines it continues with a trailing backslash, and the bodies start after
     the last of them; a body ends on the line that is exactly its delimiter
     (``<<-``: after leading tabs). An operator with no terminator line is read
@@ -5535,7 +5581,7 @@ def _shell_heredocs(command):
         starts.append(starts[-1] + len(one) + 1)
         exact.setdefault(one, []).append(k)
         tabbed.setdefault(one.lstrip("\t"), []).append(k)
-    script, heredocs, i, work = [], [], 0, 0
+    script, heredocs, i = [], [], 0
     while i < len(lines):
         first = i
         while i < len(lines) - 1 and lines[i].endswith("\\"):
@@ -5552,9 +5598,7 @@ def _shell_heredocs(command):
                     heredocs.append((opening, "\n".join(lines[i:end]), bool(m.group(1)), True))
                     i = end + 1
                     continue
-                work += max(0, len(command) - starts[min(i, len(lines))])
-                if work > _UNTERMINATED_BUDGET:
-                    return command, None
+                _charge(cfg, max(0, len(command) - starts[min(i, len(lines))]))
                 heredocs.append((opening, command[starts[i]:] if i < len(lines) else "", bool(m.group(1)), False))
                 if starts[k] + m.start() in quoted:
                     line = line[:m.start()] + _KEPT_OPERATOR + line[m.start() + 2:]
@@ -5565,12 +5609,6 @@ def _shell_heredocs(command):
                     line = line[:m.start()] + " " * (end - m.start()) + line[end:]
             script.append(line)
     return "\n".join(script), heredocs
-
-
-# Characters of heredoc bodies the destructive reading takes for operators with
-# no terminator line; each such body is the rest of the text, so many operators
-# cost the square of the text. Measured: see ``ShellHeredocBudgetTest``.
-_UNTERMINATED_BUDGET = 262144
 
 
 def _heredoc_hits(line, body, cfg, depth, dir_):
@@ -5808,8 +5846,11 @@ def _destructive_decision(
                 " gate allows, before the other gates answer, so a background run carries its # OUTCOMES: line first"
             )}
     else:
-        result = dict(_command_decision(command or "", cfg, os.path.realpath(cwd) if cwd else ""),
-                      exec_targets=kubectl_exec_targets(command, params) if cfg.get("exec_targets") else [])
+        try:
+            result = _command_decision(command or "", cfg, os.path.realpath(cwd) if cwd else "")
+        except OutOfWork:
+            result = {"decision": "deny", "class": "impossible", "reason": _OUT_OF_WORK}
+        result["exec_targets"] = kubectl_exec_targets(command, params) if cfg.get("exec_targets") else []
     if (
         result["decision"] == "ask"
         and permission_mode == "bypassPermissions"

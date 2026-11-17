@@ -2471,15 +2471,37 @@ class DestructiveProbeTest(unittest.TestCase):
                     command, "", None, None, None, "bypassPermissions", texts, False, None)
                 self.assertEqual((result["decision"], result["reason"]), ("deny", reason))
 
-    def test_many_unterminated_heredoc_operators_are_denied_within_the_hook_budget(self):
-        # The hook has 5 s; at d58915a 8,000 such lines took 3.1 s. Measured at c387a77: 22 ms (64 KB: 45 ms).
-        command = "<<a\n" * 8000
-        started = time.perf_counter()
-        texts = {p: None for p in gate_policy.sql_file_paths(command)}
-        result = gate_policy.destructive_decision(command, "", None, None, None, "", texts, False, None)
-        elapsed = time.perf_counter() - started
-        self.assertEqual(result["decision"], "deny")
-        self.assertLess(elapsed, 0.2)
+    def test_text_read_again_past_the_work_budget_is_denied_with_its_remedy(self):
+        # Each open heredoc body or $( runs to the end of the text and its holder reads it again: a short
+        # text costs its length to a high power (the hook has 5 s). The reading stops at the budget.
+        drop = "\npsql -h prod-db.internal -c 'DROP TABLE users'"
+        commands = {
+            "unterminated operators": "<<a\n" * 8000,
+            "shell holders of unterminated bodies": "\n".join(["bash <<a"] * 20) + drop,
+            "remote shell holders": "\n".join(["ssh prod-db bash <<a"] * 20),
+            "open substitutions": 'echo "' + "$(" * 500 + '"',
+            "open substitutions in nested quotes": "echo " + '"$(' * 1500,
+            "brace lists multiplying": "echo " + "{a,b}" * 2000,
+        }
+        for name, command in commands.items():
+            with self.subTest(name):
+                self.assertEqual(gate_policy.destructive_decision(command, "", None, None, None, "", {}, False, None),
+                                 {"decision": "deny", "class": "impossible", "reason": gate_policy.OutOfWork.reason,
+                                  "exec_targets": []})
+                with self.assertRaises(gate_policy.OutOfWork):
+                    gate_policy.sql_file_paths(command)
+
+    def test_long_ordinary_commands_stay_within_the_work_budget(self):
+        # The largest stored command is 34 KB; the gate reads up to 64 KB.
+        writes = "cat > /tmp/notes.md <<'EOF'\n" + "a line of notes about $(the run) and `that`\n" * 1400 + "EOF"
+        loop = "for f in a b; do\n  cat <<EOF > $f\n  line $f\nEOF\ndone\n" * 1000
+        for command in (writes, loop):
+            with self.subTest(command[:30]):
+                self.assertEqual(_probe_decision({"cmd": command})["decision"], "allow")
+
+    def test_carriers_nested_past_the_depth_bound_are_denied(self):
+        command = "ssh h " * 2000 + "psql -c 'SELECT 1'"
+        self.assertEqual(_probe_decision({"cmd": command})["decision"], "deny")
 
     def test_other_gates_keep_the_3814e3e_result(self):
         e1, l3, x1 = (_PROBES["other_gates"][k] for k in ("E1", "L3", "X1"))
