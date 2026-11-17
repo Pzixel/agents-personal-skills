@@ -724,6 +724,18 @@
    "cmd": "grep -c x\\{0,2\\}'a b' /tmp/f",
    "group": "boundary",
    "expect": "allow"
+  },
+  "T4a heredoc delimiter starting with a digit": {
+   "cmd": "kubectl --context prod-cluster exec -i pg-0 -- psql <<1\nDROP TABLE users;\n1",
+   "group": "gap"
+  },
+  "T4b quoted heredoc delimiter with a space": {
+   "cmd": "kubectl --context prod-cluster exec -i pg-0 -- psql <<\"END SQL\"\nDROP TABLE users;\nEND SQL",
+   "group": "gap"
+  },
+  "T4c heredoc delimiter from a variable": {
+   "cmd": "kubectl --context prod-cluster exec -i pg-0 -- psql <<$X\nDROP TABLE users;\n$X",
+   "group": "gap"
   }
  },
  "other_gates": {

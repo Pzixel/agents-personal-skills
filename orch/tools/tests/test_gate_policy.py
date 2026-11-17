@@ -2385,7 +2385,8 @@ class DestructiveProbeTest(unittest.TestCase):
         # Known gaps, not wanted behaviour: a script written and run in one command (A2, A3, A5), argv
         # through xargs (P17), $(cat file) as an argument (T10, T14), a file rewritten under another
         # spelling (T17, T18, X11, X12), a client file path read on the far side of a carrier (G1, G2, G4),
-        # a client whose stdin a group, subshell, function or exec redirect feeds (F07, F08, F09, F24).
+        # a client whose stdin a group, subshell, function or exec redirect feeds (F07, F08, F09, F24), a heredoc
+        # delimiter `<<1`, `<<"END SQL"` or `<<$X` feeding an exec'd client (T4a-T4c).
         for label, decision in self._decisions("gap").items():
             with self.subTest(label):
                 self.assertEqual(decision, "allow")
