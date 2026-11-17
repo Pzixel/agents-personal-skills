@@ -1912,6 +1912,21 @@ def _destructive(command, agent_type="", plan_text=None, plan_hash=None):
     return gate_policy.destructive_decision(command, agent_type, plan_text, plan_hash)
 
 
+_PIN_HASH = "f" * 64
+_PIN_LINE = "# pin: /repo/run.sh sha256=" + _PIN_HASH + "\n"
+# The headers of _PLAN without its psql line: the head of every pinned plan below (lines 1-7, pin on 8).
+_PINNED_HEAD = _PLAN[:_PLAN.index("psql")] + _PIN_LINE
+_PINNED_PLAN = _PINNED_HEAD + "bash /repo/run.sh --apply 5\n"
+_PIN_FACTS = {"real_path": "/repo/run.sh", "sha256": _PIN_HASH, "file_blob": "b" * 40, "tree_mode": "100644",
+              "tree_blob": "b" * 40, "origin_url": "git@github.com:o/r.git", "tip": "c" * 40,
+              "tip_date": "2026-11-17T10:00:00+00:00", "branch": "origin/main"}
+
+
+def _pinned(plan_text, facts=_PIN_FACTS, mode="default", approved=False):
+    return gate_policy.destructive_decision(_PLAN_CMD, "", plan_text, _PLAN_HASH, None, mode, None, approved, None,
+                                            {"/repo/run.sh": facts, "/repo/b.sh": dict(_PIN_FACTS, real_path="/repo/b.sh")})
+
+
 class DestructiveDecisionTest(unittest.TestCase):
     def test_rm_of_scratch_path_is_allowed(self):
         self.assertEqual(_destructive("rm -rf tmp/build /tmp/x")["decision"], "allow")
@@ -2220,6 +2235,116 @@ class DestructiveDecisionTest(unittest.TestCase):
             with self.subTest(line=line):
                 result = _destructive(_PLAN_CMD, "", _PLAN + line, _PLAN_HASH)
                 self.assertEqual(result["decision"], "deny")
+
+    def test_pinned_plan_of_allowed_lines_asks_showing_the_facts_in_prompt_and_approve_request(self):
+        run = "bash /repo/run.sh --apply 5 k=v\n"
+        plans = [
+            _PINNED_PLAN,
+            "#!/bin/bash\n" + _PINNED_HEAD + "set -e\n" + run,
+            _PINNED_HEAD + "set -eu\n\n   \n" + run,
+            _PINNED_HEAD + "  set -euo pipefail\n" + run,
+            _PINNED_HEAD + "# the owner's step: \"a\" $(b) `c` <<EOF \\\n" + run + "  # done \\\n",
+            _PINNED_HEAD + "# pin: /repo/b.sh sha256=" + _PIN_HASH + "\n" + run + "\tbash /repo/b.sh\n",
+        ]
+        for plan in plans:
+            for mode, decision in (("default", "ask"), ("bypassPermissions", "deny")):
+                with self.subTest(plan=plan[len(_PINNED_HEAD) - len(_PIN_LINE):], mode=mode):
+                    result = _pinned(plan, mode=mode)
+                    reason = result["reason"]
+                    self.assertEqual(result["decision"], decision)
+                    self.assertIn("APPROVE " + _PLAN_HASH if decision == "deny" else plan, reason)
+                    for fact in ("file /repo/run.sh |", _PIN_HASH, "git@github.com:o/r.git",
+                                 "origin/main at " + "c" * 40, "2026-11-17T10:00:00+00:00"):
+                        self.assertIn(fact, reason)
+
+    def test_pinned_run_whose_facts_disagree_is_denied_naming_the_step(self):
+        rows = [
+            ({"error": "unreadable", "detail": "No such file"}, "fix the path"),
+            ({"error": "git", "detail": "no refs/remotes/origin/HEAD"}, "fix the repository"),
+            (None, "fix the repository"),
+            (dict(_PIN_FACTS, tree_blob="d" * 40), "merged on the default branch"),
+            (dict(_PIN_FACTS, tree_blob=None, tree_mode=None), "merged on the default branch"),
+            (dict(_PIN_FACTS, tree_mode="120000"), "merged on the default branch"),
+            (dict(_PIN_FACTS, sha256="e" * 64), "rewrite the pin line"),
+        ]
+        for facts, step in rows:
+            with self.subTest(facts=facts):
+                result = _pinned(_PINNED_PLAN, facts)
+                self.assertEqual(result["decision"], "deny")
+                self.assertIn(step, result["reason"])
+
+    def test_pinned_plan_holding_a_line_outside_the_allowed_kinds_is_denied_naming_it(self):
+        # Single lines before the run line, then the forms of review-recheck.md N1, N2 and its "inside a
+        # construct" list, which bash reads as data or runs inside a construct (r: the run line).
+        c, r = "ssh host ", "bash /repo/run.sh"
+        forms = [[line, r] for line in [
+            "X=1", "cd /tmp", "f() { true; }", "if true; then true; fi", "echo a | tee /tmp/o", "true && true",
+            "echo 'a'", "cat <<EOF", "echo a \\", "echo a # c \\", "echo \\\\", "source /repo/run.sh",
+            ". /repo/run.sh", "sh /repo/run.sh", "zsh /repo/run.sh", "exec bash /repo/run.sh", "bash /other.sh",
+            "bash repo/run.sh", "bash -x /repo/run.sh", "set -x", "set -e; rm -rf /x", "BASH_ENV=/tmp/e " + r,
+        ] + [r + tail for tail in (
+            " $X", ' "a"', " 'a'", " $(date)", " `date`", " > /tmp/o", " && true", "; true", " | tee /tmp/o", " &",
+            " =x", " a*", " {a,b}", " ~/x", " a\\ b", " # c", " (x)",
+        )]] + [
+            [c + "a\\ #'", r, "'"], [c + "a\\\t#'", r, "'"], [c + "true\\;#'", r, "'"], [c + "a\\&#'", r, "'"],
+            [c + "a\\|#'", r, "'"], [c + "\\(#'", r, "'"], [c + "$(echo a)#'", r, "'"], [c + "a$((1))#'", r, "'"],
+            [c + "a\\", "#'", r, "'"], [c + "${x:-true #}'", r, "'"], [c + "${x/ #/}'", r, "'"],
+            [c + "${x:- #'", r, "'}"], [c + "a\\ # x \\", r], [c + "$(echo a)# x \\", r], [c + "a\\", "# x \\", r],
+            ["[[ $q =~ x\\|#'", r, "' ]] ; " + c + "done"],
+            [": $$'\\'", c + "'", r, "'"], ['x="$(echo "it\'s")"', c + "'", r, "'"],
+            ['x="$(echo \'say "\')"', c + "'", r, "'"], ['x="`echo "it\'s"`"', c + "'", r, "'"],
+            ["x=`# it's`", c + "'", r, "'"], ['x="${y#\'"\'}"', c + "'", r, "'"], [c + '"${y#\'"', r, "'}\""],
+            ["a=(", r, ")", c + '"${a[@]}"'], ["f() {", r, "}", c + '"$(declare -f f)"'],
+            [c + '"$(tail -1 "$0")"', "exit 0", r],
+            ["echo x |", r], ["true &&", r], ["false ||", r], ["x=`", r, "`"], ["x=$(", r, ")"], [c + "$(", r, ")"],
+            ["{", r, "}"], ["(", r, ")"], ["for x in 1; do", r, "done"], ["case $q in", "*)", r, ";;", "esac"],
+            ["if false; then", r, "fi"],
+        ]
+        for form in forms:
+            with self.subTest(form=form):
+                result = _pinned(_PINNED_HEAD + "\n".join(form) + "\n")
+                self.assertEqual(result["decision"], "deny")
+                self.assertIn("plan line 9: a pinned plan holds only comments", result["reason"])
+                self.assertIn("logic belongs in the pinned file", result["reason"])
+        result = _pinned(_PINNED_HEAD + r + "\nrm -rf /x\n")
+        self.assertEqual((result["decision"], result["reason"][:12]), ("deny", "plan line 10"))
+
+    def test_pinned_plan_with_a_pin_problem_or_a_hidden_line_break_is_denied_naming_it(self):
+        run = "bash /repo/run.sh\n"
+        rows = [
+            (_PINNED_HEAD + "# a plan with no run line\n", "runs none"),
+            (_PINNED_HEAD + "# pin: /repo/b.sh sha256=" + _PIN_HASH + "\n" + run, "/repo/b.sh is pinned and never run"),
+            (_PINNED_HEAD + _PIN_LINE + run, "pinned more than once"),
+        ] + [(_PINNED_HEAD + "# x" + ch + "true\n" + run, "save it as plain LF-separated") for ch in (
+            "\r", "\f", "\v", "\x00", "\x1c", "\x1d", "\x1e", "�", " ", " ", "\x85",
+        )]
+        for plan, why in rows:
+            with self.subTest(plan=plan[len(_PINNED_HEAD):]):
+                result = _pinned(plan)
+                self.assertEqual(result["decision"], "deny")
+                self.assertIn(why, result["reason"])
+
+    def test_approved_pinned_plan_runs_only_while_its_facts_still_match(self):
+        rows = [(_PIN_FACTS, "allow"), (dict(_PIN_FACTS, sha256="e" * 64), "deny"),
+                (dict(_PIN_FACTS, tree_blob="d" * 40), "deny"), (None, "deny")]
+        for facts, decision in rows:
+            with self.subTest(facts=facts):
+                self.assertEqual(_pinned(_PINNED_PLAN, facts, approved=True)["decision"], decision)
+
+    def test_facts_name_the_real_path_a_symlinked_pin_runs(self):
+        result = _pinned(_PINNED_PLAN, dict(_PIN_FACTS, real_path="/other/run.sh"))
+        self.assertIn("file /repo/run.sh (runs /other/run.sh) |", result["reason"])
+
+    def test_refusals_of_a_long_plan_and_a_file_run_name_the_pinned_form(self):
+        for plan in (_PLAN + "true\n" * 40, _PLAN + "bash /repo/run.sh\n"):
+            with self.subTest(lines=plan.count("\n")):
+                self.assertIn("# pin: /<abs path> sha256=<hex>", _pinned(plan)["reason"])
+
+    def test_only_a_plan_that_pins_and_runs_a_file_names_files_to_observe(self):
+        self.assertEqual(
+            [gate_policy.plan_pinned_paths(p) for p in (_PLAN, _PLAN + "bash /repo/run.sh\n", _PINNED_PLAN)],
+            [[], [], ["/repo/run.sh"]],
+        )
 
     def test_line_after_a_comment_is_classed(self):
         self.assertEqual(_destructive("ls # note\nrm -rf /")["decision"], "deny")

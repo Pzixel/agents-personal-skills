@@ -3906,6 +3906,17 @@ _PLAN_HEADER_LIST = " / ".join(h.rstrip(":") for h in _PLAN_HEADERS)
 # One reason for every command that writes a live Secret, whatever program carries the write.
 _SECRET_WRITE_REASON = "the command writes a live Secret: the previous value cannot be restored"
 _PLAN_INDIRECT_RE = re.compile(r"^\s*(?:(?:source|\.|exec|eval)\s|(?:bash|sh|zsh)\s+\S)")
+# A plan line running a file merged on the default branch: exactly `bash /<path> [literal words]`,
+# the path pinned by `# pin: /<path> sha256=<hex>`; the word class of the plan marker's path, and no
+# argument starting with `=` (zsh expands `=word`).
+_PIN_WORD = r"[A-Za-z0-9_./:=,@%+-]+"
+_PINNED_RUN_RE = re.compile(r"^[ \t]*bash[ \t]+(/" + _PIN_WORD + r")(?:[ \t]+(?!=)" + _PIN_WORD + r")*[ \t]*$")
+_STRICT_MODES = frozenset({"set -e", "set -eu", "set -euo pipefail"})
+_PIN_RE = re.compile(r"^[ \t]*#[ \t]*pin:[ \t]+(/" + _PIN_WORD + r")[ \t]+sha256=([0-9a-fA-F]{64})[ \t]*$")
+# Line boundaries str.splitlines() sees and the shell does not, and bytes the hook's decode hides.
+_SHELL_UNSEEN_RE = re.compile(r"[\r\v\f\x1c\x1d\x1e\x85\u2028\u2029\x00\ufffd]")
+_PINNED_FORM = ("run a file merged on the default branch by the exact line `bash /<abs path> [plain words]`"
+                " with a line `# pin: /<abs path> sha256=<hex>`")
 _SEGMENT_PUNCT = frozenset(";&|()\n`{}")
 _HEREDOC_RE = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
 # The destructive reading: any delimiter word the shell takes (``<<\SQL``, ``<<'END-SQL'``, ``<<'1'``);
@@ -5700,7 +5711,7 @@ _DECISION = {"ours": "allow", "approval": "ask", "impossible": "deny", "privileg
 _SEVERITY = {"ours": 1, "approval": 2, "impossible": 3, "privileged": 3}
 
 
-def _plan_decision(path, marker_hash, agent_type, plan_text, plan_hash, cfg):
+def _plan_decision(path, marker_hash, agent_type, plan_text, plan_hash, cfg, pin_facts=None):
     def deny(reason):
         return {"decision": "deny", "class": "approval", "reason": reason}
 
@@ -5725,15 +5736,95 @@ def _plan_decision(path, marker_hash, agent_type, plan_text, plan_hash, cfg):
     max_lines, max_bytes = int(cfg["plan_max_lines"]), int(cfg["plan_max_bytes"])
     if len(lines) > max_lines or len(plan_text.encode("utf-8")) > max_bytes:
         return deny(
-            "plan is over %d lines or %d bytes: split the plan" % (max_lines, max_bytes)
+            "plan is over %d lines or %d bytes: split the plan, or %s" % (max_lines, max_bytes, _PINNED_FORM)
         )
-    for number, line in enumerate(lines, 1):
-        if _PLAN_INDIRECT_RE.match(line):
-            return deny(
-                "plan line %d runs another file: inline it, the owner approves only what is shown" % number
-            )
+    pins = _plan_pins(plan_text)
+    if pins:
+        refusal, facts = _pinned_plan(plan_text, lines, pins, pin_facts or {})
+        if refusal:
+            return deny(refusal)
+    else:
+        facts = []
+        for number, line in enumerate(lines, 1):
+            if _PLAN_INDIRECT_RE.match(line):
+                return deny(
+                    "plan line %d runs another file: inline it, or %s; the owner approves only what is shown"
+                    % (number, _PINNED_FORM)
+                )
     summary = "Destructive plan " + path + " | " + " | ".join(headers[h] for h in _PLAN_HEADERS)
-    return {"decision": "ask", "class": "approval", "reason": summary + "\n\n" + plan_text}
+    shown = "".join("Pinned run: " + f + "\n" for f in facts)
+    return {"decision": "ask", "class": "approval", "reason": summary + "\n\n" + shown + plan_text,
+            "facts": shown}
+
+
+def _plan_pins(plan_text):
+    """{path: lowercase sha256} of the pin lines; None for a path pinned more than once."""
+    pins = {}
+    for m in filter(None, map(_PIN_RE.match, (plan_text or "").split("\n"))):
+        pins[m.group(1)] = None if m.group(1) in pins else m.group(2).lower()
+    return pins
+
+
+def plan_pinned_paths(plan_text):
+    """Paths a plan pins once and runs by the strict line: the files the hook observes.
+    Empty for a plan without a pin, so such a plan costs no git call."""
+    pins = _plan_pins(plan_text)
+    runs = {m.group(1) for m in map(_PINNED_RUN_RE.match, (plan_text or "").split("\n")) if m}
+    return sorted(p for p in runs if pins.get(p))
+
+
+def _pinned_plan(plan_text, lines, pins, pin_facts):
+    """(refusal, None) or (None, facts lines) for a plan holding a pin line. Such a plan holds
+    only blank lines, comments, a strict-mode line and runs of pinned paths, so no line can
+    open a quote, a continuation, a heredoc or a construct and each run line is a fresh command."""
+    if _SHELL_UNSEEN_RE.search(plan_text):
+        return ("a plan with a pin line holds CR, VT, FF, NUL, U+FFFD or another line break the shell"
+                " does not see: save it as plain LF-separated UTF-8 text", None)
+    twice = sorted(p for p, pin in pins.items() if pin is None)
+    if twice:
+        return "%s is pinned more than once: keep one `# pin:` line per file" % twice[0], None
+    facts, ran = [], set()
+    for number, line in enumerate(lines, 1):
+        bare = line.strip(" \t")
+        if not bare or bare.startswith("#") or bare in _STRICT_MODES:
+            continue
+        run = _PINNED_RUN_RE.match(line)
+        if not run or run.group(1) not in pins:
+            return ("plan line %d: a pinned plan holds only comments, a strict-mode line (%s) and pinned run"
+                    " lines `bash /<abs path> [plain words]`; logic belongs in the pinned file"
+                    % (number, ", ".join(sorted(_STRICT_MODES))), None)
+        refusal, fact = _pin_verdict(run.group(1), pins[run.group(1)], pin_facts.get(run.group(1)))
+        if refusal:
+            return "plan line %d: %s" % (number, refusal), None
+        facts.append(fact)
+        ran.add(run.group(1))
+    if not ran:
+        return "the plan pins a file and runs none: add its line `bash /<abs path> [plain words]`", None
+    unrun = sorted(set(pins) - ran)
+    if unrun:
+        return "%s is pinned and never run: run it or remove its pin line" % unrun[0], None
+    return None, facts
+
+
+def _pin_verdict(path, pin, facts):
+    """(refusal, None) or (None, facts line) for one pinned run; ``facts`` are pin_read's values."""
+    facts = facts or {"error": "git", "detail": "not observed"}
+    if facts.get("error") == "unreadable":
+        return ("pinned file %s cannot be read as a regular file within the size cap (%s): fix the path in the"
+                " pin and run lines" % (path, facts["detail"]), None)
+    if facts.get("error"):
+        return ("git could not read the default branch for %s (%s): fix the repository (`git remote set-head"
+                " origin --auto`) or retry" % (path, facts["detail"]), None)
+    if facts["tree_mode"] not in ("100644", "100755") or facts["tree_blob"] != facts["file_blob"]:
+        return ("pinned file %s differs from its version on the default branch %s at %s: the file must be"
+                " tracked and merged on the default branch of its repository; fetch if it was merged after"
+                " that tip" % (path, facts["branch"], facts["tip"][:12]), None)
+    if facts["sha256"] != pin:
+        return ("pin for %s says sha256=%s, the file has %s: rewrite the pin line" % (path, pin, facts["sha256"]),
+                None)
+    real = "" if facts["real_path"] == path else " (runs " + facts["real_path"] + ")"
+    return None, "file %s%s | sha256 %s | repository %s | default branch %s at %s, committed %s" % (
+        path, real, pin, facts["origin_url"], facts["branch"], facts["tip"], facts["tip_date"])
 
 
 _APPROVALS_READERS = frozenset({"cat", "ls", "head", "tail", "stat", "test", "wc", "file", "grep", "rg"})
@@ -5810,7 +5901,7 @@ def destructive_decision(*args, **kwargs):
 
 def _destructive_decision(
     command, agent_type, plan_text, plan_hash, params=None, permission_mode="",
-    sql_file_texts=None, approved=False, cwd=None,
+    sql_file_texts=None, approved=False, cwd=None, pin_facts=None,
 ):
     """Class and permission decision for one Bash command.
 
@@ -5824,7 +5915,9 @@ def _destructive_decision(
     ``approved`` says whether the owner's prompt approved this plan hash in
     this session (plan-approval.py); an approved valid plan is allowed once.
     ``cwd`` is the hook input's working directory; relative operands resolve
-    against it and the cd's the command runs. A malformed params value raises.
+    against it and the cd's the command runs. ``pin_facts`` maps each path of
+    ``plan_pinned_paths(plan_text)`` to ``pin_read.observe``'s facts for it.
+    A malformed params value raises.
     Returns {"decision": allow|ask|deny, "class", "reason"}.
     """
     cfg = _decision_cfg(params, sql_file_texts, command or "")
@@ -5837,14 +5930,14 @@ def _destructive_decision(
         return dict(_PLAN_FORM_DENY, reason=_SUBAGENT_PLAN_DENY) if agent_type else dict(_PLAN_FORM_DENY)
     marker = plan_marker(command)
     if marker:
-        result = _plan_decision(marker[0], marker[1], agent_type, plan_text, plan_hash, cfg)
+        result = _plan_decision(marker[0], marker[1], agent_type, plan_text, plan_hash, cfg, pin_facts)
         if result["decision"] == "ask" and approved:
             return {"decision": "allow", "class": "approval",
                     "reason": "plan " + marker[1][:12] + " approved by owner"}
         if result["decision"] == "ask" and permission_mode == "bypassPermissions" and not cfg["ask_in_bypass"]:
             return {"decision": "deny", "class": "approval", "reason": (
                 "this session cannot prompt; give the owner the plan path " + marker[0] + " to read and ask them to reply "
-                "with the line: APPROVE " + marker[1] + "\nthen run the same command again; the approval is spent when this"
+                "with the line: APPROVE " + marker[1] + "\n" + result["facts"] + "then run the same command again; the approval is spent when this"
                 " gate allows, before the other gates answer, so a background run carries its # OUTCOMES: line first"
             )}
     else:

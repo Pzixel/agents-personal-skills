@@ -58,6 +58,15 @@ def read_plan(path):
     return data.decode("utf-8", "replace"), hashlib.sha256(data).hexdigest()
 
 
+def observe_pins(gate_policy, plan_text):
+    """Facts for the files the plan pins and runs (tools/pin_read.py); no pin, no git call."""
+    paths = gate_policy.plan_pinned_paths(plan_text)
+    if not paths:
+        return {}
+    import pin_read
+    return pin_read.observe(paths)
+
+
 def read_sql_file(path, limit):
     """Text of a SQL file a client will read; None when unreadable or over limit."""
     try:
@@ -90,6 +99,7 @@ def main():
     agent_type = str(payload.get("agent_type") or "")
     marker = gate_policy.plan_marker(command)
     plan_text, plan_hash = read_plan(marker[0]) if marker else (None, None)
+    pin_facts = observe_pins(gate_policy, plan_text)
     session = str(payload.get("session_id") or "")
     approval = None
     if marker and gate_policy.session_id_ok(session):
@@ -122,7 +132,7 @@ def main():
     sql_file_texts = {p: read_sql_file(os.path.join(cwd, os.path.expanduser(p)), limit) for p in paths}
     result = gate_policy.destructive_decision(
         command, agent_type, plan_text, plan_hash, params,
-        str(payload.get("permission_mode") or ""), sql_file_texts, approved, cwd,
+        str(payload.get("permission_mode") or ""), sql_file_texts, approved, cwd, pin_facts,
     )
     if approved and result["decision"] == "allow":
         os.remove(approval)
