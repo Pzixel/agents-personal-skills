@@ -57,6 +57,23 @@ class AskLiveWorkDecisionTest(unittest.TestCase):
         entries = [*AGENT, at(3, dialog("m1", "d1")), at(4, result("d1", REFUSED, error=True)), notified(60, "ag1")]
         self.assertIsNone(live(entries))
 
+    def test_send_message_refused_by_a_hook_leaves_the_agent_closed(self):
+        refused = ("PreToolUse:SendMessage hook error: [python3 plan-simplify-gate.py]: Refused by plan-simplify-gate:"
+                   " the plan has not been simplified")
+        entries = [*AGENT, notified(3, "ag1"), at(4, call("m1", "s1", "SendMessage", {"to": "ag1", "message": "go on"})),
+                   at(5, result("s1", refused, error=True))]
+        self.assertIsNone(live(entries))
+
+    def test_monitor_event_after_a_restart_notice_keeps_it_live(self):
+        restart = at(3, {"type": "user", "isSidechain": False, "message": {"role": "user", "content":
+                         "<task-notification>\n<task-id>bx9</task-id>\n<task-id>mo1</task-id>\n<status>stopped</status>\n"
+                         "<summary>2 background tasks didn't finish before the previous session ended.</summary>\n"
+                         "</task-notification>"}})
+        event = at(4, {"type": "user", "isSidechain": False, "message": {"role": "user", "content":
+                       "<task-notification>\n<task-id>mo1</task-id>\n<summary>Monitor event: \"run\"</summary>\n"
+                       "<event>step=publish wall=2s</event>\n</task-notification>"}})
+        self.assertTrue((live([*MONITOR, restart, event]) or "").startswith(LIVE_WORK))
+
     def test_subagent_payload_and_unread_transcript_pass(self):
         self.assertIsNone(live(AGENT, agent_id="ab12cd34", agent_type="orch:builder"))
         self.assertIsNone(gate_policy.ask_live_work_decision(payload(), None))
@@ -74,6 +91,22 @@ class PinAfterLiveWorkChainTest(unittest.TestCase):
     def test_dialog_after_the_turn_end_and_the_notification_passes_both_rules(self):
         entries = [*self.PUSHED, turn_end(11), notified(70, "ag1")]
         self.assertEqual((live(entries), self.pin_rule(entries)), (None, None))
+
+    def test_turn_end_alone_re_invokes(self):
+        self.assertIsNone(self.pin_rule([*self.PUSHED, turn_end(11)]))
+
+    def test_delivered_notice_alone_re_invokes(self):
+        self.assertIsNone(self.pin_rule([*self.PUSHED, notified(70, "ag1")]))
+
+    def test_notice_stamped_before_the_pin_but_written_after_the_push_re_invokes(self):
+        queued = at(8, {"type": "attachment", "attachment": {"type": "queued_command", "prompt":
+                        "<task-notification>\n<task-id>ag1</task-id>\n<status>completed</status>\n</task-notification>"}})
+        for name, entries in (("queued", [*self.PUSHED, queued]), ("user notice", [*self.PUSHED, notified(8, "ag1")])):
+            with self.subTest(name):
+                self.assertIsNone(self.pin_rule(entries))
+
+    def test_notice_before_a_push_not_yet_on_disk_is_no_re_invocation(self):
+        self.assertEqual(self.pin_rule([*AGENT, notified(5, "ag1")]), gate_policy._ASK_AFTER_PIN_REASON)
 
     def test_notification_delivered_from_the_queue_re_invokes(self):
         queued = at(70, {"type": "attachment", "attachment": {"type": "queued_command", "prompt":
@@ -109,14 +142,9 @@ class HookOrderTest(unittest.TestCase):
         reason = gate_policy._ASK_LIVE_WORK_REASON.format(count=1, ids="ag1")
         self.assertEqual(self.run_hook(AGENT, pinned=True), (2, reason + "\n"))
 
-    def test_unreadable_transcript_fails_open(self):
-        with tempfile.TemporaryDirectory() as home:
-            path = os.path.join(home, SID + ".jsonl")
-            os.mkdir(path)  # a directory where the transcript should be: unreadable
-            out = subprocess.run([sys.executable, str(HOOK)], capture_output=True, text=True, timeout=20,
-                                 input=json.dumps(dict(payload(source="existing: n/a"), transcript_path=path)),
-                                 env=dict(os.environ, HOME=home, ASK_SPEND_JUDGE="1"))
-        self.assertEqual((out.returncode, out.stderr), (0, ""))
+    def test_scan_error_fails_open(self):
+        unscannable = at(3, call("m1", "x1", "Bash", "a tool input that is not an object"))
+        self.assertEqual(self.run_hook([*AGENT, unscannable], pinned=False), (0, ""))
 
 
 if __name__ == "__main__":

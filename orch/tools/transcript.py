@@ -174,8 +174,10 @@ def background_watch_scan(entries, marker):
     tasks: id -> {launch, command, closed}; monitors: id -> {armed, ended};
     crons: indexes of CronCreate calls; turn_start: first index of the turn;
     agents: async Agent id -> {launch, closed, call} (call: the Agent tool_use id; closed by its notification or a
-    TaskStop or an `agents_killed` record, re-opened by a SendMessage to it whose result is not a failure);
-    a notification closes every task id it names and is read from text blocks and from `queued_command`
+    TaskStop or an `agents_killed` record, re-opened by a SendMessage to it whose result is neither `is_error`
+    (a hook refusal, the owner's rejection) nor `{"success": false}`);
+    a notification closes every task id it names (a Monitor ended by one naming several ids, a restart notice,
+    is live again at its own later event) and is read from text blocks and from `queued_command`
     attachments; an `api-request-blob` entry re-logs earlier messages, so its notice already applied is skipped
     and a tool result applies once; agent_calls: Agent calls with no
     tool_result yet; cron_jobs: one-shot job id -> {created, closed, prompt, fired} (closed by
@@ -199,20 +201,30 @@ def background_watch_scan(entries, marker):
     sends = {}  # SendMessage tool_use id -> the agent it addresses, until its result
     applied = set()  # notification bodies already applied
     results = set()  # tool_use ids whose result was applied
+    restarted = set()  # Monitors ended by a notice naming several ids (a restart notice), until their own event
 
     def notices(text, index, blob):
         for body in _NOTIFICATION_RE.findall(text):
             if blob and body in applied:
                 continue
             applied.add(body)
-            for task in _TASK_ID_RE.findall(body):
+            ids = _TASK_ID_RE.findall(body)
+            ends = "<status>" in body or "[Monitor expired" in body
+            for task in ids:
                 if task in state["agents"]:
                     state["agents"][task]["closed"] = True
                 if task in state["tasks"]:
                     state["tasks"][task]["closed"] = True
                 monitor = state["monitors"].get(task)
-                if monitor and monitor["ended"] is None and ("<status>" in body or "[Monitor expired" in body):
+                if not monitor:
+                    continue
+                if monitor["ended"] is None and ends:
                     monitor["ended"] = index
+                    if len(ids) > 1:
+                        restarted.add(task)
+                elif monitor["ended"] is not None and not ends and task in restarted:
+                    monitor["ended"] = None  # its own event after a restart notice: still running
+                    restarted.discard(task)
 
     turn_start = 0
     for index, (_, entry) in enumerate(entries):
@@ -288,7 +300,7 @@ def background_watch_scan(entries, marker):
                 results.add(block.get("tool_use_id"))
                 if block.get("tool_use_id") in sends:
                     target = sends.pop(block.get("tool_use_id"))
-                    if not _send_failed(result_text(block)):
+                    if not block.get("is_error") and not _send_failed(result_text(block)):
                         state["agents"][target]["closed"] = False
                     continue
                 if block.get("tool_use_id") in state["agent_calls"]:

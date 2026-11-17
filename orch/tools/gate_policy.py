@@ -3401,11 +3401,13 @@ def live_mechanisms(facts):
 
 
 _ASK_LIVE_WORK_REASON = (
-    "Refused by ask-existing-gate (live-work rule): {count} of this session's agents, background tasks or Monitors"
-    " ({ids}) are still running. The dialog is modal: while it is open the session processes none of their"
-    " results, so they would wait for the owner's answer. Unless this question is already pinned, raise it with"
-    " one PushNotification whose message starts with `QUESTION:` (it is pinned to the status line), go on with"
-    " the work that does not need the answer, and open the dialog when nothing of the session is running."
+    "Refused by ask-existing-gate (live-work rule): agents, background tasks or Monitors of this session still"
+    " live ({count}): {ids}. The dialog is modal: while it is open the session processes none of their results,"
+    " so they would wait for the owner's answer. Unless this question is already pinned, raise it with one"
+    " PushNotification whose message starts with `QUESTION:` (it is pinned to the status line). Then, with work"
+    " left that does not need the answer, do it; with none, end the turn: the notification of a live item wakes"
+    " the session. Open the dialog when nothing is live. Do not stop a live item to open the dialog; stop with"
+    " TaskStop only one that has finished or will never notify."
 )
 
 
@@ -5913,7 +5915,10 @@ def ask_after_pin_decision(payload, pin_written, entries_from_end):
     AskUserQuestion and PushNotification, or a result the owner dismissed or rejected (``_OWNER_REJECTED``,
     with or without a comment; read from the result alone), or a re-invocation of the session: a
     ``system``/``turn_duration`` entry, a ``user`` entry with a text block holding a ``<task-notification>``, or a
-    ``queued_command`` attachment whose prompt holds one (a ``queue-operation`` is not delivered yet). An
+    ``queued_command`` attachment whose prompt holds one (a ``queue-operation`` is not delivered yet). A delivered
+    notice carries its enqueue time, so a re-invocation stamped before the pin counts when it lies in the file
+    after an entry stamped at or after the pin (the push's result, written after the pin), and is not itself a
+    cutoff. An
     answered dialog clears the pin file. A dialog refused by a hook or failed
     is not work, nor a result whose call lies before the pin (launched before the push). Sidechain entries and
     entries without a timestamp are skipped. No pin, a subagent payload, a malformed input and a read that ends before
@@ -5925,16 +5930,22 @@ def ask_after_pin_decision(payload, pin_written, entries_from_end):
     tool_input = payload.get("tool_input")
     if not isinstance(tool_input, dict) or source_clauses(tool_input).get("blocked"):
         return None
+    reinvoked_later = False  # a re-invocation stamped before the pin lies later in the file than this point
     for entry in entries_from_end:
         if not isinstance(entry, dict) or entry.get("isSidechain"):
             continue
         written = transcript.epoch(entry.get("timestamp"))
         if written is None:
             continue
+        if _reinvoked(entry):
+            if written >= pin_written:
+                return None
+            reinvoked_later = True
+            continue
+        if reinvoked_later and written >= pin_written:
+            return None
         if written < pin_written:
             return _ASK_AFTER_PIN_REASON
-        if _reinvoked(entry):
-            return None
         for block in transcript.blocks_of(entry):
             kind = block.get("type")
             if kind == "tool_result" and block.get("is_error") and (
