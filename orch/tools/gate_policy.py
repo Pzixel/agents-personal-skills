@@ -4063,21 +4063,43 @@ def _lexable(command):
 
 
 def _lex_scan(command):
-    """(``_lexable`` text before closing, the quote left open or None)."""
+    """(``_lexable`` text before closing, the quote left open or None).
+
+    A ``$( )`` inside double quotes starts a fresh quote context, as in the
+    shell; its text is escaped for the double-quoted word around it, so the
+    lexer keeps that word whole and the substitution's text is unchanged."""
     out, quote, i, n = [], None, 0, len(command)
+    outer = []  # per open ``$( )`` within double quotes: [quote around it, open parens]
+
+    def emit(text):
+        out.append(text.replace("\\", "\\\\").replace('"', '\\"') if outer else text)
+
     while i < n:
         ch = command[i]
-        if quote is None and ch == "#" and (i == 0 or command[i - 1] in " \t\r\n;&|()`{}"):
+        # A word starts after a metacharacter: ``${#x}`` or ``a{#`` is no comment.
+        if quote is None and ch == "#" and (i == 0 or command[i - 1] in " \t\r\n;&|()`"):
             end = command.find("\n", i)
             end = n if end < 0 else end
             out.append(re.sub(r"[\"'\\]", "", command[i:end]))
             i = end
             continue
+        if quote == '"' and command.startswith("$(", i):
+            outer.append([quote, 1])
+            quote, i = None, i + 2
+            out.append("$(")
+            continue
+        if outer and quote is None and ch in "()":
+            outer[-1][1] += 1 if ch == "(" else -1
+            if not outer[-1][1]:
+                quote = outer.pop()[0]
+            out.append(ch)
+            i += 1
+            continue
         if quote is None and command.startswith("$'", i):
             quote, ch, i = "$", "'", i + 1
         elif ch == "\\" and quote != "'":
             if i + 1 < n:
-                out.append("'\"'\"'" if quote == "$" and command[i + 1] == "'" else command[i:i + 2])
+                emit("'\"'\"'" if quote == "$" and command[i + 1] == "'" else command[i:i + 2])
             i += 2
             continue
         elif quote == "$":
@@ -4086,18 +4108,30 @@ def _lex_scan(command):
             quote = None
         elif quote is None and ch in "'\"":
             quote = ch
-        out.append(ch)
+        emit(ch)
         i += 1
-    return "".join(out), quote
+    return "".join(out), quote if not outer else outer[0][0]
 
 
-def _segments_meta(command, shell_reading=False):
+def _segments_meta(command, shell_reading=False, lexable=False):
     """[tokens, separators before, separators after] per shell segment; quoted
     text stays one token, so a quoted word never becomes a command head.
     Backticks split like ``;``. ``shell_reading`` (the destructive decision
     only) lexes the text as the shell reads it (``_lexable``): comment quotes
-    would otherwise swallow the commands between them or fail the lexer."""
-    if shell_reading:
+    would otherwise swallow the commands between them or fail the lexer.
+    ``lexable``: the text is already ``_lexable`` output (not idempotent: the
+    text of a ``$( )`` within double quotes is escaped once); a rewrite after
+    it can still leave a quote open (``_expand_brace_lists`` expands a brace
+    escaped inside quotes), and that text is scanned again."""
+    tokens = None
+    if lexable:
+        try:
+            tokens = _lex(command)
+        except ValueError:
+            shell_reading = True
+    if tokens is not None:
+        pass
+    elif shell_reading:
         tokens = _lex(_lexable(command))
     else:
         try:
@@ -5140,7 +5174,7 @@ def _bind(tokens, ctx, before, after):
 
 def _walk(script, cfg, ctx):
     hits, function, shell = [], None, cfg.get("shell_reading")
-    for tokens, before, after in _segments_meta(script, shell):
+    for tokens, before, after in _segments_meta(script, shell, lexable=shell):
         # The destructive reading: what the previous command wrote into a pipe
         # into this one; a group, subshell or loop before the pipe: not visible.
         piped = (ctx.pop("pipe_in", None) or (None, None)) if shell and before.split()[-1:] in (["|"], ["|&"]) else None
@@ -5194,7 +5228,7 @@ def _walk(script, cfg, ctx):
         for m in _INNER_SUBST_RE.finditer(" ".join(tokens)):
             hits.extend(_classify_text(
                 m.group(1) or m.group(2) or "", cfg, ctx["depth"] + 1, ctx["dir"],
-                dict(ctx["vars"]), ctx["cd_seen"],
+                dict(ctx["vars"]), ctx["cd_seen"], guess=True,
             ))
         if _bind(tokens, ctx, before, after):
             continue
@@ -5242,12 +5276,11 @@ _REWRITTEN_HIT = ("approval", "SQL from a file this command also names elsewhere
                   " known; write the file in one Bash call and run the client in the next")
 _UNREAD_STDIN_HIT = ("approval", "SQL on the client's stdin is not visible; pass the SQL as a literal heredoc attached to"
                      " the client, or from a file written in an earlier Bash call")
-# A quote left open as the hook reads the text: the shell either rejects the
-# text or pairs its quotes otherwise (a quote inside ``$( )`` within double
-# quotes opens a new context, which the lexer does not model).
-_UNPAIRED_HIT = ("approval", "the hook cannot pair the quotes of this command (one left open, or a quote inside $( )"
-                 " within double quotes), so what it runs is not known; move the quoted part out of the $( ) or close"
-                 " the quote")
+# A quote left open as the hook reads the command text (``_lex_scan``): the
+# shell either rejects the text or pairs its quotes by a construct the scan
+# does not model, so what follows the quote is not known.
+_UNPAIRED_HIT = ("approval", "the hook cannot pair the quotes of this command, so what it runs is not known; put the"
+                 " quoted text in a file or a quoted heredoc")
 # Hits that name their own remedy: no plan-script suffix (``_command_decision``).
 _OWN_REMEDY = frozenset({_REWRITTEN_HIT[1], _UNREAD_STDIN_HIT[1], _UNPAIRED_HIT[1]})
 
@@ -5329,9 +5362,15 @@ def _expand_brace_lists(script):
     return script
 
 
-def _classify_text(command, cfg, depth=0, dir_="", variables=None, cd_seen=False):
+def _classify_text(command, cfg, depth=0, dir_="", variables=None, cd_seen=False, guess=False):
     """``dir_`` is the working directory the text starts in (see ``_new_ctx``);
     ``cd_seen``: a cd already ran, so relative prefixes no longer count.
+    ``guess``: the text is a guess at what a shell runs, not a text known to
+    be shell syntax: a substitution cut out by ``_INNER_SUBST_RE`` (which
+    pairs no quotes, so a backtick inside quotes cuts mid-word) or a heredoc
+    body ``_heredoc_hits`` gives to a shell because some segment of its
+    opening line is one. A quote such a text leaves open does not ask; the
+    quotes of the text it comes from are judged where that text is read.
     ``cfg["shell_reading"]`` (the destructive decision) reads the text as the
     shell does (``_lexable``, ``_shell_heredocs``) and classes what each
     command reads on stdin (``_stdin_hits``) on top of the 3814e3e reading."""
@@ -5356,14 +5395,14 @@ def _classify_text(command, cfg, depth=0, dir_="", variables=None, cd_seen=False
     script = _MKTEMP_RE.sub(lambda m: m.group(1) + "=" + _temp_prefixes()[0] + "mktemp", script)
     script = _BRACED_VAR_RE.sub(lambda m: "$" + m.group(1) + "\x01", script)
     script = _expand_brace_lists(script)
-    hits = _walk(script, cfg, ctx) + ([_UNPAIRED_HIT] if shell and open_quote else [])
+    hits = _walk(script, cfg, ctx) + ([_UNPAIRED_HIT] if shell and open_quote and not guess else [])
     # Heredoc shells start where the command started unless a cd ran
     # somewhere in it: which cd applies to them is not tracked.
     inner_dir = dir_ if not ctx["cd_seen"] else None
     for index, (line, body, quoted) in enumerate(heredocs):
         if not quoted:
             for m in _INNER_SUBST_RE.finditer(body):
-                hits.extend(_classify_text(m.group(1) or m.group(2) or "", cfg, depth + 1, inner_dir))
+                hits.extend(_classify_text(m.group(1) or m.group(2) or "", cfg, depth + 1, inner_dir, guess=True))
         hits.extend(_heredoc_hits(line, body, cfg, depth, inner_dir))
         if shell and index not in ctx["heredoc_read"]:
             hits.extend(_heredoc_fallback_hits(line, body, cfg, depth, inner_dir))
@@ -5434,9 +5473,9 @@ def _heredoc_hits(line, body, cfg, depth, dir_):
         if program == "kubectl" and "exec" in args or program == "docker" and "exec" in args:
             program = "ssh"
         if program in _SHELLS:
-            return _classify_text(body, cfg, depth + 1, dir_)
+            return _classify_text(body, cfg, depth + 1, dir_, guess=True)
         if program == "ssh":
-            return _classify_text(body, cfg, depth + 1, None, None, True)
+            return _classify_text(body, cfg, depth + 1, None, None, True, guess=True)
         if _INLINE_INTERPRETER_RE.match(program) and _inline_code_hits(program, body):
             return _inline_code_hits(program, body)
         if program in cfg["sql_clients"]:
