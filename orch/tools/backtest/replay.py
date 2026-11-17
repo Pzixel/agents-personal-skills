@@ -7,6 +7,7 @@ usage: python3 replay.py <loop.tsv> <control.jsonl> [variants]
        python3 replay.py merge-gate [days]
        python3 replay.py plan-form <days> --policy <base gate_policy.py> [--labels <risk-labels.tsv>]
             (--policy: gate_policy.py inside a checkout of the base, e.g. a git worktree; a lone copy fails to load)
+       python3 replay.py destructive-diff <days | commands.json> --policy <base gate_policy.py> [--extract <json>]
        python3 replay.py lever [days] [--judge] [--cap N]
        python3 replay.py ask-spend [days] [--judge] [--out <tsv>]   (default 28 days, ask-spend.tsv)
        python3 replay.py ask-spend-pins <pins.jsonl> [k]
@@ -697,6 +698,118 @@ def plan_form(days, base_path, labels=None):
                   "ONLY OFF-FORM" if shapes == ["launch"] else "")
 
 
+def _destructive_commands(source, extract=None):
+    """Distinct Bash commands as [first ts, session, kind, command]: of the last
+    ``source`` days of transcripts, or the rows of a JSON file ``source``; plus
+    the recovered commands of ``extract`` (``{"found": {idx: {"cmd", "ts"}}}``)."""
+    if source.isdigit():
+        seen = {}
+        for ts, sid, kind, _, cmd in _bash_calls(int(source)):
+            if cmd not in seen or ts < seen[cmd][0]:
+                seen[cmd] = [ts, sid, kind]
+    else:
+        with open(source) as fh:
+            seen = {cmd: [ts, sid, kind] for ts, sid, kind, cmd in json.load(fh)}
+    if extract:
+        with open(extract) as fh:
+            for idx, row in json.load(fh)["found"].items():
+                seen.setdefault(row["cmd"], [row.get("ts", "extract"), "log" + idx, "extract"])
+    return [[v[0], v[1], v[2], cmd] for cmd, v in seen.items()]
+
+
+def _hook_sql_texts(policy, command, params):
+    """The SQL file texts the destructive hook passes for ``command`` (cwd unknown:
+    paths as written), read as hooks/deny-destructive.py reads them."""
+    limit = int(params.get("destructive", {}).get("command_max_bytes", 65536))
+    texts = {}
+    for path in policy.sql_file_paths(command, params, None):
+        try:
+            with open(os.path.expanduser(path), "rb") as fh:
+                data = fh.read(limit + 1)
+        except OSError:
+            texts[path] = None
+            continue
+        texts[path] = None if len(data) > limit else data.decode("utf-8", "replace")
+    return texts
+
+
+# Every other gate function that reads a Bash command: the destructive change must leave each one as at the base.
+_OTHER_GATES = {
+    "is_pure_wait": lambda m, c, p: m.is_pure_wait(c),
+    "outcomes_decision bg": lambda m, c, p: m.outcomes_decision(c, True, p),
+    "outcomes_decision fg": lambda m, c, p: m.outcomes_decision(c, False, p),
+    "wait_shows_decision": lambda m, c, p: m.wait_shows_decision(
+        "Bash", {"command": c, "run_in_background": True}, 1794900000, p),
+    "bash_effects": lambda m, c, p: m.bash_effects(c, "/repo/x", None),
+    "builder_events": lambda m, c, p: m.builder_events("Bash", {"command": c}, "/repo/x", None),
+    "executed_text": lambda m, c, p: m.executed_text(c),
+    "landing_target": lambda m, c, p: m.landing_target(c, "/repo/x"),
+    "push_range": lambda m, c, p: m.push_range(c, "/repo/x"),
+    "merge_gate_decision": lambda m, c, p: m.merge_gate_decision(c),
+    "command_identity": lambda m, c, p: m.command_identity(c),
+    "loop_cost_decision": lambda m, c, p: m.loop_cost_decision([], c, 1794900000, "", p),
+    "kubectl_exec_targets+headroom_adds": lambda m, c, p: [
+        (t, m.headroom_adds(t["inner"], p, t.get("stdin"))) for t in m.kubectl_exec_targets(c, p)],
+    "classify_command": lambda m, c, p: m.classify_command(c, p),
+    "tool_call_class": lambda m, c, p: m.tool_call_class("Bash", c, p),
+    "poll_decision": lambda m, c, p: m.poll_decision(c, False, "", p),
+    "loop_cost_reads_journal": lambda m, c, p: m.loop_cost_reads_journal(c, p),
+    # The shared lexer and heredoc splitter in their default reading.
+    "_shell_segments": lambda m, c, p: m._shell_segments(c),
+    "_split_heredocs": lambda m, c, p: m._split_heredocs(c),
+}
+
+
+def _gist(reason):
+    """A refusal reason without the remedy the class layer appends."""
+    return re.sub(r" \(a read passes.*|: batch it into.*|; if the step.*", "", reason or "", flags=re.S)[:90]
+
+
+def destructive_diff(source, base_path, extract=None):
+    """Replay gate_policy.destructive_decision of this checkout against the base
+    (``base_path``: gate_policy.py of a base export) over stored Bash commands, each
+    side reading the SQL files its own sql_file_paths names, as the hook does. Prints
+    every changed row, the deny/ask -> allow rows, the newly refused rows by rule, and
+    the other gates compared over the same commands."""
+    base, params = _load_base(base_path), g.load_params()
+    rows = _destructive_commands(source, extract)
+    started, changed, errors = time.time(), [], []
+    for i, (ts, sid, kind, cmd) in enumerate(rows):
+        b = base.destructive_decision(cmd, "", None, "", params, "", _hook_sql_texts(base, cmd, params), False, None)
+        try:
+            h = g.destructive_decision(cmd, "", None, "", params, "", _hook_sql_texts(g, cmd, params), False, None)
+        except Exception as exc:  # the hook turns an exception into a deny
+            errors.append((i, repr(exc)[:120]))
+            continue
+        if (b["decision"], b["class"], b["reason"]) != (h["decision"], h["class"], h["reason"]):
+            changed.append((i, b, h, kind, cmd))
+    print("commands", len(rows), "changed", len(changed), "head exceptions", len(errors),
+          "seconds %.0f" % (time.time() - started))
+    for i, e in errors:
+        print("exception", i, e)
+    print("--- every changed row: row | base decision/class -> head decision/class | head reason | command")
+    for i, b, h, kind, cmd in changed:
+        print(i, kind, b["decision"] + "/" + b["class"], "->", h["decision"] + "/" + h["class"], "|",
+              _gist(h["reason"]).replace("\n", " "), "|", repr(cmd[:110]))
+    print("--- deny/ask -> allow")
+    for i, b, h, kind, cmd in changed:
+        if b["decision"] != "allow" and h["decision"] == "allow":
+            print(i, b["decision"] + "/" + b["class"], "|", _gist(b["reason"]), "|", repr(cmd[:300]))
+    print("--- newly refused (base allow): rows by rule | count | rows")
+    groups = collections.defaultdict(list)
+    for i, b, h, kind, cmd in changed:
+        if b["decision"] == "allow" and h["decision"] != "allow":
+            groups[(h["decision"], _gist(h["reason"]))].append(i)
+    for (decision, rule), items in sorted(groups.items(), key=lambda kv: -len(kv[1])):
+        print(decision, "|", rule, "|", len(items), "|", items[:40])
+    print("--- other gates: function | rows that differ from the base | first rows")
+    for name, fn in _OTHER_GATES.items():
+        differ = [i for i, (_, _, _, cmd) in enumerate(rows)
+                  if json.dumps(fn(base, cmd, params), sort_keys=True, default=repr)
+                  != json.dumps(fn(g, cmd, params), sort_keys=True, default=repr)]
+        print(name, "|", len(differ), "|", differ[:10])
+
+
 # Witness stop of CASE-69: (session prefix, stop minute UTC, expected judge answer).
 _LEVER_WITNESS = ("2ed7c202", "2026-11-06T08:21", "true")
 LEVER_JUDGE_CAP = 200
@@ -1030,6 +1143,9 @@ def main():
     if sys.argv[1] == "plan-form":
         labels = sys.argv[sys.argv.index("--labels") + 1] if "--labels" in sys.argv else None
         return plan_form(int(sys.argv[2]), sys.argv[sys.argv.index("--policy") + 1], labels)
+    if sys.argv[1] == "destructive-diff":
+        extract = sys.argv[sys.argv.index("--extract") + 1] if "--extract" in sys.argv else None
+        return destructive_diff(sys.argv[2], sys.argv[sys.argv.index("--policy") + 1], extract)
     if sys.argv[1] == "wrapper-tails":
         return wrapper_tails(int(sys.argv[2]), sys.argv[sys.argv.index("--policy") + 1])
     if sys.argv[1] == "merge-gate":
