@@ -117,8 +117,11 @@ Hooks enforce the gates; an agent obeys a refusal's message and never works arou
   when the reply addresses the owner (a second-person pronoun or verb, "owner", an idiom
   like "пока не скажете" / "let me know", or a "?") or holds a first-person commitment
   ("поправлю", "I'll fix", "follow-up PR"); about half of stops skip it. Mean added time is
-  about 3.4 s per stop (measurement in `ORIGINS.md`), capped by the 12 s judge timeout. The second stop passes
-  without a model call. A judge error, timeout or unparsable verdict passes the reply (fail
+  about 3.4 s per stop (measurement in `ORIGINS.md`), capped by the 25 s judge timeout. A later stop
+  (`stop_hook_active`) judges only the deferral family (deferral, next-step, timed-step), once per turn
+  (counted from the `reply-lint: (later stop)` returns of this turn in the transcript) and not when the
+  verdict finds a hand-off, plus the judge-free `first-cause` rule at most twice per turn; hand-off,
+  completion claim and lever are first-stop only, so a turn holds at most four reply-lint returns. A judge error, timeout or unparsable verdict passes the reply (fail
   open) and is logged in `~/.claude/reply-lint-log.jsonl` as `judge_error`, next to
   `rules` (the rules that fired) and `verdict`; a standing failure (no login, rate limit,
   broken install) fails open on every stop, so a silent check is diagnosed from that field.
