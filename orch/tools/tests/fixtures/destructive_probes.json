@@ -72,15 +72,18 @@
   },
   "F07 group fed by redirect": {
    "cmd": "{ kubectl --context prod-cluster exec -i pg-0 -- psql; } < /tmp/destr-review/q_drop.sql",
-   "group": "hole"
+   "group": "gap",
+   "note": "known gap: the client reads a stdin the group, subshell, function or exec redirect feeds; the whole-text fallback that refused it was measured and removed (decisions/destructive-gate-threat-model-is-agent-mistakes.md)"
   },
   "F08 subshell fed by redirect": {
    "cmd": "( kubectl --context prod-cluster exec -i pg-0 -- psql ) < /tmp/destr-review/q_drop.sql",
-   "group": "hole"
+   "group": "gap",
+   "note": "known gap: the client reads a stdin the group, subshell, function or exec redirect feeds; the whole-text fallback that refused it was measured and removed (decisions/destructive-gate-threat-model-is-agent-mistakes.md)"
   },
   "F09 exec < file then client": {
    "cmd": "exec < /tmp/destr-review/q_drop.sql; kubectl --context prod-cluster exec -i pg-0 -- psql",
-   "group": "hole"
+   "group": "gap",
+   "note": "known gap: the client reads a stdin the group, subshell, function or exec redirect feeds; the whole-text fallback that refused it was measured and removed (decisions/destructive-gate-threat-model-is-agent-mistakes.md)"
   },
   "F14 nested heredoc in sh -c, terminator glued to quote": {
    "cmd": "kubectl --context prod-cluster exec -i pg-0 -- sh -c 'psql <<EOF\nDROP TABLE users;\nEOF'",
@@ -116,7 +119,8 @@
   },
   "F24 function fed by redirect": {
    "cmd": "f() { kubectl --context prod-cluster exec -i pg-0 -- psql; }; f < /tmp/destr-review/q_drop.sql",
-   "group": "hole"
+   "group": "gap",
+   "note": "known gap: the client reads a stdin the group, subshell, function or exec redirect feeds; the whole-text fallback that refused it was measured and removed (decisions/destructive-gate-threat-model-is-agent-mistakes.md)"
   },
   "F27 nested heredoc, 2 statements, terminator glued, SELECT first": {
    "cmd": "kubectl --context prod-cluster exec -i pg-0 -- sh -c 'psql <<EOF\nSELECT 1;\nDROP TABLE users;\nEOF'",
@@ -633,7 +637,8 @@
   "B13 heredoc into a subshell holding the client (fallback)": {
    "cmd": "( kubectl --context prod-cluster exec -i pg-0 -- psql ) <<'SQL'\nDROP TABLE users;\nSQL",
    "group": "boundary",
-   "expect": "deny"
+   "expect": "ask",
+   "reason": "SQL on the client's stdin is not visible; pass the SQL as a literal heredoc attached to the client"
   },
   "B14 heredoc into a group holding the client (fallback)": {
    "cmd": "{ psql -h prod-db.internal; } <<'SQL'\nDROP TABLE users;\nSQL",

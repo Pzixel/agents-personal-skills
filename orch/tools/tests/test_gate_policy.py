@@ -2384,7 +2384,8 @@ class DestructiveProbeTest(unittest.TestCase):
     def test_known_gaps_still_pass(self):
         # Known gaps, not wanted behaviour: a script written and run in one command (A2, A3, A5), argv
         # through xargs (P17), $(cat file) as an argument (T10, T14), a file rewritten under another
-        # spelling (T17, T18, X11, X12), a client file path read on the far side of a carrier (G1, G2, G4).
+        # spelling (T17, T18, X11, X12), a client file path read on the far side of a carrier (G1, G2, G4),
+        # a client whose stdin a group, subshell, function or exec redirect feeds (F07, F08, F09, F24).
         for label, decision in self._decisions("gap").items():
             with self.subTest(label):
                 self.assertEqual(decision, "allow")
@@ -2423,6 +2424,25 @@ class DestructiveProbeTest(unittest.TestCase):
                 continue
             with self.subTest(label):
                 self.assertIn(_probe_decision(entry)["decision"], ("ask", "deny"))
+
+    def test_client_here_string_and_prefix_redirect_are_read_as_its_stdin(self):
+        # Allowed at 3814e3e: an expanding here-string asks with the stdin remedy, a prefix ``< file``
+        # is read like the suffix form (the file holds a DROP).
+        probes = _PROBES["review_probes"]
+        for label in ("h12b", "p01", "p02", "p03", "p04", "p18"):
+            with self.subTest(label):
+                result = _probe_decision(probes[label])
+                self.assertEqual((result["decision"], result["reason"]), ("ask", gate_policy._UNREAD_STDIN_HIT[1]))
+        for label in ("h12e", "p05", "p06"):
+            with self.subTest(label):
+                self.assertEqual(_probe_decision(probes[label])["decision"], "deny")
+        reads = {
+            "psql -h prod-db.internal <<< 'SELECT 1;'": {},
+            "< /tmp/q.sql psql -h prod-db.internal": {"/tmp/q.sql": "SELECT 1;\n"},
+        }
+        for command, files in reads.items():
+            with self.subTest(command):
+                self.assertEqual(_probe_decision({"cmd": command, "files": files})["decision"], "allow")
 
     def test_own_remedy_refusals_in_bypass_mode_name_only_their_remedy(self):
         cases = {

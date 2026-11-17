@@ -4678,8 +4678,7 @@ def _classify_inner(tokens, cfg, ctx):
     raw = ctx.get("raw", tokens)
     raw = raw[len(raw) - len(tokens):] if len(raw) >= len(tokens) else tokens
     if len(tokens) == 1:
-        return _classify_text(raw[0], cfg, ctx["depth"] + 1, None, None, True,
-                              inherit={"stdin_fed": ctx.get("stdin_fed"), "carried": True})
+        return _classify_text(raw[0], cfg, ctx["depth"] + 1, None, None, True)
     local = list(tokens)
     for i, tok in enumerate(local):
         if tok == "<" and i + 1 < len(local):
@@ -4687,7 +4686,7 @@ def _classify_inner(tokens, cfg, ctx):
         elif tok.startswith("<") and not tok.startswith("<<") and len(tok) > 1:
             local[i] = "<" + (_resolve(tok[1:], ctx) or tok[1:])
     inner = _new_ctx(None, ctx["depth"], ctx["text"])
-    inner.update(cd_seen=True, raw=raw, stdin_fed=ctx.get("stdin_fed"), carried=True)
+    inner.update(cd_seen=True, raw=raw, stdin_fed=ctx.get("stdin_fed"))
     return _classify_tokens(local, cfg, inner)
 
 
@@ -4964,17 +4963,15 @@ def _classify_tokens(tokens, cfg, ctx):
         text = " ".join(raw_args)
         if _runs_computed_command(text):
             return [("privileged", "eval runs a command named by a variable or substitution: run the command directly")]
-        return _classify_text(text, cfg, ctx["depth"] + 1, ctx["dir"], None, ctx["cd_seen"],
-                              inherit={"stdin_fed": ctx.get("stdin_fed"), "carried": ctx.get("carried")})
-    shell_flag =next((a for a in args if re.match(r"^-[a-z]*c[a-z]*$", a)), None)
+        return _classify_text(text, cfg, ctx["depth"] + 1, ctx["dir"], None, ctx["cd_seen"])
+    shell_flag = next((a for a in args if re.match(r"^-[a-z]*c[a-z]*$", a)), None)
     if (program in _SHELLS or shell and program == "su") and shell_flag:
         i = args.index(shell_flag) + 1
         if i >= len(raw_args):
             return []
         if _runs_computed_command(raw_args[i]):
             return [("privileged", program + " " + shell_flag + " runs a command named by a variable or substitution: run the command directly")]
-        return _classify_text(raw_args[i], cfg, ctx["depth"] + 1, ctx["dir"], None, ctx["cd_seen"],
-                              inherit={"stdin_fed": ctx.get("stdin_fed"), "carried": ctx.get("carried")})
+        return _classify_text(raw_args[i], cfg, ctx["depth"] + 1, ctx["dir"], None, ctx["cd_seen"])
     if program == "rm":
         return [_rm_rule([] if via_xargs else _path_args(args), cfg, ctx, "rm", True)]
     if program == "mv":
@@ -5035,11 +5032,12 @@ def _classify_tokens(tokens, cfg, ctx):
         # As written: a carrier's ``<`` path is resolved, a variable substituted.
         written = set(paths) | set(_sql_file_args(raw_args))
         own = [_REWRITTEN_HIT][:any(shell and _named_elsewhere(p, cfg) for p in written - _STDIN_PATHS - {"/dev/null"})]
-        if shell and not ctx.get("stdin_fed") and (ctx.get("carried") or _names_remote_host(args, cfg)):
-            here = [args[i + 1] for i, a in enumerate(args[:-1]) if a == "<<<"] + [
-                a[3:] for a in args if a.startswith("<<<") and len(a) > 3]
-            seen = [t for t in _sql_texts(program, args, texts) if t is not None]
-            cfg["unread_clients"] += not seen and not any(h and not re.search(r"[$`]", h) for h in here)
+        # A here-string on the client's own command is its stdin: a literal one
+        # is read with the arguments; one that expands is not visible.
+        here = [args[i + 1] for i, a in enumerate(args[:-1]) if a == "<<<"] + [
+            a[3:] for a in args if a.startswith("<<<") and len(a) > 3]
+        if shell and not _sql_texts(program, args, texts) and any(re.search(r"[$`]", h) for h in here):
+            own = own + [_UNREAD_STDIN_HIT]
         return _client_sql_hits(program, args, texts, cfg, ctx["depth"], own)
     if program in ("echo", "printf"):
         target = _redirect_target(args)
@@ -5291,10 +5289,7 @@ def _walk(script, cfg, ctx):
         # A quoted substitution runs here, with the directory and variables
         # of this point (an unquoted one is split into segments).
         for inner in _inner_substitutions(" ".join(tokens), shell):
-            hits.extend(_classify_text(
-                inner, cfg, ctx["depth"] + 1, ctx["dir"], dict(ctx["vars"]), ctx["cd_seen"], guess=True,
-                inherit={"stdin_fed": ctx.get("inherit_stdin"), "carried": ctx.get("carried")},
-            ))
+            hits.extend(_classify_text(inner, cfg, ctx["depth"] + 1, ctx["dir"], dict(ctx["vars"]), ctx["cd_seen"], guess=True))
         if _bind(tokens, ctx, before, after):
             continue
         if not shell and any(t.startswith("<<") and not t.startswith("<<<") for t in tokens):
@@ -5322,8 +5317,7 @@ def _walk(script, cfg, ctx):
             split = value.split() if value != t and not any(c.isspace() for c in t) else [value]
             words.extend(split)
             raw.extend([t] * len(split))
-        ctx.update(raw=raw, before=before, after=after,
-                   stdin_fed=piped is not None or bool(popped) or bool(ctx.get("inherit_stdin")))
+        ctx.update(raw=raw, before=before, after=after, stdin_fed=piped is not None or bool(popped))
         hits.extend(_classify_tokens(words, cfg, ctx))
         if piped is not None:
             hits.extend(_stdin_hits(words, piped[0], piped[1], cfg, ctx["depth"], ctx["dir"], True) or [])
@@ -5404,12 +5398,6 @@ def _named_elsewhere(path, cfg):
     return len(found) > 1
 
 
-def _names_remote_host(args, cfg):
-    """True when a SQL client's own host option or URI names a host that is
-    not this machine (a socket directory is local)."""
-    hosts = _flag_values(args, {"-h", "--host"}) + [_host_of(a) for a in args if "://" in a]
-    return any(h and not h.startswith("/") and h.lower() not in cfg["local_hosts"] for h in hosts)
-
 
 def _quoted_positions(text):
     """Indexes of characters inside single or double quotes."""
@@ -5443,7 +5431,7 @@ def _expand_brace_lists(script, shell=False):
     return script
 
 
-def _classify_text(command, cfg, depth=0, dir_="", variables=None, cd_seen=False, guess=False, inherit=None):
+def _classify_text(command, cfg, depth=0, dir_="", variables=None, cd_seen=False, guess=False):
     """``dir_`` is the working directory the text starts in (see ``_new_ctx``);
     ``cd_seen``: a cd already ran, so relative prefixes no longer count.
     ``guess``: the text is a guess at what a shell runs, not a text known to
@@ -5463,7 +5451,6 @@ def _classify_text(command, cfg, depth=0, dir_="", variables=None, cd_seen=False
     ctx = _new_ctx(dir_, depth, command, variables)
     ctx.update(cd_seen=cd_seen, defined=set(), heredoc_read=set())
     if shell:
-        ctx.update(inherit_stdin=(inherit or {}).get("stdin_fed"), carried=(inherit or {}).get("carried"))
         script, heredocs = _shell_heredocs(command)
         if heredocs is None:
             return [("impossible", "command too long for the destructive gate: its heredoc operators with no"
@@ -5636,7 +5623,7 @@ def _stdin_hits(tokens, text, sql, cfg, depth, dir_, piped=False):
     carried = _carried(program, args) if program in ("kubectl", "docker", "ssh") else None
     if carried is not None:
         reads = text is not None and not (piped and carried)
-        hits = _classify_text(text, cfg, depth + 1, None, None, True, inherit={"carried": True}) if reads else []
+        hits = _classify_text(text, cfg, depth + 1, None, None, True) if reads else []
         inner = _path_args_keep_flags(carried)
     elif program in _SHELLS or program == "su":
         flag = next((a for a in args if re.match(r"^-[a-z]*c[a-z]*$", a)), None)
@@ -5836,11 +5823,9 @@ def _decision_cfg(params, sql_file_texts, shell_command=None):
     """``shell_command``: the command the destructive decision reads as the
     shell does (``shell_reading``, see ``_classify_text``); every other caller
     keeps the reading its gate was measured on."""
-    merged = _merged_params(params)
-    cfg = dict(merged["destructive"])
+    cfg = dict(_merged_params(params)["destructive"])
     cfg.update(
-        sql_files=dict(sql_file_texts or {}), sql_paths=[], functions={}, unread_clients=0,
-        local_hosts=frozenset(h.lower() for h in merged["offline"]["local_hosts"]),
+        sql_files=dict(sql_file_texts or {}), sql_paths=[], functions={},
         shell_reading=shell_command is not None, command_text=shell_command or "",
         ours_paths=list(cfg["ours_paths"]) + _temp_prefixes() + [
             os.path.realpath(os.path.expanduser(p)) + "/"
@@ -5850,16 +5835,8 @@ def _decision_cfg(params, sql_file_texts, shell_command=None):
     return cfg
 
 
-# What can feed a client's stdin: a heredoc or here-string, a pipe, a redirect, a substitution.
-_STDIN_FEED_RE = re.compile(r"<|\||\$\(")
-
-
 def _command_decision(command, cfg, cwd):
     found = _classify_text(command, cfg, 0, cwd)
-    if cfg["unread_clients"] and _STDIN_FEED_RE.search(command):
-        # A SQL client on a non-local target with no SQL attributed to it, in a
-        # command that can feed its stdin: the SQL anywhere in the text counts.
-        found = found + (_sql_hits([command]) or [_UNREAD_STDIN_HIT])
     if not found:
         return {"decision": "allow", "class": "none", "reason": ""}
     cls, reason = max(found, key=lambda hit: _SEVERITY[hit[0]])
