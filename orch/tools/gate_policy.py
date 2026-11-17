@@ -5359,9 +5359,11 @@ def _walk(script, cfg, ctx):
 # script, each plus ``_READING_WORK``), every body left open and every
 # substitution cut out, and the words brace expansion adds. A body or substitution left
 # open runs to the end of the text and is read again by what holds it, so a short
-# text can cost its length to a high power. Sized from the stored commands: see
-# decisions/destructive-gate-threat-model-is-agent-mistakes.md.
-_WORK_BUDGET = 100000
+# text can cost its length to a high power. Sized from the gate's input limit, not
+# the stored commands: the largest command it reads (``command_max_bytes``, 65,536)
+# times the deepest ordinary re-read of one text (4: a script held by ``ssh h bash``),
+# rounded up; see decisions/destructive-gate-threat-model-is-agent-mistakes.md.
+_WORK_BUDGET = 300000
 # A reading's fixed cost (lexing setup, scans, context) in characters of text:
 # measured 100 us per reading, at 0.9 us per character of a stored command.
 _READING_WORK = 128

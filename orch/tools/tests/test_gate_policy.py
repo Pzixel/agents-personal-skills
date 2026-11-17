@@ -2487,6 +2487,7 @@ class DestructiveProbeTest(unittest.TestCase):
     def test_text_read_again_past_the_work_budget_is_denied_with_its_remedy(self):
         # Each open heredoc body or $( runs to the end of the text and its holder reads it again: a short
         # text costs its length to a high power (the hook has 5 s). The reading stops at the budget.
+        self.assertRaises(gate_policy.OutOfWork, gate_policy._charge, {"work": gate_policy._WORK_BUDGET}, 1)
         drop = "\npsql -h prod-db.internal -c 'DROP TABLE users'"
         commands = {
             "unterminated operators": "<<a\n" * 8000,
@@ -2508,7 +2509,12 @@ class DestructiveProbeTest(unittest.TestCase):
         # The largest stored command is 34 KB; the gate reads up to 64 KB.
         writes = "cat > /tmp/notes.md <<'EOF'\n" + "a line of notes about $(the run) and `that`\n" * 1400 + "EOF"
         loop = "for f in a b; do\n  cat <<EOF > $f\n  line $f\nEOF\ndone\n" * 1000
-        for command in (writes, loop):
+        # A script held by a shell is read by the shell's reading and the body's own; behind ssh once more.
+        script = ('echo "step: checking the service"\ncd /tmp/work && ls -la | head -5\nts=$(date +%s)\n'
+                  'grep -n "error" logs/app.log | head -20 || true\nmkdir -p tmp/run\ngit -C repo log --oneline -3\n'
+                  ) * 340
+        held = [opener + script + "EOF" for opener in ("bash <<'EOF'\n", "bash <<EOF\n", "ssh devbox bash <<EOF\n")]
+        for command in [writes, loop] + held:
             with self.subTest(command[:30]):
                 self.assertEqual(_probe_decision({"cmd": command})["decision"], "allow")
 

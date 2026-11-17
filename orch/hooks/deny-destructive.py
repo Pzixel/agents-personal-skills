@@ -98,20 +98,6 @@ def main():
     approved = bool(approval) and os.path.isfile(approval)
     cwd = str(payload.get("cwd") or os.getcwd())
     limit = int(params.get("destructive", {}).get("command_max_bytes", 65536))
-    try:
-        paths = gate_policy.sql_file_paths(command, params, cwd)
-    except gate_policy.OutOfWork as exc:
-        respond("deny", exc.reason)
-        return
-    sql_file_texts = {p: read_sql_file(os.path.join(cwd, os.path.expanduser(p)), limit) for p in paths}
-    result = gate_policy.destructive_decision(
-        command, agent_type, plan_text, plan_hash, params,
-        str(payload.get("permission_mode") or ""), sql_file_texts, approved, cwd,
-    )
-    if approved and result["decision"] == "allow":
-        os.remove(approval)
-    targets = result.get("exec_targets")
-    room = headroom(command, params, targets) if targets and result["decision"] == "allow" else None
 
     def log(row):
         if not gate_policy.session_id_ok(session):
@@ -126,6 +112,22 @@ def main():
                 }, **row)) + "\n")
         except OSError:
             pass
+
+    try:
+        paths = gate_policy.sql_file_paths(command, params, cwd)
+    except gate_policy.OutOfWork as exc:
+        log({"class": "impossible", "decision": "deny", "plan_hash": plan_hash})
+        respond("deny", exc.reason)
+        return
+    sql_file_texts = {p: read_sql_file(os.path.join(cwd, os.path.expanduser(p)), limit) for p in paths}
+    result = gate_policy.destructive_decision(
+        command, agent_type, plan_text, plan_hash, params,
+        str(payload.get("permission_mode") or ""), sql_file_texts, approved, cwd,
+    )
+    if approved and result["decision"] == "allow":
+        os.remove(approval)
+    targets = result.get("exec_targets")
+    room = headroom(command, params, targets) if targets and result["decision"] == "allow" else None
 
     if room and room["decision"] == "deny":
         log({"class": "headroom", "decision": "deny", "reason": room["reason"][:300],
