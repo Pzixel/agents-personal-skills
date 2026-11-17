@@ -2444,6 +2444,15 @@ class DestructiveProbeTest(unittest.TestCase):
             with self.subTest(command):
                 self.assertEqual(_probe_decision({"cmd": command, "files": files})["decision"], "allow")
 
+    def test_heredoc_with_a_non_identifier_delimiter_feeds_the_client(self):
+        # Allowed at 3814e3e: ``<<\SQL``, ``<<'END-SQL'``, ``<<'1'`` holding a DROP.
+        probes = _PROBES["review_probes"]
+        for label in ("h06a", "h06b", "h06d", "h06e"):
+            with self.subTest(label):
+                self.assertIn(_probe_decision(probes[label])["decision"], ("ask", "deny"))
+        read = "psql -h prod-db.internal <<'END-SQL'\nSELECT 1;\nEND-SQL"
+        self.assertEqual(_probe_decision({"cmd": read})["decision"], "allow")
+
     def test_own_remedy_refusals_in_bypass_mode_name_only_their_remedy(self):
         cases = {
             "echo 'it; helm uninstall prod":

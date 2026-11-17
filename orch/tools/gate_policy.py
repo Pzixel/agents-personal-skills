@@ -3908,6 +3908,9 @@ _SECRET_WRITE_REASON = "the command writes a live Secret: the previous value can
 _PLAN_INDIRECT_RE = re.compile(r"^\s*(?:(?:source|\.|exec|eval)\s|(?:bash|sh|zsh)\s+\S)")
 _SEGMENT_PUNCT = frozenset(";&|()\n`{}")
 _HEREDOC_RE = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
+# The destructive reading: any delimiter word the shell takes (``<<\SQL``, ``<<'END-SQL'``, ``<<'1'``);
+# group 1 is non-empty when the delimiter is quoted.
+_SHELL_HEREDOC_RE = re.compile(r"""<<-?\s*(\\|'(?=[\w.\-]+')|"(?=[\w.\-]+")|(?=[A-Za-z_]))([\w.\-]+)['"]?""")
 # A heredoc body that is only ``$(cat <path>)`` or ``$(< <path>)``: the path.
 _CAT_BODY_RE = re.compile(r"^\s*\$\(\s*(?:cat\s+([^\s;&|<>()$`'\"\\]+)|<\s*([^\s;&|<>()$`'\"\\]+))\s*\)\s*$")
 _SHELLS = frozenset({"bash", "sh", "zsh"})
@@ -5246,7 +5249,8 @@ def _walk(script, cfg, ctx):
             # One body per operator, taken before any branch below skips the
             # segment; a body whose holder is not read here is left to
             # ``_heredoc_fallback_hits``.
-            operators = sum(len(_HEREDOC_RE.findall(t)) for t in tokens if not t.startswith("<<<")) + sum(
+            operators = sum(len((_SHELL_HEREDOC_RE if shell else _HEREDOC_RE).findall(t))
+                            for t in tokens if not t.startswith("<<<")) + sum(
                 1 for t in tokens[:-1] if t in ("<<", "<<-"))
             popped = [ctx["heredoc_bodies"].pop(0) for _ in range(min(operators, len(ctx["heredoc_bodies"])))]
             if popped:
@@ -5300,7 +5304,7 @@ def _walk(script, cfg, ctx):
             key = target and body is not None and _sql_key(_substitute(target, ctx["vars"]), ctx)
             if key:
                 cfg["sql_files"][key] = body
-        quoted_operator = any(" " in t and _HEREDOC_RE.search(t) for t in tokens)
+        quoted_operator = any(" " in t and (_SHELL_HEREDOC_RE if shell else _HEREDOC_RE).search(t) for t in tokens)
         if shell:
             # ``0< file`` is ``< file``: the client's stdin redirect, read as one;
             # one written before the command is read like one written after it.
@@ -5540,7 +5544,7 @@ def _shell_heredocs(command):
         opening = " ".join(one[:-1] if one.endswith("\\") else one for one in lines[first:i])
         for k in range(first, min(i, len(lines))):
             line = lines[k]
-            for m in _HEREDOC_RE.finditer(lines[k]):
+            for m in _SHELL_HEREDOC_RE.finditer(lines[k]):
                 found = (tabbed if m.group(0).startswith("<<-") else exact).get(m.group(2), [])
                 at = bisect.bisect_left(found, i)
                 if at < len(found):
@@ -5603,7 +5607,7 @@ def _heredoc_free(tokens):
     """``tokens`` without heredoc operators; a word glued before one stays (``psql<<SQL`` -> ``psql``)."""
     out = []
     for tok in tokens:
-        m = None if tok.startswith("<<<") or " " in tok else _HEREDOC_RE.search(tok)
+        m = None if tok.startswith("<<<") or " " in tok else _SHELL_HEREDOC_RE.search(tok)
         if m is None:
             out.append(tok)
         elif tok[:m.start()]:
