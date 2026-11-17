@@ -9,14 +9,16 @@ choice, answer, approval or input, asked in plain text instead of
 AskUserQuestion, or a pointer to an earlier message) or an unbacked deferral
 (work the agent could do this turn, waiting on nothing, tracked nowhere). The
 judge is called only when gate_policy.reply_lint_judge_needed holds (a rule
-candidate, or the reply addresses the owner or holds a first-person commitment):`claude -p --model haiku` sees
-only the final reply (gate_policy.judge_prompt), runs with no hooks, plugins,
-MCP or settings, and is guarded by REPLY_LINT_JUDGE against recursion. A later
-stop (`stop_hook_active`) runs two rule groups, each on a budget counted from
-this turn's Stop-hook feedback in the transcript: the deferral family
-(deferral, next-step, timed-step; judged, once per turn, not when the verdict
-says handoff) and first-cause (at most twice per turn); handoff, claim and lever
-stay first-stop only. So a turn holds at most four returns, never a loop. A judge error, timeout or
+candidate, or the reply addresses the owner or holds a first-person
+commitment): `claude -p --model haiku` sees only the final reply
+(gate_policy.judge_prompt), runs with no hooks, plugins, MCP or settings, and
+is guarded by REPLY_LINT_JUDGE against recursion. A later stop
+(`stop_hook_active`) runs two rule groups, each on a budget counted from this
+turn's Stop-hook feedback in the transcript: the deferral family (deferral,
+next-step, timed-step; judged while no later-stop deferral return exists this
+turn, returned at most once, not when the verdict says handoff) and first-cause
+(at most twice per turn); handoff, claim and lever stay first-stop only. So a
+turn holds at most four returns, never a loop. A judge error, timeout or
 unparsable verdict passes the reply (fail open) and is logged; every record
 names the rules that fired. Measurement and acceptance condition: ORIGINS.md.
 Not claims (2026-10-15): Russian not-verified disclosures, done words as
@@ -150,8 +152,8 @@ def main():
     stop_hook_active = bool(payload.get("stop_hook_active"))
     transcript_path = payload.get("transcript_path") or ""
     feedback = stop_feedback(transcript_path) if stop_hook_active else []
-    cause_open = stop_hook_active and gate_policy.first_cause_open(feedback)
-    deferral_open = stop_hook_active and gate_policy.later_deferral_open(feedback)
+    cause_open = gate_policy.first_cause_open(feedback)
+    deferral_open = gate_policy.later_deferral_open(feedback)
     next_step, lever, timed_step, scan_error = "", "", "", None
     if not stop_hook_active or deferral_open:
         try:

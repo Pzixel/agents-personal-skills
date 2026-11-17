@@ -1435,22 +1435,32 @@ class LaterStopDeferralTest(unittest.TestCase):
     REPLY = "Готово, PR влит. Логи я ещё не читал, прочитаю следующим шагом."
     FIRST_STOP_FEEDBACK = "Stop hook feedback:\nreply-lint: the reply leaves work waiting on the owner in plain text"
 
+    TIMED = "Логи прочитаю завтра утром."
+
     @staticmethod
-    def _verdict(handoff=False, deferral=False, next_step=False, lever=False):
+    def _verdict(handoff=False, deferral=False, next_step=False, lever=False, timed_step=False):
         return {"handoff": handoff, "sentence": "Решение за вами.", "deferral": deferral,
                 "deferral_sentence": "прочитаю следующим шагом", "next_step": next_step,
                 "next_step_sentence": "прочитаю следующим шагом", "lever": lever, "lever_sentence": "",
-                "timed_step": False, "timed_step_sentence": ""}
+                "timed_step": timed_step, "timed_step_sentence": "Логи прочитаю завтра утром."}
 
-    def _later(self, verdict, next_step="", lever="", open_=True, cause_open=False, text=REPLY):
-        return gate_policy.reply_lint_decision(text, True, verdict, next_step, lever,
+    def _later(self, verdict, next_step="", lever="", open_=True, cause_open=False, text=REPLY, timed_step=""):
+        return gate_policy.reply_lint_decision(text, True, verdict, next_step, lever, timed_step=timed_step,
                                                first_cause_open=cause_open, later_deferral_open=open_)
 
     def test_open_budget_returns_the_deferral_family(self):
-        for verdict, next_step, rules in ((self._verdict(deferral=True), "", ["deferral"]),
-                                          (self._verdict(deferral=True, next_step=True), "прочитаю", ["next-step"])):
-            decision = self._later(verdict, next_step)
+        for verdict, next_step, timed, rules in (
+                (self._verdict(deferral=True), "", "", ["deferral"]),
+                (self._verdict(deferral=True, next_step=True), "прочитаю", "", ["next-step"]),
+                (self._verdict(timed_step=True), "", self.TIMED, ["timed-step"]),
+                (self._verdict(deferral=True, timed_step=True), "", self.TIMED, ["deferral", "timed-step"])):
+            decision = self._later(verdict, next_step, timed_step=timed)
             self.assertEqual((decision["decision"], decision["rules"]), ("block", rules), rules)
+
+    def test_a_two_rule_return_carries_one_later_stop_marker_and_closes_the_budget(self):
+        reason = self._later(self._verdict(deferral=True, timed_step=True), timed_step=self.TIMED)["reason"]
+        self.assertEqual([sentence in reason for sentence in ("прочитаю следующим шагом", self.TIMED)], [True, True])
+        self.assertFalse(gate_policy.later_deferral_open([self.FIRST_STOP_FEEDBACK, "Stop hook feedback:\n" + reason]))
 
     def test_closed_budget_passes(self):
         self.assertEqual(self._later(self._verdict(deferral=True), open_=False), {"decision": "allow", "rules": []})
@@ -1458,7 +1468,7 @@ class LaterStopDeferralTest(unittest.TestCase):
     def test_a_handoff_verdict_suppresses_the_deferral(self):
         self.assertEqual(self._later(self._verdict(handoff=True, deferral=True)), {"decision": "allow", "rules": []})
 
-    def test_claim_handoff_and_lever_stay_first_stop_only(self):
+    def test_a_lever_verdict_stays_first_stop_only(self):
         decision = self._later(self._verdict(lever=True), lever="Рычаги: флаг пропуска прогрева")
         self.assertEqual(decision, {"decision": "allow", "rules": []})
 
