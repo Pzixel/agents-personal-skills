@@ -18,13 +18,13 @@ The owner relies on this hook so that a real production database deletion waits 
 - a SQL file whose path the command also names elsewhere asks: write the file in one Bash call, run the client in the next;
 - psql `\!`, `\o |`, `\g |` are classed by the command they run, also behind `-Atc`; psql `-q`/`-e`, mysql `-q` take no query;
 - a quote the hook cannot pair asks: put the quoted text in a file or a quoted heredoc;
-- the reading has one work budget, 100,000 characters plus 128 per text read (the command, each body or substitution read again); past it the hook denies: put the script in a file and run that file in a separate Bash call. The largest stored command needs 34,602; unbounded, open bodies or `$(` read again grow with a power of the length (20 lines of `bash <<a`: 4.4 s; the hook has 5 s). A carrier (`ssh`, `docker exec`, `kubectl exec`) inside three others is denied as nesting too deep.
+- one work budget, 300,000 characters plus 128 per text read; past it the hook denies with its remedy (a script file run in a separate call). 300,000 = `command_max_bytes` (64 KB) x 4, the deepest ordinary re-read (`ssh h bash <<EOF`), rounded up: shell-held scripts pass to about 64 KB, 51 KB under `ssh` with a `$( )` every other line; at 400,000 `echo "` + `$(` x 500 takes 600 ms. Open bodies or `$(` read again grow with a power of the length (hook timeout 5 s). A carrier (`ssh`, `docker exec`, `kubectl exec`) inside three others is denied as nesting too deep.
 
 A shape counts as closed only where a row of `orch/tools/tests/fixtures/destructive_probes.json` pins it as refused; every review probe is pinned, and one pinned allow is a known gap, a read control or a command the shell does not run.
 
 Accepted: an escaped brace (`echo {a,b\}' ' | psql ... -c '<DROP>'`) leaves a quote unpaired and asks (3814e3e: deny; refused in every mode); `wc -l f; psql < f` asks (same-command file); a read through an unterminated heredoc asks (h01v9).
 
-Price against 3814e3e (`replay.py destructive-diff`, breakdown in `ORIGINS.md`), other gates unchanged, no command at the budget: of 21,684 stored commands 1 refused -> allowed (row 21406, `rm -rf` of a `/tmp` path), 79 newly refused; of 47,699, 0 and 43 (one a real production `UPDATE`).
+Price against 3814e3e (`replay.py destructive-diff`, breakdown in `ORIGINS.md`), other gates unchanged, no command at the budget: of 21,684 stored commands 111 change, 1 refused -> allowed (row 21406, `rm -rf` of a `/tmp` path), 79 newly refused; of 47,699, 55 change, 0 and 43 (one a real production `UPDATE`).
 
 Rejected on both sets, retry only on new evidence: a raw-text floor (69 refusals, all false or local), a whole-text fallback for non-local clients (177, 150 reads); neither caught a real write. Not taken: ClickHouse `--readonly=2` as a read (on 25.8 `INSERT INTO FUNCTION url/file` writes).
 
@@ -32,7 +32,7 @@ Rejected on both sets, retry only on new evidence: a raw-text floor (69 refusals
 A script written by a heredoc and run in the same command (A2, A3, A5); SQL through `xargs` or `$(cat file)` as an argument (P17, T10, T14); a read file rewritten under another spelling (T17, T18, X11, X12); stdin redirected into a group, subshell, function or `exec` (F07-F09, F24); a client file path on the far side of a carrier (G1, G2, G4); a heredoc delimiter `<<1`, `<<"END SQL"` or `<<$X`, no operator to the hook, feeding an exec'd client (T4a-T4c); `review_probes` h01e (`os.system`), h03g (nested parentheses in a quoted `$( )`), h09a-h09c (a quoted or commented `<<WORD` swallowing lines), h11b (SQL path in a variable), h11l, h11m (mysql `source`, psql `\i`), h12a (backtick with a double quote in double quotes), h12f-h12i (`su-exec`, `runuser`, `ash -c`, `docker-compose exec`), h12l (heredoc into a multi-line group), h12m (backslash-newline in a word), p12 (`exec 3<`, `<&3`). p21 (pipe into `clickhouse-client -q 'SELECT 1'`) is no hole if that stdin is only INSERT data (claim). A heredoc into a subshell asks even on a read (B15); `-f -` with nothing fed gets the file remedy (B05).
 
 ## Open
-- Unverified: what Claude Code does with a command when the hook passes its 5 s timeout. Two length-only inputs take 215-267 ms (`'< f '` x 15,000 then psql; `echo $(a ` x 8,000).
+- Unverified: what Claude Code does with a command when the hook passes its 5 s timeout.
 - Outside this change: the headroom gate misses a `kubectl exec` after a comment quote (fixture row X1).
 
 Kept: docker global options (`-H`, `--context`) are skipped before the subcommand: a destructive query on a remote daemon is a mistake-shaped case.
