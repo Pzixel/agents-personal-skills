@@ -2416,14 +2416,26 @@ class DestructiveProbeTest(unittest.TestCase):
                 if "reason" in entry:
                     self.assertEqual(result["reason"], entry["reason"])
 
-    def test_review_probes_refused_at_3814e3e_stay_refused(self):
-        # Every probe and fuzz row of the fix-round reviews with its 3814e3e decision; the rows marked
-        # not_run_by_the_shell were refused at 3814e3e for a command the shell does not run.
+    def test_review_probes_decide_as_pinned(self):
+        # Every probe and fuzz row of the fix-round reviews, with its 3814e3e decision ("base") and the
+        # decision it is pinned to ("expect").
         for label, entry in _PROBES["review_probes"].items():
-            if entry["base"] == "allow" or "not_run_by_the_shell" in entry:
-                continue
             with self.subTest(label):
-                self.assertIn(_probe_decision(entry)["decision"], ("ask", "deny"))
+                self.assertEqual(_probe_decision(entry)["decision"], entry["expect"])
+
+    def test_review_probes_pinned_as_allowed_are_only_gaps_reads_and_unrun_commands(self):
+        # A row pinned "allow" is one of: a known gap named in the decision file's "Known gaps" (closing one
+        # is seen as a failure above); a read control that reaches no deletion (h01v9, a read through an
+        # unterminated heredoc, is a read control pinned "ask"); a command the shell does not run
+        # (not_run_by_the_shell). Any other shape pinned "allow" would be a hole pinned open.
+        known_gaps = {"h01e", "h03g", "h09a", "h09b", "h09c", "h11b", "h11l", "h11m", "h12a", "h12f", "h12g",
+                      "h12h", "h12i", "h12l", "h12m", "p12"}
+        read_controls = {"c12", "c15", "p21"}
+        probes = _PROBES["review_probes"]
+        unrun = {label for label, entry in probes.items() if "not_run_by_the_shell" in entry}
+        allowed = {label for label, entry in probes.items() if entry["expect"] == "allow"}
+        self.assertEqual(allowed, known_gaps | read_controls | unrun)
+        self.assertEqual(probes["h01v9"]["expect"], "ask")
 
     def test_client_here_string_and_prefix_redirect_are_read_as_its_stdin(self):
         # Allowed at 3814e3e: an expanding here-string asks with the stdin remedy, a prefix ``< file``
@@ -2500,8 +2512,13 @@ class DestructiveProbeTest(unittest.TestCase):
                 self.assertEqual(_probe_decision({"cmd": command})["decision"], "allow")
 
     def test_carriers_nested_past_the_depth_bound_are_denied(self):
-        command = "ssh h " * 2000 + "psql -c 'SELECT 1'"
-        self.assertEqual(_probe_decision({"cmd": command})["decision"], "deny")
+        # Three carriers hold a read; a fourth carrier inside them is not read and is denied.
+        self.assertEqual(_probe_decision({"cmd": "ssh h " * 3 + "psql -c 'SELECT 1'"})["decision"], "allow")
+        for count in (4, 2000):
+            with self.subTest(count):
+                result = _probe_decision({"cmd": "ssh h " * count + "psql -c 'SELECT 1'"})
+                self.assertEqual((result["decision"], result["class"]), ("deny", "impossible"))
+                self.assertTrue(result["reason"].startswith("command nesting too deep to classify;"))
 
     def test_other_gates_keep_the_3814e3e_result(self):
         e1, l3, x1 = (_PROBES["other_gates"][k] for k in ("E1", "L3", "X1"))

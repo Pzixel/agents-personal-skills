@@ -707,6 +707,23 @@
    "files": {
     "/tmp/destr-review/q_read.sql": "SELECT count(*) FROM users;\n"
    }
+  },
+  "B24 a quoted <<WORD with a later terminator line: the client's body is not known": {
+   "cmd": "echo \"a <<A b\"; kubectl --context prod-cluster exec -i pg-0 -- psql <<'SQL'\nDROP TABLE users;\nA\nSQL",
+   "group": "boundary",
+   "expect": "ask",
+   "reason": "SQL on the client's stdin is not visible; pass the SQL as a literal heredoc attached to the client"
+  },
+  "B25 an escaped closing brace leaves the quote after it unpaired": {
+   "cmd": "echo {a,b\\}' ' | psql -h prod-db.internal -c 'DROP TABLE users'",
+   "group": "boundary",
+   "expect": "ask",
+   "reason": "the hook cannot pair the quotes of this command, so what it runs is not known; put the quoted text in a file or a quoted heredoc"
+  },
+  "B26 an escaped brace is no brace list": {
+   "cmd": "grep -c x\\{0,2\\}'a b' /tmp/f",
+   "group": "boundary",
+   "expect": "allow"
   }
  },
  "other_gates": {
@@ -743,424 +760,524 @@
  "review_probes": {
   "c01": {
    "cmd": "helm uninstall prod",
-   "base": "ask"
+   "base": "ask",
+   "expect": "ask"
   },
   "c02": {
    "cmd": "kubectl --context prod-cluster exec -i pg-0 -- psql -c \"DROP TABLE users\"",
-   "base": "deny"
+   "base": "deny",
+   "expect": "deny"
   },
   "c03": {
    "cmd": "psql -h prod-db.internal -c 'DROP TABLE users'",
-   "base": "deny"
+   "base": "deny",
+   "expect": "deny"
   },
   "c04": {
    "cmd": "docker exec -i pg psql -c 'DROP TABLE users'",
-   "base": "deny"
+   "base": "deny",
+   "expect": "deny"
   },
   "c05": {
    "cmd": "ssh prod-db psql -c 'DROP TABLE users'",
-   "base": "deny"
+   "base": "deny",
+   "expect": "deny"
   },
   "c06": {
    "cmd": "kubectl --context prod-cluster delete namespace prod",
-   "base": "deny"
+   "base": "deny",
+   "expect": "deny"
   },
   "c07": {
    "cmd": "psql -h prod-db.internal <<'SQL'\nDROP TABLE users;\nSQL",
-   "base": "deny"
+   "base": "deny",
+   "expect": "deny"
   },
   "c08": {
    "cmd": "kubectl --context prod-cluster exec -i pg-0 -- psql <<'SQL'\nDROP TABLE users;\nSQL",
-   "base": "allow"
+   "base": "allow",
+   "expect": "deny"
   },
   "c09": {
    "cmd": "ssh prod-db psql <<'SQL'\nDROP TABLE users;\nSQL",
-   "base": "allow"
+   "base": "allow",
+   "expect": "deny"
   },
   "c10": {
    "cmd": "docker exec -i pg psql <<'SQL'\nDROP TABLE users;\nSQL",
-   "base": "allow"
+   "base": "allow",
+   "expect": "deny"
   },
   "c11": {
    "cmd": "psql -h prod-db.internal -f /tmp/destr-review/q_drop.sql",
    "base": "deny",
    "files": {
     "/tmp/destr-review/q_drop.sql": "DROP TABLE users;\n"
-   }
+   },
+   "expect": "deny"
   },
   "c12": {
    "cmd": "psql -h prod-db.internal -f /tmp/destr-review/q_read.sql",
    "base": "allow",
    "files": {
     "/tmp/destr-review/q_read.sql": "SELECT count(*) FROM users;\n"
-   }
+   },
+   "expect": "allow"
   },
   "c13": {
    "cmd": "psql -h prod-db.internal < /tmp/destr-review/q_drop.sql",
    "base": "deny",
    "files": {
     "/tmp/destr-review/q_drop.sql": "DROP TABLE users;\n"
-   }
+   },
+   "expect": "deny"
   },
   "c14": {
    "cmd": "kubectl --context prod-cluster exec -i pg-0 -- psql < /tmp/destr-review/q_drop.sql",
    "base": "deny",
    "files": {
     "/tmp/destr-review/q_drop.sql": "DROP TABLE users;\n"
-   }
+   },
+   "expect": "deny"
   },
   "c15": {
    "cmd": "kubectl --context prod-cluster exec -i pg-0 -- psql < /tmp/destr-review/q_read.sql",
    "base": "allow",
    "files": {
     "/tmp/destr-review/q_read.sql": "SELECT count(*) FROM users;\n"
-   }
+   },
+   "expect": "allow"
   },
   "h01a": {
    "cmd": "psql -h prod-db.internal <<'SQL'\nDROP TABLE users;",
-   "base": "deny"
+   "base": "deny",
+   "expect": "deny"
   },
   "h01b": {
    "cmd": "OUT=$(psql -h prod-db.internal <<'SQL'\nDROP TABLE users;\nSQL)",
-   "base": "deny"
+   "base": "deny",
+   "expect": "deny"
   },
   "h01c": {
    "cmd": "psql -h prod-db.internal <<'SQL'\nDROP TABLE users;\nSQL;",
-   "base": "deny"
+   "base": "deny",
+   "expect": "deny"
   },
   "h01d": {
    "cmd": "result=$(clickhouse-client --host prod-ch --multiquery <<'SQL'\nTRUNCATE TABLE analytics.otd_send_v2;\nSQL)",
-   "base": "deny"
+   "base": "deny",
+   "expect": "deny"
   },
   "h01e": {
    "cmd": "python3 - <<'PY'\nimport os\nos.system(\"helm uninstall prod\")",
-   "base": "allow"
+   "base": "allow",
+   "expect": "allow"
   },
   "h01f": {
    "cmd": "kubectl --context prod-cluster exec -i pg-0 -- psql <<'SQL'\nDROP TABLE users;",
-   "base": "allow"
+   "base": "allow",
+   "expect": "ask"
   },
   "h01g": {
    "cmd": "OUT=$(kubectl --context prod-cluster exec -i pg-0 -- psql <<'SQL'\nDROP TABLE users;\nSQL)",
-   "base": "allow"
+   "base": "allow",
+   "expect": "ask"
   },
   "h01v1": {
    "cmd": "mysql -h prod-db.internal <<EOF\nDROP DATABASE app;",
-   "base": "deny"
+   "base": "deny",
+   "expect": "deny"
   },
   "h01v2": {
    "cmd": "psql -h prod-db.internal <<'SQL'\nDROP TABLE users;\nSQL # done",
-   "base": "deny"
+   "base": "deny",
+   "expect": "deny"
   },
   "h01v3": {
    "cmd": "echo \"rows: $(psql -h prod-db.internal <<'SQL'\nDROP TABLE users;\nSQL)\"",
-   "base": "allow"
+   "base": "allow",
+   "expect": "deny"
   },
   "h01v4": {
    "cmd": "psql -h prod-db.internal <<'SQL' && echo ok\nDELETE FROM users;\nSQL && echo done",
-   "base": "deny"
+   "base": "deny",
+   "expect": "deny"
   },
   "h01v5": {
    "cmd": "ssh prod-db psql <<'SQL'\nDROP TABLE users;",
-   "base": "allow"
+   "base": "allow",
+   "expect": "ask"
   },
   "h01v6": {
    "cmd": "psql -h prod-db.internal <<'SQL'\nDROP TABLE users;\nSQL ",
-   "base": "deny"
+   "base": "deny",
+   "expect": "deny"
   },
   "h01v7": {
    "cmd": "psql -h prod-db.internal <<SQL\nTRUNCATE users;\nSQL)\necho done",
-   "base": "deny"
+   "base": "deny",
+   "expect": "deny"
   },
   "h01v8": {
    "cmd": "OUT=$(psql -h prod-db.internal <<'SQL'\nDROP TABLE users;\nSQL\n)",
-   "base": "deny"
+   "base": "deny",
+   "expect": "deny"
   },
   "h01v9": {
    "cmd": "psql -h prod-db.internal <<'SQL'\nSELECT 1;",
-   "base": "allow"
+   "base": "allow",
+   "expect": "ask"
   },
   "h02a": {
    "cmd": "echo '{a,b} x' ; helm uninstall prod ; echo 'y'",
-   "base": "ask"
+   "base": "ask",
+   "expect": "ask"
   },
   "h02b": {
    "cmd": "curl -s -d '{\"a\":1,\"b\":2} ' http://x ; helm uninstall prod ; echo 'done'",
-   "base": "ask"
+   "base": "ask",
+   "expect": "ask"
   },
   "h02c": {
    "cmd": "jq -c '{id,name} | .id' f.json\nkubectl --context prod-cluster exec -i pg-0 -- psql -c \"DROP TABLE users\"\necho 'ok'",
-   "base": "deny"
+   "base": "deny",
+   "expect": "deny"
   },
   "h02d": {
    "cmd": "echo \"{a,b} it's\" ; helm uninstall prod ; echo \"x\"",
-   "base": "ask"
+   "base": "ask",
+   "expect": "ask"
   },
   "h02e": {
    "cmd": "echo '{a,b} x'; helm uninstall prod; echo 'y'",
-   "base": "ask"
+   "base": "ask",
+   "expect": "ask"
   },
   "h02v1": {
    "cmd": "jq '{id,name} | .id' f.json ; kubectl --context prod-cluster delete namespace prod ; echo 'ok'",
-   "base": "deny"
+   "base": "deny",
+   "expect": "deny"
   },
   "h02v2": {
    "cmd": "python3 -c 'print({1,2} | {3})' ; helm uninstall prod ; echo 'y'",
-   "base": "ask"
+   "base": "ask",
+   "expect": "ask"
   },
   "h02v3": {
    "cmd": "curl -s -d '{\"a\":1,\"b\":2} ' http://x && kubectl --context prod-cluster exec -i pg-0 -- psql -c \"DROP TABLE users\" && echo 'done'",
-   "base": "deny"
+   "base": "deny",
+   "expect": "deny"
   },
   "h02v4": {
    "cmd": "jq -c '{id,name} | .id' f.json\nhelm uninstall prod\necho 'ok'",
-   "base": "ask"
+   "base": "ask",
+   "expect": "ask"
   },
   "h02v5": {
    "cmd": "awk '{print $1,$2} END {print NR}' f ; kubectl --context prod-cluster delete pvc data-pg-0 ; echo 'ok'",
-   "base": "deny"
+   "base": "deny",
+   "expect": "deny"
   },
   "h02v6": {
    "cmd": "echo '{a,b} x' ; helm uninstall prod",
-   "base": "ask"
+   "base": "ask",
+   "expect": "ask"
   },
   "h02v7": {
    "cmd": "jq -c '{id,name} | .id' f.json | tee 'out file'\nkubectl --context prod-cluster delete namespace prod",
-   "base": "deny"
+   "base": "deny",
+   "expect": "deny"
   },
   "h02v8": {
    "cmd": "echo 'x {a,b}' ; helm uninstall prod ; echo 'y'",
-   "base": "ask"
+   "base": "ask",
+   "expect": "ask"
   },
   "h03a": {
    "cmd": "OUT=\"$(kubectl --context prod-cluster exec -i pg-0 -- psql -tAc \"SELECT count(*) FROM users; DROP TABLE users\")\"",
-   "base": "allow"
+   "base": "allow",
+   "expect": "deny"
   },
   "h03a2": {
    "cmd": "OUT=\"$(kubectl --context prod-cluster exec -i pg-0 -- psql -c \"SELECT count(*) FROM users; DROP TABLE users\")\"",
-   "base": "allow"
+   "base": "allow",
+   "expect": "deny"
   },
   "h03b": {
    "cmd": "echo \"$(kubectl --context prod-cluster exec -i pg-0 -- psql -c \"DELETE FROM users WHERE id IN (1,2)\")\"",
-   "base": "allow"
+   "base": "allow",
+   "expect": "ask"
   },
   "h03c": {
    "cmd": "OUT=\"$(kubectl --context prod-cluster exec -i pg-0 -- psql -c 'DROP TABLE users; SELECT now()')\"",
-   "base": "allow"
+   "base": "allow",
+   "expect": "deny"
   },
   "h03d": {
    "cmd": "echo \"$(helm uninstall prod && echo $(date))\"",
-   "base": "allow"
+   "base": "allow",
+   "expect": "ask"
   },
   "h03e": {
    "cmd": "echo \"$( (helm uninstall prod) )\"",
-   "base": "allow"
+   "base": "allow",
+   "expect": "ask"
   },
   "h03f": {
    "cmd": "echo \"$(echo ')' ; helm uninstall prod)\"",
-   "base": "allow"
+   "base": "allow",
+   "expect": "ask"
   },
   "h03g": {
    "cmd": "echo \"$(case $x in a) helm uninstall prod;; esac)\"",
-   "base": "allow"
+   "base": "allow",
+   "expect": "allow"
   },
   "h03h": {
    "cmd": "OUT=\"$(kubectl --context prod-cluster exec -i pg-0 -- psql -c 'DROP TABLE users')\"",
-   "base": "deny"
+   "base": "deny",
+   "expect": "deny"
   },
   "h03i": {
    "cmd": "OUT=$(kubectl --context prod-cluster exec -i pg-0 -- psql -c \"DELETE FROM users WHERE id IN (1,2)\")",
-   "base": "ask"
+   "base": "ask",
+   "expect": "ask"
   },
   "h04a": {
    "cmd": "OUT=\"$(kubectl --context prod-cluster exec -i pg-0 -- psql <<'SQL'\nDROP TABLE users;\nSQL\n)\"",
-   "base": "allow"
+   "base": "allow",
+   "expect": "ask"
   },
   "h04b": {
    "cmd": "echo \"$(kubectl --context prod-cluster exec -i pg-0 -- psql <<'SQL'\nDROP TABLE users;\nSQL\n)\"",
-   "base": "allow"
+   "base": "allow",
+   "expect": "ask"
   },
   "h04c": {
    "cmd": "OUT=\"$(psql -h prod-db.internal <<'SQL'\nDROP TABLE users;\nSQL\n)\"",
-   "base": "allow"
+   "base": "allow",
+   "expect": "ask"
   },
   "h04d": {
    "cmd": "OUT=$(kubectl --context prod-cluster exec -i pg-0 -- psql <<'SQL'\nDROP TABLE users;\nSQL\n)",
-   "base": "allow"
+   "base": "allow",
+   "expect": "deny"
   },
   "h04e": {
    "cmd": "OUT=\"$(ssh prod-db psql <<'SQL'\nDROP TABLE users;\nSQL\n)\"",
-   "base": "allow"
+   "base": "allow",
+   "expect": "ask"
   },
   "h05a": {
    "cmd": "kubectl --context prod-cluster exec -i pg-0 -- psql << 'SQL'\nDROP TABLE users;\nSQL\ncat <<'EOF'\nhi\nEOF",
-   "base": "allow"
+   "base": "allow",
+   "expect": "deny"
   },
   "h05b": {
    "cmd": "cat << EOF > /tmp/a.sql\nSELECT 1;\nEOF\nkubectl --context prod-cluster exec -i pg-0 -- psql <<'SQL'\nDROP TABLE users;\nSQL\ncat <<'X'\nbye\nX",
-   "base": "allow"
+   "base": "allow",
+   "expect": "deny"
   },
   "h05c": {
    "cmd": "ssh prod-db psql << 'SQL'\nDROP TABLE users;\nSQL\ncat <<'EOF'\nhi\nEOF",
-   "base": "allow"
+   "base": "allow",
+   "expect": "deny"
   },
   "h05d": {
    "cmd": "docker exec -i pg psql << 'SQL'\nDROP TABLE users;\nSQL\ncat <<'EOF'\nhi\nEOF",
-   "base": "allow"
+   "base": "allow",
+   "expect": "deny"
   },
   "h05e": {
    "cmd": "kubectl --context prod-cluster exec -i pg-0 -- psql <<- 'SQL'\n\tDROP TABLE users;\n\tSQL\ncat <<'EOF'\nhi\nEOF",
-   "base": "allow"
+   "base": "allow",
+   "expect": "deny"
   },
   "h05f": {
    "cmd": "kubectl --context prod-cluster exec -i pg-0 -- psql << 'SQL'\nDROP TABLE users;\nSQL",
-   "base": "allow"
+   "base": "allow",
+   "expect": "deny"
   },
   "h05g": {
    "cmd": "psql -h prod-db.internal << 'SQL'\nDROP TABLE users;\nSQL\ncat <<'EOF'\nhi\nEOF",
-   "base": "deny"
+   "base": "deny",
+   "expect": "deny"
   },
   "h05h": {
    "cmd": "kubectl --context prod-cluster exec -i pg-0 -- psql << SQL\nDROP TABLE users;\nSQL\ncat <<EOF\nhi\nEOF",
-   "base": "allow"
+   "base": "allow",
+   "expect": "deny"
   },
   "h06a": {
    "cmd": "kubectl --context prod-cluster exec -i pg-0 -- psql <<\\SQL\nDROP TABLE users;\nSQL",
-   "base": "allow"
+   "base": "allow",
+   "expect": "deny"
   },
   "h06b": {
    "cmd": "kubectl --context prod-cluster exec -i pg-0 -- psql <<'END-SQL'\nDROP TABLE users;\nEND-SQL",
-   "base": "allow"
+   "base": "allow",
+   "expect": "deny"
   },
   "h06c": {
    "cmd": "ssh prod-db psql <<END-SQL\nDROP TABLE users;\nEND-SQL",
-   "base": "allow"
+   "base": "allow",
+   "expect": "deny"
   },
   "h06d": {
    "cmd": "psql -h prod-db.internal <<'END-SQL'\nDROP TABLE users;\nEND-SQL",
-   "base": "allow"
+   "base": "allow",
+   "expect": "deny"
   },
   "h06e": {
    "cmd": "kubectl --context prod-cluster exec -i pg-0 -- psql <<'1'\nDROP TABLE users;\n1",
-   "base": "allow"
+   "base": "allow",
+   "expect": "ask"
   },
   "h06f": {
    "cmd": "docker exec -i pg psql <<END.SQL\nDROP TABLE users;\nEND.SQL",
-   "base": "allow"
+   "base": "allow",
+   "expect": "deny"
   },
   "h07a": {
    "cmd": "echo 'DROP TABLE users;' | kubectl --context prod-cluster exec -i pg-0 -- psql -q -U postgres",
-   "base": "allow"
+   "base": "allow",
+   "expect": "deny"
   },
   "h07b": {
    "cmd": "cat /tmp/destr-review/q_drop.sql | kubectl --context prod-cluster exec -i pg-0 -- psql -q -d app",
    "base": "allow",
    "files": {
     "/tmp/destr-review/q_drop.sql": "DROP TABLE users;\n"
-   }
+   },
+   "expect": "deny"
   },
   "h07c": {
    "cmd": "echo 'DROP TABLE users;' | psql -e -h prod-db.internal",
-   "base": "allow"
+   "base": "allow",
+   "expect": "deny"
   },
   "h07d": {
    "cmd": "echo 'DROP TABLE users;' | kubectl --context prod-cluster exec -i pg-0 -- psql -U postgres",
-   "base": "allow"
+   "base": "allow",
+   "expect": "deny"
   },
   "h07e": {
    "cmd": "echo 'DROP DATABASE app;' | kubectl --context prod-cluster exec -i mysql-0 -- mysql -q -u root",
-   "base": "allow"
+   "base": "allow",
+   "expect": "deny"
   },
   "h07f": {
    "cmd": "kubectl --context prod-cluster exec -i pg-0 -- psql -q -U postgres <<'SQL'\nDROP TABLE users;\nSQL",
-   "base": "allow"
+   "base": "allow",
+   "expect": "deny"
   },
   "h07g": {
    "cmd": "kubectl --context prod-cluster exec -i pg-0 -- psql -q -U postgres < /tmp/destr-review/q_drop.sql",
    "base": "deny",
    "files": {
     "/tmp/destr-review/q_drop.sql": "DROP TABLE users;\n"
-   }
+   },
+   "expect": "deny"
   },
   "h07h": {
    "cmd": "echo 'DROP TABLE users;' | ssh prod-db psql -q -U postgres",
-   "base": "allow"
+   "base": "allow",
+   "expect": "deny"
   },
   "h08a": {
    "cmd": "kubectl --context prod-cluster exec -i pg-0 -- psql -U postgres -Atc '\\! rm -rf /var/lib/postgresql/data'",
-   "base": "allow"
+   "base": "allow",
+   "expect": "deny"
   },
   "h08b": {
    "cmd": "kubectl --context prod-cluster exec -i pg-0 -- psql -qc '\\! rm -rf /var/lib/postgresql/data'",
-   "base": "allow"
+   "base": "allow",
+   "expect": "deny"
   },
   "h08c": {
    "cmd": "kubectl --context prod-cluster exec -i pg-0 -- psql --command '\\! rm -rf /var/lib/postgresql/data'",
-   "base": "allow"
+   "base": "allow",
+   "expect": "deny"
   },
   "h08d": {
    "cmd": "kubectl --context prod-cluster exec -i pg-0 -- psql --command='\\! rm -rf /var/lib/postgresql/data'",
-   "base": "allow"
+   "base": "allow",
+   "expect": "deny"
   },
   "h08e": {
    "cmd": "kubectl --context prod-cluster exec -i pg-0 -- psql <<'SQL'\n\\! rm -rf /var/lib/postgresql/data\nSQL",
-   "base": "deny"
+   "base": "deny",
+   "expect": "deny"
   },
   "h08f": {
    "cmd": "echo '\\! rm -rf /var/lib/postgresql/data' | kubectl --context prod-cluster exec -i pg-0 -- psql",
-   "base": "allow"
+   "base": "allow",
+   "expect": "deny"
   },
   "h08g": {
    "cmd": "ssh prod-db \"psql -c '\\! rm -rf /var/lib/postgresql/data'\"",
-   "base": "allow"
+   "base": "allow",
+   "expect": "deny"
   },
   "h08h": {
    "cmd": "kubectl --context prod-cluster exec -i pg-0 -- psql -c \"\\copy users to program 'rm -rf /var/lib/postgresql/data'\"",
-   "base": "ask"
+   "base": "ask",
+   "expect": "ask"
   },
   "h08i": {
    "cmd": "kubectl --context prod-cluster exec -i pg-0 -- psql -c '\\! rm -rf /var/lib/postgresql/data'",
-   "base": "allow"
+   "base": "allow",
+   "expect": "deny"
   },
   "h08j": {
    "cmd": "kubectl --context prod-cluster exec -i pg-0 -- psql -Atc 'DROP TABLE users'",
-   "base": "deny"
+   "base": "deny",
+   "expect": "deny"
   },
   "h08k": {
    "cmd": "psql -h prod-db.internal -Atc '\\! rm -rf /data'",
-   "base": "allow"
+   "base": "allow",
+   "expect": "deny"
   },
   "h08l": {
    "cmd": "psql -h prod-db.internal -c '\\! rm -rf /data'",
-   "base": "allow"
+   "base": "allow",
+   "expect": "deny"
   },
   "h08m": {
    "cmd": "kubectl --context prod-cluster exec -i pg-0 -- psql -U postgres -c 'SELECT 1' -c '\\! rm -rf /var/lib/postgresql/data'",
-   "base": "allow"
+   "base": "allow",
+   "expect": "deny"
   },
   "h09a": {
    "cmd": "grep -n '<<EOF' f.sh\nkubectl --context prod-cluster delete namespace prod\ncat <<EOF\nhi\nEOF",
-   "base": "allow"
+   "base": "allow",
+   "expect": "allow"
   },
   "h09b": {
    "cmd": "# write the file with cat <<EOF\nhelm uninstall prod\ncat > /tmp/x <<EOF\nhi\nEOF",
-   "base": "allow"
+   "base": "allow",
+   "expect": "allow"
   },
   "h09c": {
    "cmd": "git commit -m \"docs: cat <<EOF example\"\nkubectl --context prod-cluster exec -i pg-0 -- psql -c \"DROP TABLE users\"\ncat <<EOF\nhi\nEOF",
-   "base": "allow"
+   "base": "allow",
+   "expect": "allow"
   },
   "h10a": {
    "cmd": "cat <<'SQL' | \\\n  kubectl --context prod-cluster exec -i pg-0 -- psql\nDROP TABLE users;\nSQL",
-   "base": "allow"
+   "base": "allow",
+   "expect": "deny"
   },
   "h10b": {
    "cmd": "cat <<'SQL' | \\\n  psql -h prod-db.internal\nDROP TABLE users;\nSQL",
-   "base": "allow"
+   "base": "allow",
+   "expect": "deny"
   },
   "h10c": {
    "cmd": "cat <<'SQL' | kubectl --context prod-cluster exec -i pg-0 -- psql\nDROP TABLE users;\nSQL",
-   "base": "allow"
+   "base": "allow",
+   "expect": "deny"
   },
   "h11a": {
    "cmd": "F=/tmp/destr-review/q_read.sql; cp /tmp/destr-review/q_drop.sql $F; kubectl --context prod-cluster exec -i pg-0 -- psql < $F",
@@ -1168,14 +1285,16 @@
    "files": {
     "/tmp/destr-review/q_read.sql": "SELECT count(*) FROM users;\n",
     "/tmp/destr-review/q_drop.sql": "DROP TABLE users;\n"
-   }
+   },
+   "expect": "ask"
   },
   "h11b": {
    "cmd": "F=/tmp/destr-review/q_read.sql; python3 gen.py > $F; cat $F | kubectl --context prod-cluster exec -i pg-0 -- psql",
    "base": "allow",
    "files": {
     "/tmp/destr-review/q_read.sql": "SELECT count(*) FROM users;\n"
-   }
+   },
+   "expect": "allow"
   },
   "h11c": {
    "cmd": "cp /tmp/destr-review/q_drop.sql /tmp/destr-review/q_read.sql; psql -h prod-db.internal -f /tmp/destr-review/q_read.sql",
@@ -1183,39 +1302,45 @@
    "files": {
     "/tmp/destr-review/q_read.sql": "SELECT count(*) FROM users;\n",
     "/tmp/destr-review/q_drop.sql": "DROP TABLE users;\n"
-   }
+   },
+   "expect": "ask"
   },
   "h11d": {
    "cmd": "python3 gen.py > /tmp/destr-review/q_read.sql && psql -h prod-db.internal --file=/tmp/destr-review/q_read.sql",
    "base": "allow",
    "files": {
     "/tmp/destr-review/q_read.sql": "SELECT count(*) FROM users;\n"
-   }
+   },
+   "expect": "ask"
   },
   "h11e": {
    "cmd": "cat > /tmp/destr-review/q_read.sql <<'EOF'\nDROP TABLE users;\nEOF\npsql -h prod-db.internal -f /tmp/destr-review/q_read.sql",
    "base": "deny",
    "files": {
     "/tmp/destr-review/q_read.sql": "SELECT count(*) FROM users;\n"
-   }
+   },
+   "expect": "deny"
   },
   "h11f": {
    "cmd": "echo 'DROP TABLE users;' > /tmp/destr-review/q_read.sql && psql -h prod-db.internal -f /tmp/destr-review/q_read.sql",
    "base": "deny",
    "files": {
     "/tmp/destr-review/q_read.sql": "SELECT count(*) FROM users;\n"
-   }
+   },
+   "expect": "deny"
   },
   "h11g": {
    "cmd": "echo 'DROP TABLE users;' > /tmp/destr-review/q_new.sql && psql -h prod-db.internal -f /tmp/destr-review/q_new.sql",
-   "base": "deny"
+   "base": "deny",
+   "expect": "deny"
   },
   "h11h": {
    "cmd": "sed -i '' 's/SELECT count/DROP TABLE users; SELECT count/' /tmp/destr-review/q_read.sql && psql -h prod-db.internal -f /tmp/destr-review/q_read.sql",
    "base": "allow",
    "files": {
     "/tmp/destr-review/q_read.sql": "SELECT count(*) FROM users;\n"
-   }
+   },
+   "expect": "ask"
   },
   "h11i": {
    "cmd": "cp /tmp/destr-review/q_drop.sql /tmp/destr-review/q_read.sql; psql -h prod-db.internal < /tmp/destr-review/q_read.sql",
@@ -1223,7 +1348,8 @@
    "files": {
     "/tmp/destr-review/q_read.sql": "SELECT count(*) FROM users;\n",
     "/tmp/destr-review/q_drop.sql": "DROP TABLE users;\n"
-   }
+   },
+   "expect": "ask"
   },
   "h11j": {
    "cmd": "cp /tmp/destr-review/q_drop.sql /tmp/destr-review/q_read.sql; kubectl --context prod-cluster exec -i pg-0 -- psql < /tmp/destr-review/q_read.sql",
@@ -1231,365 +1357,446 @@
    "files": {
     "/tmp/destr-review/q_read.sql": "SELECT count(*) FROM users;\n",
     "/tmp/destr-review/q_drop.sql": "DROP TABLE users;\n"
-   }
+   },
+   "expect": "ask"
   },
   "h11k": {
    "cmd": "echo 'DROP TABLE users;' > /tmp/destr-review/q_read.sql && clickhouse-client --host prod-ch --queries-file /tmp/destr-review/q_read.sql",
    "base": "deny",
    "files": {
     "/tmp/destr-review/q_read.sql": "SELECT count(*) FROM users;\n"
-   }
+   },
+   "expect": "deny"
   },
   "h11l": {
    "cmd": "echo 'DROP TABLE users;' > /tmp/destr-review/q_read.sql && mysql -h prod-db.internal -e 'source /tmp/destr-review/q_read.sql'",
    "base": "allow",
    "files": {
     "/tmp/destr-review/q_read.sql": "SELECT count(*) FROM users;\n"
-   }
+   },
+   "expect": "allow"
   },
   "h11m": {
    "cmd": "echo 'DROP TABLE users;' > /tmp/destr-review/q_read.sql && psql -h prod-db.internal -c '\\i /tmp/destr-review/q_read.sql'",
    "base": "allow",
    "files": {
     "/tmp/destr-review/q_read.sql": "SELECT count(*) FROM users;\n"
-   }
+   },
+   "expect": "allow"
   },
   "h11n": {
    "cmd": "cd /tmp/destr-review && echo 'DROP TABLE users;' > q_read.sql && psql -h prod-db.internal -f q_read.sql",
-   "base": "deny"
+   "base": "deny",
+   "expect": "deny"
   },
   "h12a": {
    "cmd": "echo \"`echo 'a\"b'`\"; helm uninstall prod; echo \"`echo 'a\"b'`\"",
-   "base": "allow"
+   "base": "allow",
+   "expect": "allow"
   },
   "h12b": {
    "cmd": "kubectl --context prod-cluster exec -i pg-0 -- psql <<< \"$SQL\"",
-   "base": "allow"
+   "base": "allow",
+   "expect": "ask"
   },
   "h12c": {
    "cmd": "kubectl --context prod-cluster exec -i pg-0 -- psql -f <(echo 'DROP TABLE users;')",
-   "base": "ask"
+   "base": "ask",
+   "expect": "ask"
   },
   "h12d": {
    "cmd": "psql -h prod-db.internal < <(echo 'DROP TABLE users;')",
-   "base": "ask"
+   "base": "ask",
+   "expect": "ask"
   },
   "h12e": {
    "cmd": "< /tmp/destr-review/q_drop.sql kubectl --context prod-cluster exec -i pg-0 -- psql",
    "base": "allow",
    "files": {
     "/tmp/destr-review/q_drop.sql": "DROP TABLE users;\n"
-   }
+   },
+   "expect": "deny"
   },
   "h12f": {
    "cmd": "kubectl --context prod-cluster exec -i pg-0 -- su-exec postgres psql -c 'DROP TABLE users'",
-   "base": "allow"
+   "base": "allow",
+   "expect": "allow"
   },
   "h12g": {
    "cmd": "kubectl --context prod-cluster exec -i pg-0 -- runuser -u postgres -- psql -c 'DROP TABLE users'",
-   "base": "allow"
+   "base": "allow",
+   "expect": "allow"
   },
   "h12h": {
    "cmd": "kubectl --context prod-cluster exec -i pg-0 -- ash -c \"psql -c 'DROP TABLE users'\"",
-   "base": "allow"
+   "base": "allow",
+   "expect": "allow"
   },
   "h12i": {
    "cmd": "docker-compose exec db psql -c 'DROP TABLE users'",
-   "base": "allow"
+   "base": "allow",
+   "expect": "allow"
   },
   "h12j": {
    "cmd": "kubectl --context prod-cluster run tmp --rm -i --image=postgres -- psql -h pg -c 'DROP TABLE users'",
-   "base": "ask"
+   "base": "ask",
+   "expect": "ask"
   },
   "h12k": {
    "cmd": "kubectl --context prod-cluster exec -i pg-0 -- psql <<'SQL'\nSELECT 1;\n  SQL\nDROP TABLE users;\nSQL",
-   "base": "allow"
+   "base": "allow",
+   "expect": "deny"
   },
   "h12l": {
    "cmd": "{\n  kubectl --context prod-cluster exec -i pg-0 -- psql\n} <<'SQL'\nDROP TABLE users;\nSQL",
-   "base": "allow"
+   "base": "allow",
+   "expect": "allow"
   },
   "h12m": {
    "cmd": "helm unin\\\nstall prod",
-   "base": "allow"
+   "base": "allow",
+   "expect": "allow"
   },
   "h12n": {
    "cmd": "kubectl --context prod-cluster exec -i pg-0 -- psql <<< 'DROP TABLE users;'",
-   "base": "deny"
+   "base": "deny",
+   "expect": "deny"
   },
   "p01": {
    "cmd": "kubectl --context prod-cluster exec -i pg-0 -- psql <<< \"$SQL\"",
-   "base": "allow"
+   "base": "allow",
+   "expect": "ask"
   },
   "p02": {
    "cmd": "psql -h prod-db.internal <<< \"$SQL\"",
-   "base": "allow"
+   "base": "allow",
+   "expect": "ask"
   },
   "p03": {
    "cmd": "kubectl --context prod-cluster exec -i pg-0 -- psql <<< $(cat /tmp/destr-review/q_drop.sql)",
    "base": "allow",
    "files": {
     "/tmp/destr-review/q_drop.sql": "DROP TABLE users;\n"
-   }
+   },
+   "expect": "ask"
   },
   "p04": {
    "cmd": "kubectl --context prod-cluster exec -i pg-0 -- psql <<<\"$(python3 gen.py)\"",
-   "base": "allow"
+   "base": "allow",
+   "expect": "ask"
   },
   "p05": {
    "cmd": "< /tmp/destr-review/q_drop.sql kubectl --context prod-cluster exec -i pg-0 -- psql",
    "base": "allow",
    "files": {
     "/tmp/destr-review/q_drop.sql": "DROP TABLE users;\n"
-   }
+   },
+   "expect": "deny"
   },
   "p06": {
    "cmd": "< /tmp/destr-review/q_drop.sql psql -h prod-db.internal",
    "base": "allow",
    "files": {
     "/tmp/destr-review/q_drop.sql": "DROP TABLE users;\n"
-   }
+   },
+   "expect": "deny"
   },
   "p07": {
    "cmd": "kubectl --context prod-cluster exec -i pg-0 -- psql 0< /tmp/destr-review/q_drop.sql",
    "base": "allow",
    "files": {
     "/tmp/destr-review/q_drop.sql": "DROP TABLE users;\n"
-   }
+   },
+   "expect": "deny"
   },
   "p08": {
    "cmd": "python3 gen.py | kubectl --context prod-cluster exec -i pg-0 -- psql",
-   "base": "allow"
+   "base": "allow",
+   "expect": "ask"
   },
   "p09": {
    "cmd": "kubectl --context prod-cluster exec -i pg-0 -- psql < \"$F\"",
-   "base": "ask"
+   "base": "ask",
+   "expect": "ask"
   },
   "p10": {
    "cmd": "echo \"$Q\" | kubectl --context prod-cluster exec -i pg-0 -- psql",
-   "base": "allow"
+   "base": "allow",
+   "expect": "ask"
   },
   "p11": {
    "cmd": "python3 gen.py | tee /tmp/x.sql | kubectl --context prod-cluster exec -i pg-0 -- psql",
-   "base": "allow"
+   "base": "allow",
+   "expect": "ask"
   },
   "p12": {
    "cmd": "exec 3< /tmp/destr-review/q_drop.sql; kubectl --context prod-cluster exec -i pg-0 -- psql <&3",
    "base": "allow",
    "files": {
     "/tmp/destr-review/q_drop.sql": "DROP TABLE users;\n"
-   }
+   },
+   "expect": "allow"
   },
   "p13": {
    "cmd": "cat /tmp/destr-review/q_drop.sql | kubectl --context prod-cluster exec -i pg-0 -- psql -f -",
    "base": "ask",
    "files": {
     "/tmp/destr-review/q_drop.sql": "DROP TABLE users;\n"
-   }
+   },
+   "expect": "deny"
   },
   "p14": {
    "cmd": "curl -s http://x/q.sql | kubectl --context prod-cluster exec -i pg-0 -- psql",
-   "base": "allow"
+   "base": "allow",
+   "expect": "ask"
   },
   "p15": {
    "cmd": "kubectl --context prod-cluster exec -i pg-0 -- psql < <(cat /tmp/destr-review/q_drop.sql)",
    "base": "ask",
    "files": {
     "/tmp/destr-review/q_drop.sql": "DROP TABLE users;\n"
-   }
+   },
+   "expect": "ask"
   },
   "p16": {
    "cmd": "echo 'DROP TABLE users;' | kubectl --context prod-cluster exec -i pg-0 -- psql -X -q",
-   "base": "allow"
+   "base": "allow",
+   "expect": "deny"
   },
   "p17": {
    "cmd": "kubectl --context prod-cluster exec -i pg-0 -- psql <<'SQL'\nSELECT 1;\n  SQL\nDROP TABLE users;\nSQL",
-   "base": "allow"
+   "base": "allow",
+   "expect": "deny"
   },
   "p18": {
    "cmd": "ssh prod-db psql <<< \"$SQL\"",
-   "base": "allow"
+   "base": "allow",
+   "expect": "ask"
   },
   "p19": {
    "cmd": "SQL='DROP TABLE users;'; kubectl --context prod-cluster exec -i pg-0 -- psql <<< \"$SQL\"",
-   "base": "deny"
+   "base": "deny",
+   "expect": "deny"
   },
   "p20": {
    "cmd": "kubectl --context prod-cluster exec -i pg-0 -- psql -q <<< 'DROP TABLE users;'",
-   "base": "deny"
+   "base": "deny",
+   "expect": "deny"
   },
   "p21": {
    "cmd": "echo 'DROP TABLE users;' | kubectl --context prod-cluster exec -i ch-0 -- clickhouse-client -q 'SELECT 1'",
-   "base": "allow"
+   "base": "allow",
+   "expect": "allow"
   },
   "p22": {
    "cmd": "kubectl --context prod-cluster exec -i pg-0 -- psql -e <<'SQL'\nDROP TABLE users;\nSQL",
-   "base": "allow"
+   "base": "allow",
+   "expect": "deny"
   },
   "p23": {
    "cmd": "kubectl --context prod-cluster exec -i pg-0 -- psql -q < /tmp/destr-review/q_drop.sql",
    "base": "deny",
    "files": {
     "/tmp/destr-review/q_drop.sql": "DROP TABLE users;\n"
-   }
+   },
+   "expect": "deny"
   },
   "p24": {
    "cmd": "echo 'DROP TABLE users;' | kubectl --context prod-cluster exec -i pg-0 -- psql -q",
-   "base": "allow"
+   "base": "allow",
+   "expect": "deny"
   },
   "fuzz00": {
    "cmd": "<<< rm SELECT 1; `-h --context& exec ]] SQL(;psql( <<'EOF' prod-dbDROP TABLE users; -rf/var/lib/postgresql/data|\n \t \u0000 \\\nssh<<-EOFnamespacehelm-h",
-   "base": "ask"
+   "base": "ask",
+   "expect": "ask"
   },
   "fuzz01": {
    "cmd": "psql \"' /var/lib/postgresql/data  <<EOF!-h -hé /var/lib/postgresql/data<<'SQL' uninstall\n<<< \\\n x=1<<'SQL' \r\"$(it's deleteprodk3s-production <<< ))=<<'SQL'<<< )\\\nééssh/tmp/a.sqlit's> -c",
-   "base": "ask"
+   "base": "ask",
+   "expect": "ask"
   },
   "fuzz02": {
    "cmd": "psql` prod-db /tmp/a.sqlkubectl\r ) delete--context kubectl<<'SQL' pg-0 k3s-production \n prod-db.internal{ prod$((bash pg-0 delete ssh ]] x=1\\! SQL<< 'SQL'  psqlk3s-productionuninstall x=1-f! x=1{a,b} ",
-   "base": "ask"
+   "base": "ask",
+   "expect": "ask"
   },
   "fuzz03": {
    "cmd": "psql \\<<EOF | &&prod<< 'SQL'namespace psql <<<  \n echo #   ",
-   "base": "ask"
+   "base": "ask",
+   "expect": "ask"
   },
   "fuzz04": {
    "cmd": "$((namespace don'tprod-db.internaldocker {\tEOF<< 'SQL' ' kubectl don't&namespace(psql ' ) <<<|SELECT 1;`&&$((psql  delete \n\\ ; ",
-   "base": "ask"
+   "base": "ask",
+   "expect": "ask"
   },
   "fuzz05": {
    "cmd": "kubectl <<'SQL'#= -i/tmp/a.sql ' DROP TABLE users; )) x=1<<EOF <<< rm it'spsql<exec<<EOFhelm \u0000<`-h-f prod-dbSQL don't \tDROP TABLE users;<<'SQL'",
-   "base": "ask"
+   "base": "ask",
+   "expect": "ask"
   },
   "fuzz06": {
    "cmd": "\\! ) psql -- =sshEOF #prod-db.internal-i]]<<'SQL'! $(( it's <<'SQL' pg-0 SELECT 1; é \" <<EOFssh helm } ${x}` &&!\n bash   -h# < \r << {a,b} <<< ",
-   "base": "ask"
+   "base": "ask",
+   "expect": "ask"
   },
   "fuzz07": {
    "cmd": "SQL echo` EOF -- {a,b}' &&<<-EOF $(([[don'tSELECT 1; || bashSELECT 1;[[ \texec ||<<<   it's<<'EOF' ; -f \r it's <<EOF <<'EOF' \\ | rm uninstall",
-   "base": "deny"
+   "base": "deny",
+   "expect": "ask"
   },
   "fuzz08": {
    "cmd": "]] &-i $((&uninstall \\\npsql (<<'SQL'[[' \\! = echo#-i-- < '> \u0000 psql<<'EOF'EOF&& <<<-rf {a,b} ||]]echo \n ]] ",
    "base": "ask",
-   "not_run_by_the_shell": "a backslash-newline joins psql to the word before it, so psql is an argument of another command; bash and zsh reject the text and call no stub; 3814e3e refused a psql the shell does not run"
+   "not_run_by_the_shell": "a backslash-newline joins psql to the word before it, so psql is an argument of another command; bash and zsh reject the text and call no stub; 3814e3e refused a psql the shell does not run",
+   "expect": "allow"
   },
   "fuzz09": {
    "cmd": "&& && ssh\\\npg-0 /tmp/a.sql <\n prod-db.internal exec-c \" sh ]]{a,b}<<-EOF -f \"psql\\ {a,b} <<'SQL' docker$(psql \nhelm DROP TABLE users;ssh-h $(( ) ",
-   "base": "deny"
+   "base": "deny",
+   "expect": "deny"
   },
   "fuzz10": {
    "cmd": "; {SELECT 1; x=1 x=1-- ${x}|uninstall} it's kubectl <<'EOF' `& #don'tpg-0kubectl { psql \" #\" delete namespace\u0000 \\! ssh(  namespacebash \r ; /tmp/a.sql \n kubectl/tmp/a.sql<<'EOF'",
-   "base": "ask"
+   "base": "ask",
+   "expect": "ask"
   },
   "fuzz11": {
    "cmd": "-f\npsql )$( cat ` -- || uninstall bash   echo docker <namespace -h&&<<'SQL'}(\\! prod-db.internal << psql'&\\\n ' ",
-   "base": "ask"
+   "base": "ask",
+   "expect": "ask"
   },
   "fuzz12": {
    "cmd": "psql don't << 'SQL' --  namespace \"#\u0000]]{{ <<-EOF ` \"   \nprodhelm<<<uninstall& &&)) -rfkubectl $((  ' echo ssh exec]]",
-   "base": "ask"
+   "base": "ask",
+   "expect": "ask"
   },
   "fuzz13": {
    "cmd": "helm\u0000< /var/lib/postgresql/data {a,b} /var/lib/postgresql/data (\\! psql psqlecho}SELECT 1;' it's#<< 'SQL' )\r {a,b}<< `\r \nuninstall\\\n -h don't $(&'<<-EOF DROP TABLE users;",
-   "base": "deny"
+   "base": "deny",
+   "expect": "deny"
   },
   "fuzz14": {
    "cmd": "ssh<<'SQL'{ \\ --context|| psql pg-0 \n{a,b} rm -h SELECT 1;-f  <<'SQL'\\\n -- \n",
-   "base": "ask"
+   "base": "ask",
+   "expect": "ask"
   },
   "fuzz15": {
    "cmd": ";<<-EOF/tmp/a.sql$(;)uninstall ;prod <<'EOF' )   psql -c! <<'SQL' -c \\\n ]]  echo<<'SQL'prod-db.internal#sh   -i << 'SQL'-f #  psql'} pg-0{a,b} ",
-   "base": "ask"
+   "base": "ask",
+   "expect": "ask"
   },
   "fuzz16": {
    "cmd": "bash || delete  SELECT 1;| \n!-h SQL | é k3s-production [[bash (psql /tmp/a.sql prod-db SQLkubectl prod-db.internal << DROP TABLE users;it's$(( k3s-production\\ {a,b} \\!< prod don't) ''sshSELECT 1; \n",
-   "base": "deny"
+   "base": "deny",
+   "expect": "deny"
   },
   "fuzz17": {
    "cmd": "exec--contextcat= SQLsh {a,b}$(({ \n$( psql{ k3s-productionprod-db ]] ' bashit's << 'SQL' \\ EOF $x prod-db\t\\docker&& ; EOF -h DROP TABLE users; $(\n<<</tmp/a.sql !",
-   "base": "ask"
+   "base": "ask",
+   "expect": "ask"
   },
   "fuzz18": {
    "cmd": "$((=! DROP TABLE users;; {SQL]] << 'SQL'<</var/lib/postgresql/data rm]];>bash\r<<'EOF' {a,b}! psql rm &<<EOF<<'EOF' /var/lib/postgresql/data;SELECT 1; )) )\\! \nrmcatsh  \t\\\u0000`",
-   "base": "ask"
+   "base": "ask",
+   "expect": "ask"
   },
   "fuzz19": {
    "cmd": "\\\n << 'SQL' } psql <<'SQL' }< \n prod delete pg-0",
-   "base": "ask"
+   "base": "ask",
+   "expect": "ask"
   },
   "fuzz20": {
    "cmd": "namespace' \n psql !k3s-production '<<'EOF' \u0000<< 'SQL' {a,b}]]delete DROP TABLE users; \\!prod-db && <<'EOF' \\! | SQL kubectl <<execcat <<EOFecho  $( [[\\! #/tmp/a.sql uninstall /var/lib/postgresql/data k3s-production ' ",
-   "base": "deny"
+   "base": "deny",
+   "expect": "deny"
   },
   "fuzz21": {
    "cmd": "psql /tmp/a.sql  bash]] k3s-production<<'SQL' \\\n ))sh -fEOF  prod<<-EOF} -fcatpsql cat ",
-   "base": "ask"
+   "base": "ask",
+   "expect": "ask"
   },
   "fuzz22": {
    "cmd": "psql ( -c&&x=1<<<<<<EOFuninstall`bash \u0000 SELECT 1; DROP TABLE users; ${x}) $x{ namespace-i' uninstall ;`[['helm $( [[ x=1 prod-db prod-db \n ||-rf-h#<<EOF<",
-   "base": "ask"
+   "base": "ask",
+   "expect": "ask"
   },
   "fuzz23": {
    "cmd": "&&${x} psql /tmp/a.sql ` && !/var/lib/postgresql/data<<EOF <--context EOF/var/lib/postgresql/data \r \n/tmp/a.sql --\\< &&<<EOF uninstall<<< SELECT 1; $({a,b} ",
-   "base": "ask"
+   "base": "ask",
+   "expect": "ask"
   },
   "fuzz24": {
    "cmd": "( || < \\\n) namespaceprod-db <<-EOF & ;\t psql = <<'EOF'SQL rm{-hexec[[\t --context$x\n delete ",
-   "base": "ask"
+   "base": "ask",
+   "expect": "ask"
   },
   "fuzz25": {
    "cmd": "psql | <<-EOF DROP TABLE users;-h <<< \u0000helmprod-db.internalEOF é $(prod-dbdon't\\\n -rf $x kubectlpg-0 prod } $(( $x uninstall/var/lib/postgresql/data\\\n$x<<< docker )) -fit's uninstall ",
-   "base": "ask"
+   "base": "ask",
+   "expect": "ask"
   },
   "fuzz26": {
    "cmd": "# \n psql -i $(don't   \r )) pg-0<<'EOF' helm\"&& [[DROP TABLE users;don't DROP TABLE users; psql é--\\\n} \n\\\n << 'SQL' \\\n\n\u0000 prod-db produninstall SELECT 1;/var/lib/postgresql/data ",
-   "base": "ask"
+   "base": "ask",
+   "expect": "ask"
   },
   "fuzz27": {
    "cmd": "psql -rféé [[  ssh<=`x=1     <<<  <<-EOFx=1 -i { << 'SQL' catEOFrm$x k3s-production \\\n|| |exec\n -- \\\nhelm ( ",
-   "base": "ask"
+   "base": "ask",
+   "expect": "ask"
   },
   "fuzz28": {
    "cmd": "(k3s-production\\!#<<EOF\t$xprod   -f   bash/tmp/a.sql; psql ${x} rm-h <<< \\ \n <<EOF} ",
-   "base": "ask"
+   "base": "ask",
+   "expect": "ask"
   },
   "fuzz29": {
    "cmd": "SELECT 1;/var/lib/postgresql/dataprod-db & ;it's >--context <<<\\delete & rm -i<< << prod-db.internal $((\t ; $((\r  $(prod-db.internal <<'SQL'\n/var/lib/postgresql/data >'[[ echosh { prod-db echo --",
    "base": "deny",
-   "not_run_by_the_shell": "rm stands inside one single-quoted word (zsh: bad pattern on that word; bash: syntax error); neither shell calls a stub; 3814e3e refused an rm the shell does not run"
+   "not_run_by_the_shell": "rm stands inside one single-quoted word (zsh: bad pattern on that word; bash: syntax error); neither shell calls a stub; 3814e3e refused an rm the shell does not run",
+   "expect": "allow"
   },
   "fuzz30": {
    "cmd": "psql <<EOF'kubectl # \n don't\n#delete <<-EOF echocat<< 'SQL' \"  SELECT 1; ! < SQL<<< $(",
-   "base": "ask"
+   "base": "ask",
+   "expect": "ask"
   },
   "fuzz31": {
    "cmd": "''SELECT 1; ) prod k3s-production&& ! k3s-productionbash\n <<-EOFnamespacessh$((\\ || psql & -i]] \n \\\n exec($x\u0000prod-db\r' it'sprodSELECT 1; cat $x-f<< ]]$((",
-   "base": "ask"
+   "base": "ask",
+   "expect": "ask"
   },
   "fuzz32": {
    "cmd": "prod-db.internal x=1 <<'SQL'ssh| ; $xx=1 <<'SQL'&& DROP TABLE users;psql {<<< << 'SQL'---fpsql && ` rm/tmp/a.sql&&<<-EOF \n DROP TABLE users;x=1 $(( <<'SQL'${x} namespaceSQL",
-   "base": "deny"
+   "base": "deny",
+   "expect": "deny"
   },
   "fuzz33": {
    "cmd": "x=1-rf psql `[[< DROP TABLE users;/tmp/a.sql{a,b}';; #<<EOF delete\\\ndon't helmSELECT 1; <> { kubectl /var/lib/postgresql/data prod-dbecho \\\n",
-   "base": "deny"
+   "base": "deny",
+   "expect": "ask"
   },
   "fuzz34": {
    "cmd": "\r psql ssh; }/tmp/a.sql'\\-i <<don't \u0000  $xcatcat$x\\!-c psql[[ && docker${x} = --contextssh-f ;$(\n <<<psqlEOF ",
-   "base": "ask"
+   "base": "ask",
+   "expect": "ask"
   },
   "fuzz35": {
    "cmd": "delete it's ' {psql <<-EOF \ndon't uninstall k3s-production docker rm\u0000-cx=1)prod <\\\n rm it's\u0000(psql>` -i`kubectl = =-c' ' ",
-   "base": "ask"
+   "base": "ask",
+   "expect": "ask"
   },
   "fuzz36": {
    "cmd": " psql ; x=1{/var/lib/postgresql/data (<<EOF (<<'EOF' ; namespace -f <<-EOF ; ----context$(( <<EOFhelm -c-h\\!-i<< 'SQL' prod-db.internal\u0000(  \n prod-db.internal$x | \r$((| > ))<< 'SQL'",
-   "base": "ask"
+   "base": "ask",
+   "expect": "ask"
   },
   "fuzz37": {
    "cmd": "psql ))||!-c[[$( <<'EOF' \n <<prod-db.internal delete& \\<<EOF  SQL don'té \"= \n /tmp/a.sql \\\n --rm<<< prod-db.internalk3s-production ' $(($( <<'SQL' #))   /tmp/a.sql",
-   "base": "ask"
+   "base": "ask",
+   "expect": "ask"
   }
  }
 }
