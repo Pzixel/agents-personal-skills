@@ -2141,11 +2141,13 @@ class DestructiveDecisionTest(unittest.TestCase):
         cmd = "python3 - <<'EOF'\nimport psycopg2\ncur.execute('UPDATE t SET a=1 WHERE id=2')\nEOF"
         self.assertEqual(_destructive(cmd)["class"], "approval")
 
-    def test_sql_file_written_by_heredoc_is_classified_by_its_text(self):
+    def test_sql_file_written_by_heredoc_and_run_in_one_command_asks_unless_its_text_has_no_undo(self):
+        # A write that does not happen leaves the old disk text for the client (fixture row W8), so a
+        # file written and read in one command asks; the written text is still classed.
         read = "cat > q.sql <<'EOF'\nSELECT 1;\nEOF\npsql -f q.sql"
         drop = "cat > q.sql <<'EOF'\nDROP TABLE t;\nEOF\npsql -f q.sql"
         self.assertEqual(
-            (_destructive(read)["class"], _destructive(drop)["class"]), ("none", "impossible")
+            (_destructive(read)["class"], _destructive(drop)["class"]), ("approval", "impossible")
         )
 
     def test_sql_file_read_by_the_hook_is_classified_by_its_text(self):
@@ -2381,8 +2383,7 @@ class DestructiveProbeTest(unittest.TestCase):
     def test_known_gaps_still_pass(self):
         # Known gaps, not wanted behaviour: a script written and run in one command (A2, A3, A5), argv
         # through xargs (P17), $(cat file) as an argument (T10, T14), a file rewritten under another
-        # spelling (T17, T18, X11, X12), stdin redirected into a group, subshell, function or exec
-        # (F07-F09, F24), a client file path read on the far side of a carrier (G1, G2, G4).
+        # spelling (T17, T18, X11, X12), a client file path read on the far side of a carrier (G1, G2, G4).
         for label, decision in self._decisions("gap").items():
             with self.subTest(label):
                 self.assertEqual(decision, "allow")

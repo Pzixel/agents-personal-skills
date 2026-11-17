@@ -72,15 +72,15 @@
   },
   "F07 group fed by redirect": {
    "cmd": "{ kubectl --context k3s-production exec -i pg-0 -- psql; } < /tmp/destr-review/q_drop.sql",
-   "group": "gap"
+   "group": "hole"
   },
   "F08 subshell fed by redirect": {
    "cmd": "( kubectl --context k3s-production exec -i pg-0 -- psql ) < /tmp/destr-review/q_drop.sql",
-   "group": "gap"
+   "group": "hole"
   },
   "F09 exec < file then client": {
    "cmd": "exec < /tmp/destr-review/q_drop.sql; kubectl --context k3s-production exec -i pg-0 -- psql",
-   "group": "gap"
+   "group": "hole"
   },
   "F14 nested heredoc in sh -c, terminator glued to quote": {
    "cmd": "kubectl --context k3s-production exec -i pg-0 -- sh -c 'psql <<EOF\nDROP TABLE users;\nEOF'",
@@ -116,7 +116,7 @@
   },
   "F24 function fed by redirect": {
    "cmd": "f() { kubectl --context k3s-production exec -i pg-0 -- psql; }; f < /tmp/destr-review/q_drop.sql",
-   "group": "gap"
+   "group": "hole"
   },
   "F27 nested heredoc, 2 statements, terminator glued, SELECT first": {
    "cmd": "kubectl --context k3s-production exec -i pg-0 -- sh -c 'psql <<EOF\nSELECT 1;\nDROP TABLE users;\nEOF'",
