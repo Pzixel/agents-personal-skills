@@ -5417,11 +5417,12 @@ def _quoted_positions(text):
 
 
 def _expand_brace_lists(script, shell=False):
-    """Expand comma braces the shell expands (outside quotes)."""
+    """Expand comma braces the shell expands (outside quotes; in the
+    destructive reading also not escaped: ``"\\{0,200\\}"`` is a grep bound)."""
     for _ in range(8):
         quoted = _quoted_positions(script)
         expanded = (_SHELL_BRACE_LIST_RE if shell else _BRACE_LIST_RE).sub(
-            lambda m: m.group(0) if m.start(2) - 1 in quoted
+            lambda m: m.group(0) if m.start(2) - 1 in quoted or shell and script[m.start(2) - 2:m.start(2) - 1] == "\\"
             else " ".join(m.group(1) + alt + m.group(3) for alt in m.group(2).split(",")),
             script,
         )
