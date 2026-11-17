@@ -3378,18 +3378,48 @@ def exempt_candidates(next_step, timed_step, facts):
     return ("" if live_mechanisms(facts) else next_step, "" if live_clocks(facts) else timed_step)
 
 
-def live_mechanisms(facts):
-    """Condition (c) of the next-step rule: ids of the session's mechanisms still live at the stop,
-    from any turn (``transcript.background_watch_scan`` facts). A background task is live until
-    its notification or TaskStop, a Monitor until its end notice, a scheduled job until its fire
-    or CronDelete (a one-shot job; a recurring one is not a wait), an async agent until its
-    notification or TaskStop (a SendMessage re-opens it); an Agent call with no result is live."""
+def live_work(facts):
+    """Ids of the session's work whose result or event arrives as a task notification, live in
+    ``transcript.background_watch_scan`` facts: a background task until its notification or TaskStop, a Monitor
+    until its end notice, an async agent until its notification, TaskStop or an owner kill (a successful
+    SendMessage re-opens it)."""
     live = [k for k, t in facts["tasks"].items() if not t["closed"]]
     live += [k for k, m in facts["monitors"].items() if m["ended"] is None]
+    return live + [k for k, a in facts["agents"].items() if not a["closed"]]
+
+
+def live_mechanisms(facts):
+    """Condition (c) of the next-step rule: ids of the session's mechanisms still live at the stop,
+    from any turn: ``live_work``, a one-shot scheduled job until its fire or CronDelete (a recurring one
+    is not a wait), and an Agent call with no result. The Stop readers take this wider set: a false "live"
+    costs them one exempted reply; the dialog gate (``ask_live_work_decision``) takes ``live_work``, where it
+    would block the session."""
+    live = live_work(facts)
     live += [k for k, j in facts["cron_jobs"].items() if not j["closed"]]
-    live += [k for k, a in facts["agents"].items() if not a["closed"]]
     live += ["Agent call"] * facts["agent_calls"]
     return live
+
+
+_ASK_LIVE_WORK_REASON = (
+    "Refused by ask-existing-gate (live-work rule): {count} of this session's agents, background tasks or Monitors"
+    " ({ids}) are still running. The dialog is modal: while it is open the session processes none of their"
+    " results, so they would wait for the owner's answer. Unless this question is already pinned, raise it with"
+    " one PushNotification whose message starts with `QUESTION:` (it is pinned to the status line), go on with"
+    " the work that does not need the answer, and open the dialog when nothing of the session is running."
+)
+
+
+def ask_live_work_decision(payload, facts):
+    """PreToolUse rule on AskUserQuestion: the refusal text while ``live_work(facts)`` is not empty, else None.
+    ``facts``: the last ``transcript.background_watch_scan`` snapshot of the transcript as it stands at the
+    call, or None when it could not be read (fail open). No clause lifts it: no reason makes a running
+    agent's result processable under the modal dialog. A subagent payload passes."""
+    if not isinstance(payload, dict) or is_delegate(payload) or not facts:
+        return None
+    live = live_work(facts)
+    if not live:
+        return None
+    return _ASK_LIVE_WORK_REASON.format(count=len(live), ids=", ".join(live))
 
 
 # The word before a done word that makes it a question, a relative clause, a condition or a future, not an
@@ -3591,7 +3621,9 @@ _NO_QUESTION_E = "QUESTION E is not asked for this reply: answer timed_step fals
 _HANDOFF_REASON = (
     REPLY_LINT_MARKER + " the reply leaves work waiting on the owner in plain text "
     "(\"{sentence}\"). If the decision is inside your authority (a technical question by the "
-    "authority rule, or a tunable), decide it, do it now and report it. Otherwise ask now with the "
+    "authority rule, or a tunable), decide it, do it now and report it. While an agent, background task or "
+    "Monitor of this session is running, raise the question with one PushNotification whose message starts with "
+    "`QUESTION:` instead of the dialog. Otherwise ask now with the "
     "AskUserQuestion tool: each option self-contained (what the owner sees change, the "
     "deciding numbers, your recommendation first), never a pointer to an earlier message. The "
     "question and its options are a chat reply to the owner, not an artifact: write them in the "
@@ -5853,6 +5885,20 @@ _ASK_AFTER_PIN_REASON = (
 _OWNER_REJECTED = "The user doesn't want to proceed with this tool use."
 
 
+def _reinvoked(entry):
+    """The entry starts a new invocation of the session: a turn end, or a task notification delivered to it."""
+    import transcript
+
+    if entry.get("type") == "system":
+        return entry.get("subtype") == "turn_duration"
+    if entry.get("type") == "attachment":
+        attachment = entry.get("attachment")
+        return (isinstance(attachment, dict) and attachment.get("type") == "queued_command"
+                and "<task-notification>" in str(attachment.get("prompt") or ""))
+    return entry.get("type") == "user" and any(
+        b.get("type") == "text" and "<task-notification>" in str(b.get("text") or "") for b in transcript.blocks_of(entry))
+
+
 def ask_after_pin_decision(payload, pin_written, entries_from_end):
     """PreToolUse rule on AskUserQuestion: the refusal text, or None.
 
@@ -5865,7 +5911,10 @@ def ask_after_pin_decision(payload, pin_written, entries_from_end):
     Refuses a main-session call while a pin is held, ``metadata.source`` holds no non-empty ``blocked`` clause
     (``source_clauses``), and no entry written after the pin shows work or the owner: a tool call other than
     AskUserQuestion and PushNotification, or a result the owner dismissed or rejected (``_OWNER_REJECTED``,
-    with or without a comment; read from the result alone). An answered dialog clears the pin file. A dialog refused by a hook or failed
+    with or without a comment; read from the result alone), or a re-invocation of the session: a
+    ``system``/``turn_duration`` entry, a ``user`` entry with a text block holding a ``<task-notification>``, or a
+    ``queued_command`` attachment whose prompt holds one (a ``queue-operation`` is not delivered yet). An
+    answered dialog clears the pin file. A dialog refused by a hook or failed
     is not work, nor a result whose call lies before the pin (launched before the push). Sidechain entries and
     entries without a timestamp are skipped. No pin, a subagent payload, a malformed input and a read that ends before
     an entry older than the pin pass."""
@@ -5884,6 +5933,8 @@ def ask_after_pin_decision(payload, pin_written, entries_from_end):
             continue
         if written < pin_written:
             return _ASK_AFTER_PIN_REASON
+        if _reinvoked(entry):
+            return None
         for block in transcript.blocks_of(entry):
             kind = block.get("type")
             if kind == "tool_result" and block.get("is_error") and (

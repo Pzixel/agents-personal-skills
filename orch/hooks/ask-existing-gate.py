@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""PreToolUse gate on AskUserQuestion. First the ask-after-pin rule (gate_policy.ask_after_pin_decision) over
+"""PreToolUse gate on AskUserQuestion, one refusal at a time. First the live-work rule
+(gate_policy.ask_live_work_decision) over the whole transcript's background_watch_scan (a missing or unreadable
+transcript passes; the scan of a 31.9 MB transcript took 0.18 s with imports). Then the ask-after-pin rule (gate_policy.ask_after_pin_decision) over
 the mtime of the session's pin file and its transcript read backwards to the pin (at most PIN_SCAN_BYTES; no
 pin or any read error passes). Then
 the rule, fail-open on a payload without a stem included, gate_policy.ask_existing_decision. A question that
@@ -36,6 +38,19 @@ def log(record):
         pass
 
 
+def live_reason(payload):
+    try:
+        path = payload.get("transcript_path")
+        if not isinstance(path, str) or not os.path.isfile(path):
+            return None
+        facts = None
+        for facts in transcript.background_watch_scan(transcript.entries_of(path), "\x00"):
+            pass
+        return gate_policy.ask_live_work_decision(payload, facts)
+    except Exception:
+        return None
+
+
 def pin_reason(payload):
     try:
         session, path = payload.get("session_id"), payload.get("transcript_path")
@@ -56,7 +71,7 @@ def main():
     except ValueError:
         return 0
     payload = payload if isinstance(payload, dict) else {}
-    reason = pin_reason(payload)
+    reason = live_reason(payload) or pin_reason(payload)
     if reason:
         print(reason, file=sys.stderr)
         return 2
