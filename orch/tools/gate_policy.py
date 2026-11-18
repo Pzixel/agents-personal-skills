@@ -2997,15 +2997,15 @@ _PROVEN_FORM_REASON = (
     "`Unknown: <the read that decides it> — blocked by <...>` when that read is blocked, and put the cause below the "
     "first paragraph as a labelled hypothesis with the read that decides it. " + _FIRST_LINE_NEXT
 )
-# Asked of every `Proven:` opening before its form (CASE-86): one requirement chain per return.
+# Asked of every `Proven:` opening before its form: one requirement chain per return.
 _UNREAD_REASON = (
     FIRST_CAUSE_MARKER + " a `Proven:` line turns a hypothesis into the fact the next decision rests on, so before it "
     "stands the reply carries a line `Unread:` that lists every record you have not read which could change this "
     "cause or the shape of the work built on it: what is already known about this object, in our own records and "
     "outside them, and the layer below the one where you saw the effect; each with the one read that covers it. Run "
     "now every such read that costs less than the work this cause would start, and write the first line from what "
-    "they return. `Unread: none` is accepted only next to the reads, already run, that covered each of those. With a "
-    "listed read still not run, the cause leaves the opening: open with `Fact:` stating the effect alone, or with "
+    "they return. When nothing is left unread, the line is exactly `Unread: none` (in the reply's language «нет»), "
+    "with the reads that covered each record listed below it. With a listed read still not run, the cause leaves the opening: open with `Fact:` stating the effect alone, or with "
     "`Unknown: <the read that decides it> — blocked by <...>`, and put the cause below the first paragraph as a "
     "labelled hypothesis. " + _FIRST_LINE_NEXT
 )
@@ -3287,12 +3287,16 @@ _PROVEN_TAIL_RE = re.compile(
     + r"(?:[ \t]+[^\W\d]+)?[ \t]+(?:of|из)[ \t]+" + _COUNT + r"(?!\w)",
     re.IGNORECASE,
 )
-# The one line that lets a `Proven:` opening stand: nothing left unread. Any other `Unread:` content lists a record
-# not read, which takes the cause out of the opening (CASE-86).
+# The one line that lets a `Proven:` opening stand: the label and the word for nothing, alone on its line (list
+# marker, bold or backtick wrapping and a closing full stop allowed). Any other text on it names a record not read
+# ("none except ...", «нет доступа к ...»), which takes the cause out of the opening. Data, kept byte-for-byte.
 _UNREAD_NONE_RE = re.compile(
-    _LINE_LABEL_PREFIX + r"Unread[ \t]*(?:\*\*|__|\*|_)?[ \t]*:(?:[ \t]*(?:\*\*|__))?[ \t]*`?none(?![\w-])",
+    r"^[ \t]*(?:(?:[-*+]|\d+[.)])[ \t]+)*[*_`]*[ \t]*Unread[ \t]*[*_`]*[ \t]*:[ \t]*[*_`]*[ \t]*"
+    r"(?:none|нет|ничего)[ \t]*\.?[ \t]*[*_`]*[ \t]*\.?[ \t]*$",
     re.IGNORECASE | re.MULTILINE,
 )
+# A fenced code block quotes text; a clearing line inside it is not the reply's own.
+_FENCED_BLOCK_RE = re.compile(r"^[ \t]*(`{3,}|~{3,}).*?^[ \t]*\1[ \t]*$", re.MULTILINE | re.DOTALL)
 PROVEN_FORM_MISSING = "proven-form"
 UNREAD_MISSING = "unread"
 UNKNOWN_WHY = "unknown-why"
@@ -3355,7 +3359,8 @@ def _proven_form_ok(rest):
 
 def first_paragraph_cause(reply):
     """The first-cause rule. For a reply whose first non-empty line is typed `Proven:` / `Доказано:`:
-    ``UNREAD_MISSING`` unless some line of the reply opens with `Unread: none`; then ``PROVEN_FORM_MISSING``
+    ``UNREAD_MISSING`` unless some line of the reply outside a fenced block or blockquote is exactly `Unread: none`
+    / `нет` / `ничего` (``_UNREAD_NONE_RE``); then ``PROVEN_FORM_MISSING``
     unless that first line has its full form (``_proven_form_ok``); then "". For any other
     reply: the first asserted cause word (``_asserted_cause``) of its first paragraph (up to the first blank line,
     every closed quoted span blanked by ``_blank_quoted``), with the open-question exemption when the paragraph
@@ -3365,7 +3370,7 @@ def first_paragraph_cause(reply):
     line = next((ln for ln in paragraph.splitlines() if ln.strip()), "")
     label = _PROVEN_LINE_RE.match(line)
     if label:
-        if not _UNREAD_NONE_RE.search(reply):
+        if not _UNREAD_NONE_RE.search(_FENCED_BLOCK_RE.sub("", reply)):
             return UNREAD_MISSING
         return "" if _proven_form_ok(line[label.end():]) else PROVEN_FORM_MISSING
     body = _blank_quoted(paragraph)

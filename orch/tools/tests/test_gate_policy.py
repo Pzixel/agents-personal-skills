@@ -1503,7 +1503,7 @@ class FirstCauseRuleTest(unittest.TestCase):
               "(google), 1250 (other), 800 (outlook).")
     PROVEN = ("Proven: sending was held by the per-provider caps — `history.py logs --service gateway`, 15:18Z → "
               "`old 1450`; explains 3,384 of 3,384")
-    UNREAD_NONE = "Unread: none — the caps' change log and the gateway code below the counter, both read at 15:20Z."
+    UNREAD_NONE = "Unread: none\nRead: the caps' change log and the gateway code below the counter, both at 15:20Z."
 
     def _rules(self, text, stop_hook_active=False, first_cause_open=False):
         return gate_policy.reply_lint_decision(text, stop_hook_active, first_cause_open=first_cause_open)["rules"]
@@ -1622,11 +1622,31 @@ class FirstCauseRuleTest(unittest.TestCase):
                 self.assertEqual(decision["rules"], ["first-cause"], tail)
                 self.assertIn("carries a line `Unread:`", decision["reason"], tail)
 
-    def test_unread_none_in_list_or_bold_form_clears_a_full_proven_opening(self):
-        for line in ("- **Unread:** none — the change log and the gateway code, read at 15:20Z.",
-                     "**Unread**: `none` — the change log, read at 15:20Z.",
-                     "Unread: none"):
-            self.assertEqual(self._rules(self.PROVEN + "\n\n" + line), [], line)
+    def test_a_line_holding_only_unread_and_the_word_for_nothing_clears_a_full_proven_opening(self):
+        for line in ("Unread: none", "Unread: нет", "Unread: ничего.", "UNREAD: Нет", "- **Unread:** none",
+                     "**Unread**: `none`", "`Unread: none`", "1. Unread: ничего"):
+            text = self.PROVEN + "\n\n" + line + "\nRead: the change log and the gateway code, at 15:20Z."
+            self.assertEqual(self._rules(text), [], line)
+
+    def test_unread_none_followed_by_a_record_on_its_line_is_returned_for_its_unread_records(self):
+        for line in ("Unread: none except the vendor tracker",
+                     "Unread: none, кроме страницы статуса вендора.",
+                     "Unread: нет доступа к журналу вендора",
+                     "Unread: none — the change log read at 15:20Z; the gateway code is not read.",
+                     "Unread: none yet checked"):
+            decision = gate_policy.reply_lint_decision(self.PROVEN + "\n\n" + line, False)
+            self.assertEqual(decision["rules"], ["first-cause"], line)
+            self.assertIn("carries a line `Unread:`", decision["reason"], line)
+
+    def test_unread_none_quoted_in_a_fence_or_blockquote_does_not_clear(self):
+        for tail in ("```\nUnread: none\n```", "> Unread: none"):
+            decision = gate_policy.reply_lint_decision(self.PROVEN + "\n\n" + tail, False)
+            self.assertIn("carries a line `Unread:`", decision["reason"], tail)
+
+    def test_an_incomplete_proven_opening_without_unread_none_is_returned_for_its_unread_records_first(self):
+        reason = gate_policy.reply_lint_decision("Proven: the caps held sending; explains 3 of 3", False)["reason"]
+        self.assertIn("carries a line `Unread:`", reason)
+        self.assertNotIn("lacks its full form", reason)
 
     def test_a_demoted_cause_with_an_unread_list_is_outside_the_unread_return(self):
         for opening in ("Fact: 3,384 emails were not sent on 10 November — `q`, 15:18Z → `3384`",
@@ -1634,9 +1654,13 @@ class FirstCauseRuleTest(unittest.TestCase):
             text = opening + "\n\nUnread: the vendor's public record — one search.\n\nHypothesis: the caps held it."
             self.assertEqual(self._rules(text), [], opening)
 
-    def test_both_first_cause_reasons_carry_the_marker_a_later_stop_looks_for(self):
-        for text in ("Отправку держали лимиты.", "Proven: лимиты; explains 3 of 3"):
+    def test_every_first_cause_reason_carries_the_marker_a_later_stop_looks_for(self):
+        for text, reason_part in (("Отправку держали лимиты.", "labelled hypothesis"),
+                                  ("Proven: лимиты; explains 3 of 3", "carries a line `Unread:`"),
+                                  ("Proven: лимиты; explains 3 of 3\n\nUnread: нет", "lacks its full form"),
+                                  ("Unknown: почему лимиты срезали отправку.", "a why-question carries its own premise")):
             reason = gate_policy.reply_lint_decision(text, False)["reason"]
+            self.assertIn(reason_part, reason, text)
             self.assertTrue(reason.startswith(gate_policy.FIRST_CAUSE_MARKER), text)
 
     def test_unknown_line_with_a_why_question_is_returned_with_its_own_reason(self):
