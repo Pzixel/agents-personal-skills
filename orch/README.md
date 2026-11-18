@@ -121,7 +121,7 @@ Hooks enforce the gates; an agent obeys a refusal's message and never works arou
   (`stop_hook_active`) judges only the deferral family (deferral, next-step, timed-step) while no
   `reply-lint: (later stop)` return exists in this turn's transcript, so it returns at most once per turn,
   and not when the verdict finds a hand-off, plus the judge-free `first-cause` rule at most twice per turn (a `Proven:`
-  opening is returned first for its unread records unless a line opens with `Unread: none`, then for its form;
+  opening is returned first for its unread records unless a line holds only `Unread: none` / `нет` / `ничего`, then for its form;
   backtest `orch/tools/backtest/first_cause_backtest.py`); hand-off,
   completion claim and lever are first-stop only, so a turn holds at most four reply-lint returns. A judge error, timeout or unparsable verdict passes the reply (fail
   open) and is logged in `~/.claude/reply-lint-log.jsonl` as `judge_error`, next to
