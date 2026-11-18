@@ -133,7 +133,7 @@ class PlanSimplifyHookTest(unittest.TestCase):
     def run_hook(self, plan_text=""):
         payload = {"session_id": "sess", "transcript_path": str(self.transcript), "tool_name": "ExitPlanMode",
                    "tool_input": {"plan": plan_text}}
-        return subprocess.run(["python3", str(HOOK)], input=json.dumps(payload), capture_output=True, text=True)
+        return subprocess.run([sys.executable, str(HOOK)], input=json.dumps(payload), capture_output=True, text=True)
 
     def test_small_plan_with_fresh_review_passes(self):
         self.write_plan("small.md", 200)
@@ -205,7 +205,7 @@ class PlanSimplifyHookTest(unittest.TestCase):
 
     def test_plan_text_is_judged_without_a_transcript(self):
         payload = {"tool_name": "ExitPlanMode", "tool_input": {"plan": "# Plan\nGoal: x\n"}}
-        result = subprocess.run(["python3", str(HOOK)], input=json.dumps(payload), capture_output=True, text=True)
+        result = subprocess.run([sys.executable, str(HOOK)], input=json.dumps(payload), capture_output=True, text=True)
         self.assertEqual(result.returncode, 2)
         self.assertIn("`Done when:", result.stderr)
 
@@ -240,7 +240,7 @@ class DesignSimplifyHookTest(unittest.TestCase):
     def run_hook(self, tool, tool_input):
         payload = {"session_id": "sess", "transcript_path": str(self.transcript),
                    "tool_name": tool, "tool_input": tool_input}
-        return subprocess.run(["python3", str(HOOK)], input=json.dumps(payload), capture_output=True, text=True)
+        return subprocess.run([sys.executable, str(HOOK)], input=json.dumps(payload), capture_output=True, text=True)
 
     def proceed(self, message="design reviewed, proceed to code"):
         return self.run_hook("SendMessage", {"to": "b1", "message": message})

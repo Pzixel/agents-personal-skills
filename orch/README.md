@@ -39,7 +39,7 @@ Technical questions are answered inside the flow.
 
 ## Install (skills-dir plugin)
 
-On macOS 13 or later, run `./install.sh claude` at the repository root ([README.md](../README.md#install-for-one-user)).
+On macOS 13 or later, with Python 3.9 or later at `/usr/bin/python3` (hooks and tools start through it; on macOS it comes with the Command Line Tools), run `./install.sh claude` at the repository root ([README.md](../README.md#install-for-one-user)).
 It links this directory as `~/.claude/skills/orch` and each entry of `orch/{hooks,tools}`
 into `~/.claude/{hooks,tools}`, next to the user's own files, so
 `~/.claude/tools/wait-for` and `~/.claude/hooks/handoff.sh` resolve. Agents are not linked:

@@ -6,6 +6,7 @@ import shutil
 import tempfile
 import pathlib
 import subprocess
+import sys
 import unittest
 
 HOOKS = pathlib.Path(__file__).resolve().parents[2] / "hooks"
@@ -13,7 +14,7 @@ HOOKS = pathlib.Path(__file__).resolve().parents[2] / "hooks"
 
 def run(hook, payload):
     return subprocess.run(
-        ["python3", str(HOOKS / hook)], input=json.dumps(payload), capture_output=True, text=True
+        [sys.executable, str(HOOKS / hook)], input=json.dumps(payload), capture_output=True, text=True
     )
 
 
@@ -24,7 +25,7 @@ def incident(prompt):
 def destructive_decision(hooks_dir, stdin, home=None):
     with tempfile.TemporaryDirectory() as tmp:
         out = subprocess.run(
-            ["python3", str(hooks_dir / "deny-destructive.py")], input=stdin, capture_output=True, text=True,
+            [sys.executable, str(hooks_dir / "deny-destructive.py")], input=stdin, capture_output=True, text=True,
             env=dict(os.environ, HOME=home or tmp),
         )
     return out.returncode, json.loads(out.stdout)["hookSpecificOutput"]["permissionDecision"]
