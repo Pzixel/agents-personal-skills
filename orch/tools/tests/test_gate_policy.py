@@ -1503,6 +1503,7 @@ class FirstCauseRuleTest(unittest.TestCase):
               "(google), 1250 (other), 800 (outlook).")
     PROVEN = ("Proven: sending was held by the per-provider caps — `history.py logs --service gateway`, 15:18Z → "
               "`old 1450`; explains 3,384 of 3,384")
+    UNREAD_NONE = "Unread: none — the caps' change log and the gateway code below the counter, both read at 15:20Z."
 
     def _rules(self, text, stop_hook_active=False, first_cause_open=False):
         return gate_policy.reply_lint_decision(text, stop_hook_active, first_cause_open=first_cause_open)["rules"]
@@ -1581,9 +1582,10 @@ class FirstCauseRuleTest(unittest.TestCase):
                      "объясняет 228 из 232 секунд разницы в шаге сборки. Рычага не было; от вас ничего не нужно.",
                      "Proven: Overview hides today — code and recount q8 at 17:23 → «not read per slice», «27+181=208»; "
                      "explains 935 of 936. I am changing it now."):
-            self.assertEqual(self._rules(line), [], line)
+            self.assertEqual(self._rules(line + "\n" + self.UNREAD_NONE), [], line)
         decision = gate_policy.reply_lint_decision(
-            "Proven: the caps held sending — `q`, 15:18Z → read «x»; explains 3 of 3. More text.", False)
+            "Proven: the caps held sending — `q`, 15:18Z → read «x»; explains 3 of 3. More text.\n" + self.UNREAD_NONE,
+            False)
         self.assertIn("lacks its full form", decision["reason"])
 
     def test_full_proven_forms_pass(self):
@@ -1593,7 +1595,7 @@ class FirstCauseRuleTest(unittest.TestCase):
                      "explains 3,384 emails of 3,384",
                      "Proven: the caps held sending — `q`, 15:18Z → “old 1450”; explains 3 of 3 emails",
                      "Доказано: отправку держали лимиты — `q`, 15:18Z → «3 384» «писем»; объясняет 3 из 3"):
-            self.assertEqual(self._rules(line + "\nОтправку держали лимиты.\n\nДальше."), [], line)
+            self.assertEqual(self._rules(line + "\nОтправку держали лимиты.\n\nДальше.\n" + self.UNREAD_NONE), [], line)
 
     def test_incomplete_proven_forms_are_returned(self):
         for line in ("Proven: sending was held by the caps — `q`, 15:18Z → `x`; explains all of it",
@@ -1604,9 +1606,33 @@ class FirstCauseRuleTest(unittest.TestCase):
                      "Proven: the caps held sending — `q`, 15:18Z → x; explains 3 of 3",
                      "Proven: the caps held sending — 15:18Z → `x`; explains 3 of 3",
                      "Proven: the caps held sending — `q`, 15:18Z → `x; explains 3 of 3"):
-            decision = gate_policy.reply_lint_decision(line, False)
+            decision = gate_policy.reply_lint_decision(line + "\n\n" + self.UNREAD_NONE, False)
             self.assertEqual(decision["rules"], ["first-cause"], line)
             self.assertIn("lacks its full form", decision["reason"], line)
+
+    def test_a_proven_opening_without_unread_none_is_returned_for_its_unread_records(self):
+        for tail in ("",
+                     "\n\nUnread: the vendor's public record of the caps — one search by the error string.",
+                     "\n\nUnread:\n- the vendor's public record of the caps",
+                     "\n\n**Unread — what is not read yet**\n- the gateway code below the counter",
+                     "\n\n| ESP | count |\n- unread: 340",
+                     "\n\nThe caps' log shows unread: none of the alerts."):
+            for stop_hook_active in (False, True):
+                decision = gate_policy.reply_lint_decision(self.PROVEN + tail, stop_hook_active, first_cause_open=True)
+                self.assertEqual(decision["rules"], ["first-cause"], tail)
+                self.assertIn("carries a line `Unread:`", decision["reason"], tail)
+
+    def test_unread_none_in_list_or_bold_form_clears_a_full_proven_opening(self):
+        for line in ("- **Unread:** none — the change log and the gateway code, read at 15:20Z.",
+                     "**Unread**: `none` — the change log, read at 15:20Z.",
+                     "Unread: none"):
+            self.assertEqual(self._rules(self.PROVEN + "\n\n" + line), [], line)
+
+    def test_a_demoted_cause_with_an_unread_list_is_outside_the_unread_return(self):
+        for opening in ("Fact: 3,384 emails were not sent on 10 November — `q`, 15:18Z → `3384`",
+                        "Unknown: the caps' change log — blocked by `permission denied`"):
+            text = opening + "\n\nUnread: the vendor's public record — one search.\n\nHypothesis: the caps held it."
+            self.assertEqual(self._rules(text), [], opening)
 
     def test_both_first_cause_reasons_carry_the_marker_a_later_stop_looks_for(self):
         for text in ("Отправку держали лимиты.", "Proven: лимиты; explains 3 of 3"):

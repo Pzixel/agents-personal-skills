@@ -17,7 +17,8 @@ is guarded by REPLY_LINT_JUDGE against recursion. A later stop
 turn's Stop-hook feedback in the transcript: the deferral family (deferral,
 next-step, timed-step; judged while no later-stop deferral return exists this
 turn, returned at most once, not when the verdict says handoff) and first-cause
-(at most twice per turn); handoff, claim and lever stay first-stop only. So a
+(at most twice per turn; a `Proven:` opening is returned first for its unread records unless a line opens with
+`Unread: none`, then for its form); handoff, claim and lever stay first-stop only. So a
 turn holds at most four returns, never a loop. A judge error, timeout or
 unparsable verdict passes the reply (fail open) and is logged; every record
 names the rules that fired. Measurement and acceptance condition: ORIGINS.md.

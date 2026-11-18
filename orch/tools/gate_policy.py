@@ -2971,7 +2971,7 @@ _TIMED_STEP_REASON = (
 LATER_DEFERRAL_MARKER = REPLY_LINT_MARKER + " (later stop)"
 
 _PROVEN_FORM = "`Proven: <cause> — <command or query>, <time> → <quoted fragment>; explains <X> of <Y>`"
-# Starts both first-cause reasons; a later stop of the same turn finds it in the transcript (``first_cause_open``).
+# Starts every first-cause reason; a later stop of the same turn finds it in the transcript (``first_cause_open``).
 FIRST_CAUSE_MARKER = REPLY_LINT_MARKER + " (first-cause)"
 _FIRST_LINE_NEXT = (
     "The last message you send in this turn is the whole reply again, opening with that corrected first "
@@ -2996,6 +2996,18 @@ _PROVEN_FORM_REASON = (
     "Without such a read the cause leaves the opening: open with `Fact:` stating the effect alone, or with "
     "`Unknown: <the read that decides it> — blocked by <...>` when that read is blocked, and put the cause below the "
     "first paragraph as a labelled hypothesis with the read that decides it. " + _FIRST_LINE_NEXT
+)
+# Asked of every `Proven:` opening before its form (CASE-86): one requirement chain per return.
+_UNREAD_REASON = (
+    FIRST_CAUSE_MARKER + " a `Proven:` line turns a hypothesis into the fact the next decision rests on, so before it "
+    "stands the reply carries a line `Unread:` that lists every record you have not read which could change this "
+    "cause or the shape of the work built on it: what is already known about this object, in our own records and "
+    "outside them, and the layer below the one where you saw the effect; each with the one read that covers it. Run "
+    "now every such read that costs less than the work this cause would start, and write the first line from what "
+    "they return. `Unread: none` is accepted only next to the reads, already run, that covered each of those. With a "
+    "listed read still not run, the cause leaves the opening: open with `Fact:` stating the effect alone, or with "
+    "`Unknown: <the read that decides it> — blocked by <...>`, and put the cause below the first paragraph as a "
+    "labelled hypothesis. " + _FIRST_LINE_NEXT
 )
 _UNKNOWN_WHY_REASON = (
     FIRST_CAUSE_MARKER + " an `Unknown:` line names the read that decides and what blocks it; a why-question "
@@ -3275,7 +3287,14 @@ _PROVEN_TAIL_RE = re.compile(
     + r"(?:[ \t]+[^\W\d]+)?[ \t]+(?:of|из)[ \t]+" + _COUNT + r"(?!\w)",
     re.IGNORECASE,
 )
+# The one line that lets a `Proven:` opening stand: nothing left unread. Any other `Unread:` content lists a record
+# not read, which takes the cause out of the opening (CASE-86).
+_UNREAD_NONE_RE = re.compile(
+    _LINE_LABEL_PREFIX + r"Unread[ \t]*(?:\*\*|__|\*|_)?[ \t]*:(?:[ \t]*(?:\*\*|__))?[ \t]*`?none(?![\w-])",
+    re.IGNORECASE | re.MULTILINE,
+)
 PROVEN_FORM_MISSING = "proven-form"
+UNREAD_MISSING = "unread"
 UNKNOWN_WHY = "unknown-why"
 
 
@@ -3336,7 +3355,8 @@ def _proven_form_ok(rest):
 
 def first_paragraph_cause(reply):
     """The first-cause rule. For a reply whose first non-empty line is typed `Proven:` / `Доказано:`:
-    ``PROVEN_FORM_MISSING`` unless that line has its full form (``_proven_form_ok``), then "". For any other
+    ``UNREAD_MISSING`` unless some line of the reply opens with `Unread: none`; then ``PROVEN_FORM_MISSING``
+    unless that first line has its full form (``_proven_form_ok``); then "". For any other
     reply: the first asserted cause word (``_asserted_cause``) of its first paragraph (up to the first blank line,
     every closed quoted span blanked by ``_blank_quoted``), with the open-question exemption when the paragraph
     opens with `Unknown:` / `Неизвестно:` (plain, bold or backticked) or with "(пока) не знаю" / "I do not know
@@ -3345,6 +3365,8 @@ def first_paragraph_cause(reply):
     line = next((ln for ln in paragraph.splitlines() if ln.strip()), "")
     label = _PROVEN_LINE_RE.match(line)
     if label:
+        if not _UNREAD_NONE_RE.search(reply):
+            return UNREAD_MISSING
         return "" if _proven_form_ok(line[label.end():]) else PROVEN_FORM_MISSING
     body = _blank_quoted(paragraph)
     unknown = bool(_UNKNOWN_LINE_RE.match(paragraph))
@@ -3726,7 +3748,8 @@ def _first_cause_fired(text):
     cause = first_paragraph_cause(text)
     if not cause:
         return []
-    reason = {PROVEN_FORM_MISSING: _PROVEN_FORM_REASON, UNKNOWN_WHY: _UNKNOWN_WHY_REASON}.get(cause, _FIRST_CAUSE_REASON)
+    reason = {PROVEN_FORM_MISSING: _PROVEN_FORM_REASON, UNREAD_MISSING: _UNREAD_REASON,
+              UNKNOWN_WHY: _UNKNOWN_WHY_REASON}.get(cause, _FIRST_CAUSE_REASON)
     return [("first-cause", reason)]
 
 
