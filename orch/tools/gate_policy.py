@@ -2585,7 +2585,7 @@ def bash_clamp_decision(agent_type, command, params, out_path, tools_dir):
     out = shlex.quote(out_path)
     clamp = shlex.quote(os.path.join(tools_dir, "clamp.py"))
     return (
-        "{ %s\n} > %s 2>&1; __orch_rc=$?; python3 %s %s --head %d --tail %d --max-bytes %d; ( exit $__orch_rc )"
+        "{ %s\n} > %s 2>&1; __orch_rc=$?; /usr/bin/python3 %s %s --head %d --tail %d --max-bytes %d; ( exit $__orch_rc )"
         % (command, out, clamp, out, cfg["head_lines"], cfg["tail_lines"], cfg["max_bytes"])
     )
 

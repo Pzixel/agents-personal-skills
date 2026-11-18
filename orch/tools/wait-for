@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3
 """wait-for [--every SECONDS] [--max SECONDS] [--fail-on CODES] -- <condition command...>
 
 Re-runs the condition command until it exits 0, then exits 0. Exits 124 if

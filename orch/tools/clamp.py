@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3
 """Clamp long command output to its head and tail (pure) plus a tiny CLI.
 
 Compilers put the decisive lines first, test runners last, so both ends survive.

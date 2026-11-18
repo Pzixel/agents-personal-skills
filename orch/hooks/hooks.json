@@ -6,22 +6,22 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/session-tools-link.py\"",
+            "command": "/usr/bin/python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/session-tools-link.py\"",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/dup-skills-hook.py\"",
+            "command": "/usr/bin/python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/dup-skills-hook.py\"",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "nohup python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/worktree-reaper.py\" </dev/null >/dev/null 2>&1 &",
+            "command": "nohup /usr/bin/python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/worktree-reaper.py\" </dev/null >/dev/null 2>&1 &",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "nohup python3 \"${CLAUDE_PLUGIN_ROOT}/tools/tmp-evict\" --scheduled </dev/null >/dev/null 2>&1 &",
+            "command": "nohup /usr/bin/python3 \"${CLAUDE_PLUGIN_ROOT}/tools/tmp-evict\" --scheduled </dev/null >/dev/null 2>&1 &",
             "timeout": 5
           }
         ]
@@ -33,7 +33,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/secret-vault-gate.py\"",
+            "command": "/usr/bin/python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/secret-vault-gate.py\"",
             "timeout": 5
           }
         ]
@@ -43,7 +43,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/offline-gate.py\"",
+            "command": "/usr/bin/python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/offline-gate.py\"",
             "timeout": 5
           }
         ]
@@ -53,7 +53,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/deny-destructive.py\"",
+            "command": "/usr/bin/python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/deny-destructive.py\"",
             "timeout": 5
           }
         ]
@@ -83,7 +83,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/no-poll-gate.py\"",
+            "command": "/usr/bin/python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/no-poll-gate.py\"",
             "timeout": 5
           }
         ]
@@ -93,7 +93,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/main-budget-gate.py\"",
+            "command": "/usr/bin/python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/main-budget-gate.py\"",
             "timeout": 5
           }
         ]
@@ -103,7 +103,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/scout-bounds.py\"",
+            "command": "/usr/bin/python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/scout-bounds.py\"",
             "timeout": 5
           }
         ]
@@ -113,7 +113,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/skill-load-gate.py\""
+            "command": "/usr/bin/python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/skill-load-gate.py\""
           }
         ]
       },
@@ -122,7 +122,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/bash-output-clamp.py\"",
+            "command": "/usr/bin/python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/bash-output-clamp.py\"",
             "timeout": 5
           }
         ]
@@ -132,7 +132,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/merge-gate.py\"",
+            "command": "/usr/bin/python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/merge-gate.py\"",
             "timeout": 15
           }
         ]
@@ -142,7 +142,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/ask-existing-gate.py\"",
+            "command": "/usr/bin/python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/ask-existing-gate.py\"",
             "timeout": 30
           }
         ]
@@ -152,7 +152,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/plan-simplify-gate.py\"",
+            "command": "/usr/bin/python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/plan-simplify-gate.py\"",
             "timeout": 5
           }
         ]
@@ -162,7 +162,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/wait-shows-gate.py\"",
+            "command": "/usr/bin/python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/wait-shows-gate.py\"",
             "timeout": 5
           }
         ]
@@ -172,7 +172,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/monitor-wait-note.py\"",
+            "command": "/usr/bin/python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/monitor-wait-note.py\"",
             "timeout": 5
           }
         ]
@@ -182,7 +182,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/loop-cost-gate.py\"",
+            "command": "/usr/bin/python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/loop-cost-gate.py\"",
             "timeout": 5
           }
         ]
@@ -194,7 +194,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/redact-secrets.py\"",
+            "command": "/usr/bin/python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/redact-secrets.py\"",
             "timeout": 5
           }
         ]
@@ -204,7 +204,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/loop-cost-gate.py\"",
+            "command": "/usr/bin/python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/loop-cost-gate.py\"",
             "timeout": 5
           }
         ]
@@ -214,7 +214,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/open-question.py\"",
+            "command": "/usr/bin/python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/open-question.py\"",
             "timeout": 5
           }
         ]
@@ -225,27 +225,27 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/reply-lint.py\"",
+            "command": "/usr/bin/python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/reply-lint.py\"",
             "timeout": 30
           },
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/fresh-reader.py\"",
+            "command": "/usr/bin/python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/fresh-reader.py\"",
             "timeout": 70
           },
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/worktree-dirty-gate.py\"",
+            "command": "/usr/bin/python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/worktree-dirty-gate.py\"",
             "timeout": 15
           },
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/background-watch-gate.py\"",
+            "command": "/usr/bin/python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/background-watch-gate.py\"",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/open-question.py\"",
+            "command": "/usr/bin/python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/open-question.py\"",
             "timeout": 5
           }
         ]
@@ -257,7 +257,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/checks-before-done.py\""
+            "command": "/usr/bin/python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/checks-before-done.py\""
           }
         ]
       },
@@ -266,7 +266,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/sleeping-stop.py\""
+            "command": "/usr/bin/python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/sleeping-stop.py\""
           }
         ]
       }
@@ -276,12 +276,12 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/task-type-checklist.py\"",
+            "command": "/usr/bin/python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/task-type-checklist.py\"",
             "timeout": 5
           },
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/plan-approval.py\"",
+            "command": "/usr/bin/python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/plan-approval.py\"",
             "timeout": 5
           }
         ]
@@ -290,7 +290,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/open-question.py\"",
+            "command": "/usr/bin/python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/open-question.py\"",
             "timeout": 5
           }
         ]
@@ -302,7 +302,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/loop-cost-gate.py\"",
+            "command": "/usr/bin/python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/loop-cost-gate.py\"",
             "timeout": 5
           }
         ]

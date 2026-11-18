@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3
 """Print one line per skill or agent name the model sees from two sources.
 
 Reads the config dir of the running session ($CLAUDE_CONFIG_DIR or ~/.claude).

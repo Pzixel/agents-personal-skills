@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3
 """Claude Code status line: the session's open owner questions (CASE-80), pinned by the
 open-question hook. Prints `OPEN QUESTION <q>` or `OPEN QUESTIONS <n>: <q1> | <q2>` cut to one
 terminal line; prints nothing when no question is open or anything fails."""

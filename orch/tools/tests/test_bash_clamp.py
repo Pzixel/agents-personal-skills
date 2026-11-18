@@ -51,7 +51,7 @@ class BashClampDecisionTest(unittest.TestCase):
         self.assertEqual(
             self.decide("cd x && pytest"),
             "{ cd x && pytest\n} > '/t/o 1.log' 2>&1; __orch_rc=$?; "
-            "python3 /tools/clamp.py '/t/o 1.log' --head 2 --tail 3 --max-bytes 8000; ( exit $__orch_rc )",
+            "/usr/bin/python3 /tools/clamp.py '/t/o 1.log' --head 2 --tail 3 --max-bytes 8000; ( exit $__orch_rc )",
         )
 
 

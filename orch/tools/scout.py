@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3
 """scout — find code outside the caller's context: the script searches, the model picks.
 
 One Bash call takes questions and returns verified pointers (file:line). The
@@ -567,7 +567,7 @@ def finder_settings_file(ctx):
     # BOUNDS_LOG and passes it through unchanged, so a clamp leaves a trace
     # without changing what the CLI receives.
     command = (
-        f'o=$(python3 {BOUNDS_HOOK}); '
+        f'o=$(/usr/bin/python3 {BOUNDS_HOOK}); '
         f'[ -n "$o" ] && printf \'%s\\n\' "$o" >> {BOUNDS_LOG}; '
         f'printf \'%s\' "$o"'
     )

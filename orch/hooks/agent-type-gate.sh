@@ -19,7 +19,7 @@ spawner=$(printf '%s' "$input" | jq -r '.agent_type // ""')
 model=$(printf '%s' "$input" | jq -r '.tool_input.model // ""')
 session=$(printf '%s' "$input" | jq -r '.session_id // ""')
 
-out=$(SESSION_ID="$session" HOOK_PATH="$0" SPAWNER_TYPE="$spawner" REQUESTED_TYPE="$type" REQUESTED_MODEL="$model" REQUESTED_PROMPT="$prompt" python3 - <<'PY'
+out=$(SESSION_ID="$session" HOOK_PATH="$0" SPAWNER_TYPE="$spawner" REQUESTED_TYPE="$type" REQUESTED_MODEL="$model" REQUESTED_PROMPT="$prompt" /usr/bin/python3 - <<'PY'
 import json, os, sys
 
 hook = os.path.realpath(os.environ.get("HOOK_PATH") or "")

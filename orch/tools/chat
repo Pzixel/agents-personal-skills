@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3
 """Read past Claude Code sessions by ID, ID prefix, pasted "Session ID:" block or name.
 
     chat find <query>

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3
 """kill-own [<pid>... | -f <pattern> | --list]
 
 Stops an agent's own leftover local processes (orphaned dev servers, debug

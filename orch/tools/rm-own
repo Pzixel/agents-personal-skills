@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3
 """rm-own [-r] <path>...
 
 Removes project-owned scratch paths only. The shell has already expanded

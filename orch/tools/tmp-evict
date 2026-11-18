@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3
 """Launcher of tmp_evict.main (the module is importable so that its scan workers can be spawned)."""
 
 import os

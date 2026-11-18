@@ -217,7 +217,7 @@ done
 # install) is reported by the orch duplicate check; any line fails the run.
 case " $targets " in
   *" claude "*)
-    dups=$(CLAUDE_CONFIG_DIR="$claude" python3 "$root/orch/tools/dup-skills")
+    dups=$(CLAUDE_CONFIG_DIR="$claude" /usr/bin/python3 "$root/orch/tools/dup-skills")
     if [ -n "$dups" ]; then
       echo "$dups" >&2
       echo "Remove one copy of each name above and rerun." >&2
