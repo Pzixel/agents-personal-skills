@@ -1,3 +1,4 @@
+import hashlib
 import json
 import re
 import os
@@ -1897,6 +1898,7 @@ class OverrideGatesTest(unittest.TestCase):
 _PLAN = (
     "# scope: orders table, rows of tenant acme\n"
     "# undo: restore from tmp/orders-acme.csv\n"
+    "# irreversible: the delete trigger notifies the billing service\n"
     "# count: 120 rows\n"
     "# contradiction: none\n"
     "# prod_position: rows deleted, acme has 120 of 9.1M, SELECT count(*) 10:02Z\n"
@@ -1914,7 +1916,7 @@ def _destructive(command, agent_type="", plan_text=None, plan_hash=None):
 
 _PIN_HASH = "f" * 64
 _PIN_LINE = "# pin: /repo/run.sh sha256=" + _PIN_HASH + "\n"
-# The headers of _PLAN without its psql line: the head of every pinned plan below (lines 1-7, pin on 8).
+# The headers of _PLAN without its psql line: the head of every pinned plan below (lines 1-8, pin on 9).
 _PINNED_HEAD = _PLAN[:_PLAN.index("psql")] + _PIN_LINE
 _PINNED_PLAN = _PINNED_HEAD + "bash /repo/run.sh --apply 5\n"
 _PIN_FACTS = {"real_path": "/repo/run.sh", "sha256": _PIN_HASH, "file_blob": "b" * 40, "tree_mode": "100644",
@@ -2304,10 +2306,10 @@ class DestructiveDecisionTest(unittest.TestCase):
             with self.subTest(form=form):
                 result = _pinned(_PINNED_HEAD + "\n".join(form) + "\n")
                 self.assertEqual(result["decision"], "deny")
-                self.assertIn("plan line 9: a pinned plan holds only comments", result["reason"])
+                self.assertIn("plan line 10: a pinned plan holds only comments", result["reason"])
                 self.assertIn("logic belongs in the pinned file", result["reason"])
         result = _pinned(_PINNED_HEAD + r + "\nrm -rf /x\n")
-        self.assertEqual((result["decision"], result["reason"][:12]), ("deny", "plan line 10"))
+        self.assertEqual((result["decision"], result["reason"][:12]), ("deny", "plan line 11"))
 
     def test_pinned_plan_with_a_pin_problem_or_a_hidden_line_break_is_denied_naming_it(self):
         run = "bash /repo/run.sh\n"
@@ -3091,6 +3093,123 @@ def _plan_run(approved, mode):
     return gate_policy.destructive_decision(
         _PLAN_CMD, "", _PLAN, _PLAN_HASH, permission_mode=mode, approved=approved,
     )
+
+
+def _declared(value, body):
+    """_PLAN with its `# irreversible:` value replaced and its psql line replaced by ``body``."""
+    head = _PLAN[:_PLAN.index("psql")]
+    head = re.sub(r"(?m)^# irreversible:.*$", "# irreversible: " + value, head) if value is not None else re.sub(
+        r"(?m)^# irreversible:.*\n", "", head)
+    return head + body
+
+
+def _declared_run(value, body, mode="default", approved=False, agent_type=""):
+    return gate_policy.destructive_decision(_PLAN_CMD, agent_type, _declared(value, body), _PLAN_HASH, None, mode,
+                                            None, approved)
+
+
+class PlanRequirementTest(unittest.TestCase):
+    """The owner approves a plan only for an effect with no way back: declared, seen by the floor, or pinned."""
+
+    def test_declared_none_reversible_plan_runs_without_the_owner_in_every_mode(self):
+        for mode in ("default", "bypassPermissions"):
+            with self.subTest(mode=mode):
+                result = _declared_run("none", "psql -c \"DELETE FROM orders WHERE tenant = 'acme'\"\n", mode)
+                self.assertEqual((result["decision"], result["class"], result["owner"]),
+                                 ("allow", "plan", "not_needed"))
+
+    def test_none_is_read_case_insensitively_and_trimmed(self):
+        self.assertEqual(_declared_run("  NONE  ", "psql -c \"UPDATE orders SET x = 1 WHERE id = 7\"\n")["owner"],
+                         "not_needed")
+
+    def test_any_value_other_than_none_needs_the_owner(self):
+        for value in ("none, a backup exists", "the Secret value is replaced", "no"):
+            with self.subTest(value=value):
+                result = _declared_run(value, "psql -c \"UPDATE orders SET x = 1 WHERE id = 7\"\n")
+                self.assertEqual((result["decision"], result["class"], result["owner"]),
+                                 ("ask", "approval", "requested"))
+                self.assertIn(value, result["reason"])
+
+    def test_floor_raises_a_none_plan_with_a_visible_effect_without_undo(self):
+        bodies = [
+            'CH=(clickhouse-client --host db)\n"${CH[@]}" --query "DROP TABLE events"\n',
+            'psql -c "ALTER TABLE orders\n  DROP COLUMN note"\n',
+            'psql -c "truncate orders"\n',
+            "ssh app-1 rm -rf /var/lib/app/uploads\n",
+            "kubectl exec -n prod deploy/api -- rm -rf /data/cache\n",
+            "ssh app-1 <<'EOF'\ncd /srv/app && git reset --hard\nEOF\n",
+            "kubectl delete secret api-token -n prod\n",
+            "kubectl delete namespace staging\n",
+            "git push --force origin master\n",
+        ]
+        for body in bodies:
+            with self.subTest(body=body):
+                result = _declared_run("none", body)
+                self.assertEqual((result["decision"], result["owner"]), ("ask", "requested"))
+                self.assertIn("owner needed: floor", result["reason"])
+
+    def test_local_file_deletion_outside_owned_paths_needs_the_owner(self):
+        for body in ("rm -rf ~/Documents/reports\n", "find ~/Documents/old -name '*.csv' -delete\n",
+                     "git -C ~/src/app reset --hard\n",
+                     "f() { rm -rf ~/Documents/reports; }\nssh app-1 \"$(declare -f f); f\"\n"):
+            with self.subTest(body=body):
+                self.assertEqual(_declared_run("none", body)["owner"], "requested")
+
+    def test_body_the_hook_cannot_read_needs_the_owner(self):
+        for body in ("sudo kubectl delete secret api-token -n prod\n", "echo 'it is\nkubectl get pods\n"):
+            with self.subTest(body=body):
+                self.assertEqual(_declared_run("none", body)["owner"], "requested")
+
+    def test_reading_over_the_work_budget_needs_the_owner(self):
+        self.assertEqual(gate_policy.plan_requirement("# irreversible: none\necho " + '"$(' * 1500 + "\n"),
+                         (True, "floor: " + gate_policy.OutOfWork.reason))
+
+    def test_plan_with_two_irreversible_lines_is_refused_by_the_form(self):
+        result = _declared_run("none", "# irreversible: the vendor record is deleted\necho done\n")
+        self.assertEqual((result["decision"], result["owner"]), ("deny", "form_refused"))
+
+    def test_hook_tells_the_agent_to_report_a_plan_that_ran_without_the_owner(self):
+        with tempfile.TemporaryDirectory() as home:
+            plan = os.path.join(home, "plan.sh")
+            text = _declared("none", "echo done\n")
+            with open(plan, "w") as fh:
+                fh.write(text)
+            command = "bash " + plan + "  # DESTRUCTIVE_PLAN sha256=" + hashlib.sha256(text.encode()).hexdigest()
+            out = subprocess.run(
+                [sys.executable, os.path.join(os.path.dirname(__file__), "..", "..", "hooks", "deny-destructive.py")],
+                env=dict(os.environ, HOME=home), capture_output=True, universal_newlines=True,
+                input=json.dumps({"session_id": PlanApprovalHookTest.SESSION, "tool_name": "Bash", "cwd": home,
+                                  "tool_input": {"command": command}}))
+        hook = json.loads(out.stdout)["hookSpecificOutput"]
+        self.assertEqual(hook["permissionDecision"], "allow")
+        self.assertIn("ran without the owner", hook["additionalContext"])
+        self.assertIn("report its scope, count and undo", hook["additionalContext"])
+
+    def test_drop_in_a_whole_line_comment_is_not_read_by_the_floor(self):
+        body = "# DROP TABLE orders was considered and rejected\npsql -c \"DELETE FROM orders WHERE id = 7\"\n"
+        self.assertEqual(_declared_run("none", body)["owner"], "not_needed")
+
+    def test_pinned_plan_declared_none_still_needs_the_owner(self):
+        self.assertEqual(_pinned(_PINNED_PLAN.replace(
+            "# irreversible: the delete trigger notifies the billing service", "# irreversible: none"))["decision"],
+            "ask")
+
+    def test_plan_without_the_irreversible_header_is_refused_by_the_form(self):
+        result = _declared_run(None, "psql -c \"DELETE FROM orders WHERE id = 7\"\n")
+        self.assertEqual((result["decision"], result["owner"]), ("deny", "form_refused"))
+        self.assertIn("# irreversible: ...` is missing", result["reason"])
+
+    def test_approval_present_for_a_plan_that_needs_no_owner_is_not_spent(self):
+        result = _declared_run("none", "psql -c \"DELETE FROM orders WHERE id = 7\"\n", approved=True)
+        self.assertEqual((result["decision"], result["owner"]), ("allow", "not_needed"))
+
+    def test_approved_owner_needed_plan_is_allowed_as_approved(self):
+        result = _declared_run("none", 'psql -c "TRUNCATE orders"\n', "bypassPermissions", approved=True)
+        self.assertEqual((result["decision"], result["class"], result["owner"]), ("allow", "approval", "approved"))
+
+    def test_subagent_cannot_run_a_plan_that_needs_no_owner(self):
+        result = _declared_run("none", "psql -c \"DELETE FROM orders WHERE id = 7\"\n", agent_type="builder")
+        self.assertEqual(result["decision"], "deny")
 
 
 class PlanApprovalTest(unittest.TestCase):

@@ -13,3 +13,5 @@ Why. A replay of the hook's recorded denials found a group of 43 refusals of SQL
 Kept from the same work: docker global options (`-H`, `--host`, `--context`, `--config`, `--tls*`) and compose options are skipped before `exec`, so a remote-daemon `docker -H tcp://... exec` is classified instead of passing unseen.
 
 Resume signal: agents start throwaway database containers with an ours label (`--label orch.session=<task>`) and this group still costs refusals. Then the labelled form clears it, with the daemon endpoint checked local (unix:// or npipe://), no `docker exec -e/--env/--env-file`, and an allowlist of local-only client options.
+
+The same holds inside a destructive plan: a plan declared `# irreversible: none` that drops a database in a local container still asks the owner through the plan floor. 3 of the 9 floor-alone requests in the plan-approvals replay were DROPs on plans labelled reversible (`destructive-plan-asks-the-owner-only-for-an-effect-with-no-way-back.md`); an exemption for local targets waits for a target proof the plan text can carry.

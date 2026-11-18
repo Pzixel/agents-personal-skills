@@ -10,11 +10,19 @@ decision of a Claude Code session (UUID session id; hand-piped payloads are
 not logged) to ~/.claude/destructive-log.jsonl and prints the response. It fails
 closed: any error is a deny. The agents' kubeconfig is cluster-admin today, so
 the `impossible` class is enforced only here until RBAC is tightened; an
-impossible step runs only from an owner-approved plan (APPROVE <hash>).
+impossible step runs only from a plan.
+A plan the form accepts runs at once (class `plan`, owner `not_needed`, the
+report instruction in additionalContext) unless gate_policy.plan_requirement
+says the owner approves it: a pin line, a `# irreversible:` value other than
+`none`, or the floor (an impossible or privileged hit of the classifier over
+the plan text, a quote it cannot pair, a reading over its work budget, or a
+line that drops or truncates a SQL object). A plan log row carries plan_path, cwd, owner (not_needed, requested,
+approved, form_refused) and reason; a not_needed row with an approval file
+present carries stale_approval: true (the file stays for a later run).
 When the destructive decision allows, the headroom check (tools/headroom_read.py)
 runs in the same process for every `kubectl exec`; it fails open.
 File tools are checked only for a path under the approvals dir. An approved
-plan run consumes its approval file (written by plan-approval.py) before the
+owner-needed plan run consumes its approval file (written by plan-approval.py) before the
 allow is printed; when another PreToolUse hook then denies the same call,
 the approval is spent without a run and the owner approves again (fails safe).
 """
@@ -134,7 +142,7 @@ def main():
         command, agent_type, plan_text, plan_hash, params,
         str(payload.get("permission_mode") or ""), sql_file_texts, approved, cwd, pin_facts,
     )
-    if approved and result["decision"] == "allow":
+    if result.get("owner") == "approved":
         os.remove(approval)
     targets = result.get("exec_targets")
     room = headroom(command, params, targets) if targets and result["decision"] == "allow" else None
@@ -145,12 +153,18 @@ def main():
              "adds": room.get("adds")})
         respond("deny", room["reason"] + gate_policy._NO_WORKAROUND)
         return
-    context = room and room["context"]
+    # A plan that ran without the owner tells the agent to report it: an allow's reason reaches nobody.
+    context = "\n".join(filter(None, [room and room["context"], result.get("context")])) or None
     if result["class"] == "none":
         if context:
             respond(None, None, context)
         return
-    log({"class": result["class"], "decision": result["decision"], "plan_hash": plan_hash})
+    row = {"class": result["class"], "decision": result["decision"], "plan_hash": plan_hash}
+    if marker:
+        row.update(plan_path=marker[0], cwd=cwd, owner=result.get("owner"), reason=result["reason"][:300])
+        if approved and result.get("owner") == "not_needed":
+            row["stale_approval"] = True
+    log(row)
     respond(result["decision"], result["reason"], context)
 
 

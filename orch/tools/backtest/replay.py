@@ -8,6 +8,7 @@ usage: python3 replay.py <loop.tsv> <control.jsonl> [variants]
        python3 replay.py plan-form <days> --policy <base gate_policy.py> [--labels <risk-labels.tsv>]
             (--policy: gate_policy.py inside a checkout of the base, e.g. a git worktree; a lone copy fails to load)
        python3 replay.py destructive-diff <days | commands.json> --policy <base gate_policy.py> [--extract <json>]
+       python3 replay.py plan-approvals --since <YYYY-MM-DD> --until <YYYY-MM-DD> [--labels <tsv>]
        python3 replay.py lever [days] [--judge] [--cap N]
        python3 replay.py ask-spend [days] [--judge] [--out <tsv>]   (default 28 days, ask-spend.tsv)
        python3 replay.py ask-spend-pins <pins.jsonl> [k]
@@ -32,6 +33,7 @@ import collections
 import csv
 import datetime
 import glob
+import hashlib
 import json
 import os
 import re
@@ -1105,7 +1107,89 @@ def judge_diff(a, b):
             print("  ", k, left[s]["stamp"], *s, left[s][k], "->", right[s][k])
 
 
+_LOGGED_PLAN_RE = re.compile(r"(?:bash|sh|zsh)\s+(\S+)\s+#\s*DESTRUCTIVE_PLAN")
+
+
+def plan_approvals(since, until, labels=None, log_path="~/.claude/destructive-log.jsonl"):
+    """Allowed plan runs of the destructive log in [since, until) (UTC dates) replayed through
+    gate_policy.plan_requirement; a row the gate logged with its `owner` field counts by that field. A
+    plan with its own `# irreversible:` line is read as written. The older stored plans predate `# irreversible:`; its stand-in is the third
+    column of ``labels`` (basename, kind, IRREVERSIBLE|none): IRREVERSIBLE counts as declared, none is
+    injected as `# irreversible: none` and the plan text goes through the floor. A plan file missing
+    or rewritten since the run (its sha256 differs from the logged one) cannot be read by the floor
+    and is counted as file gone. Read-only; prints per day and lists floor-raised runs."""
+    stand_in = {}
+    if labels:
+        with open(labels) as fh:
+            stand_in = {r[0]: r[2].strip() for r in csv.reader(fh, delimiter="\t") if len(r) >= 3}
+    days = collections.defaultdict(collections.Counter)
+    raised = []
+    with open(os.path.expanduser(log_path)) as fh:
+        rows = [json.loads(line) for line in fh if line.strip()]
+    for row in rows:
+        day = row.get("ts", "")[:10]
+        # A run approved through the permission prompt is logged only as its ask (owner requested).
+        asked = row.get("decision") == "ask" and row.get("owner") == "requested"
+        if not (since <= day < until and (asked or row.get("decision") == "allow")
+                and row.get("class") in ("approval", "plan")):
+            continue
+        count = days[day]
+        count["runs"] += 1
+        m = _LOGGED_PLAN_RE.search(row.get("command", ""))
+        path = row.get("plan_path") or (m and m.group(1))
+        base = os.path.basename(path) if path else ""
+        label = stand_in.get(base)
+        if row.get("owner"):  # logged by the gate since the header exists: its own verdict
+            count["logged " + row["owner"]] += 1
+            continue
+        if label == "IRREVERSIBLE":
+            count["declared"] += 1
+            continue
+        if not path:
+            count["no path"] += 1
+            continue
+        prefix = "" if label == "none" else "unlabelled "
+        try:
+            with open(os.path.expanduser(path), "rb") as plan:
+                data = plan.read()
+        except OSError:
+            count[prefix + "file gone"] += 1
+            continue
+        if row.get("plan_hash") and hashlib.sha256(data).hexdigest() != row["plan_hash"]:
+            count[prefix + "file gone"] += 1
+            continue
+        text = data.decode("utf-8", "replace")
+        if not any(l.strip().lower().startswith("# irreversible:") for l in text.splitlines()):
+            text = "# irreversible: none\n" + text
+        needed, why = g.plan_requirement(text, None, row.get("cwd", ""))
+        verdict = ("no owner" if not needed else "floor" if why.startswith("floor")
+                   else "pin" if "pinned" in why else "declared")
+        count[(prefix if verdict != "declared" else "") + verdict] += 1
+        if needed:
+            raised.append((day, prefix + base, why[:160]))
+    cols = ("runs", "declared", "floor", "pin", "no owner", "file gone", "no path", "unlabelled floor",
+            "unlabelled pin", "unlabelled no owner", "unlabelled file gone", "logged approved", "logged requested", "logged not_needed")
+    print("day (UTC) | allowed plan runs | owner: declared irreversible | owner: floor alone (labelled none)"
+          " | owner: pin line (labelled none) | labelled none, runs without the owner | labelled none, file gone"
+          " or rewritten | log row holds no plan path | unlabelled, floor raises | unlabelled, pin line"
+          " | unlabelled, floor silent | unlabelled, file gone or rewritten | logged by the gate: approved by APPROVE"
+          " | logged by the gate: asked through the permission prompt (approved or declined, one row per ask)"
+          " | logged by the gate: ran without the owner")
+    total = collections.Counter()
+    for day in sorted(days):
+        total.update(days[day])
+        print(" | ".join([day] + [str(days[day][c]) for c in cols]))
+    print(" | ".join(["total"] + [str(total[c]) for c in cols]))
+    print("\nfloor-raised runs: day | plan basename | floor source")
+    for day, base, why in raised:
+        print(day + " | " + base + " | " + why)
+
+
 def main():
+    if sys.argv[1] == "plan-approvals":
+        args = sys.argv[2:]
+        opt = {k: args[args.index(k) + 1] for k in ("--since", "--until", "--labels") if k in args}
+        return plan_approvals(opt["--since"], opt["--until"], opt.get("--labels"))
     if sys.argv[1] == "lever":
         args = sys.argv[2:]
         cap = int(args[args.index("--cap") + 1]) if "--cap" in args else LEVER_JUDGE_CAP

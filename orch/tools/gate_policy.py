@@ -3899,10 +3899,25 @@ _PLAN_MARKER_RE = re.compile(
     r"sha256=([0-9a-fA-F]{64})[ \t]*$"
 )
 _PLAN_HEADERS = (
-    "# scope:", "# undo:", "# count:", "# contradiction:", "# prod_position:", "# way_back:",
+    "# scope:", "# undo:", "# irreversible:", "# count:", "# contradiction:", "# prod_position:", "# way_back:",
     "# effect_read:",
 )
 _PLAN_HEADER_LIST = " / ".join(h.rstrip(":") for h in _PLAN_HEADERS)
+# The plan's declaration of an effect no step can take back; `none` lets the plan run without the owner.
+_IRREVERSIBLE_HEADER = "# irreversible:"
+_IRREVERSIBLE_RULE = ("`# irreversible:` is about production and shared state (a local deletion outside owned paths"
+                      " asks the owner through the hook's own reading, whatever this value says):"
+                      " `none` only when every such effect can be returned to its prior state by a step the"
+                      " plan states; otherwise name what cannot (a production DROP or TRUNCATE whatever backup exists,"
+                      " a replaced or deleted Secret value, a deletion or charge at a vendor of something the plan did"
+                      " not create)")
+# The floor's plain reading of a plan line: a SQL statement that drops or empties an object, wherever
+# the client that runs it is held (an array, a variable, a multi-line ALTER).
+_FLOOR_SQL_RE = re.compile(
+    r"\bTRUNCATE\b|\bDROP\s+(?:TEMPORARY\s+)?(?:TABLE|DATABASE|SCHEMA|INDEX|VIEW|MATERIALIZED\s+VIEW|SEQUENCE"
+    r"|TYPE|FUNCTION|EXTENSION|TRIGGER|POLICY|ROLE|USER|COLUMN|CONSTRAINT|PARTITION|DICTIONARY)\b",
+    re.I,
+)
 # One reason for every command that writes a live Secret, whatever program carries the write.
 _SECRET_WRITE_REASON = "the command writes a live Secret: the previous value cannot be restored"
 _PLAN_INDIRECT_RE = re.compile(r"^\s*(?:(?:source|\.|exec|eval)\s|(?:bash|sh|zsh)\s+\S)")
@@ -5711,9 +5726,9 @@ _DECISION = {"ours": "allow", "approval": "ask", "impossible": "deny", "privileg
 _SEVERITY = {"ours": 1, "approval": 2, "impossible": 3, "privileged": 3}
 
 
-def _plan_decision(path, marker_hash, agent_type, plan_text, plan_hash, cfg, pin_facts=None):
+def _plan_decision(path, marker_hash, agent_type, plan_text, plan_hash, cfg, pin_facts=None, params=None, cwd=""):
     def deny(reason):
-        return {"decision": "deny", "class": "approval", "reason": reason}
+        return {"decision": "deny", "class": "approval", "owner": "form_refused", "reason": reason}
 
     if agent_type:
         return deny(_SUBAGENT_PLAN_DENY)
@@ -5730,8 +5745,10 @@ def _plan_decision(path, marker_hash, agent_type, plan_text, plan_hash, cfg, pin
         if not found:
             return deny(
                 "plan header line `" + header + " ...` is missing; required: "
-                + " ".join(_PLAN_HEADERS)
+                + " ".join(_PLAN_HEADERS) + ("; " + _IRREVERSIBLE_RULE if header == _IRREVERSIBLE_HEADER else "")
             )
+        if header == _IRREVERSIBLE_HEADER and len(found) > 1:
+            return deny("plan holds %d `%s` lines: keep one" % (len(found), _IRREVERSIBLE_HEADER))
         headers[header] = found[0].strip()
     max_lines, max_bytes = int(cfg["plan_max_lines"]), int(cfg["plan_max_bytes"])
     if len(lines) > max_lines or len(plan_text.encode("utf-8")) > max_bytes:
@@ -5748,13 +5765,47 @@ def _plan_decision(path, marker_hash, agent_type, plan_text, plan_hash, cfg, pin
         for number, line in enumerate(lines, 1):
             if _PLAN_INDIRECT_RE.match(line):
                 return deny(
-                    "plan line %d runs another file: inline it, or %s; the owner approves only what is shown"
+                    "plan line %d runs another file: inline it, or %s; the hook reads only what the plan shows"
                     % (number, _PINNED_FORM)
                 )
-    summary = "Destructive plan " + path + " | " + " | ".join(headers[h] for h in _PLAN_HEADERS)
+    needed, why = plan_requirement(plan_text, params, cwd)
+    if not needed:
+        return {"decision": "allow", "class": "plan", "owner": "not_needed", "reason": "no owner approval needed: " + why,
+                "context": "Plan " + path + " ran without the owner (" + why + "): report its scope, count and undo"
+                           " to the owner right after the run."}
+    summary = "Destructive plan " + path + " | owner needed: " + why + " | " + " | ".join(
+        headers[h] for h in _PLAN_HEADERS)
     shown = "".join("Pinned run: " + f + "\n" for f in facts)
-    return {"decision": "ask", "class": "approval", "reason": summary + "\n\n" + shown + plan_text,
-            "facts": shown}
+    return {"decision": "ask", "class": "approval", "owner": "requested",
+            "reason": summary + "\n\n" + shown + plan_text, "facts": shown}
+
+
+def plan_requirement(plan_text, params=None, cwd=""):
+    """(owner_needed, reason) for a plan the form accepts: the owner approves a plan that holds a pin
+    line, one whose `# irreversible:` value is not exactly `none`, and one where the floor sees an
+    effect with no way back (an `impossible` hit of the classifier over the plan text, a reading that
+    runs out of work, or a line that drops or truncates a SQL object); every other plan runs at once.
+    The floor also takes a privileged hit and a quote the walk cannot pair."""
+    if _plan_pins(plan_text):
+        return True, "the plan runs a pinned file the owner reads"
+    lines = plan_text.splitlines()
+    declared = [l.strip()[len(_IRREVERSIBLE_HEADER):].strip() for l in lines
+                if l.strip().lower().startswith(_IRREVERSIBLE_HEADER)]
+    if len(declared) != 1:
+        return True, "the plan holds %d `%s` lines, not one" % (len(declared), _IRREVERSIBLE_HEADER)
+    if declared[0].lower() != "none":
+        return True, "the plan declares an effect with no way back: " + declared[0]
+    try:
+        hits = _classify_text(plan_text, _decision_cfg(params, {}, plan_text), 0, os.path.realpath(cwd) if cwd else "")
+    except OutOfWork:
+        return True, "floor: " + _OUT_OF_WORK
+    for cls, reason in hits:
+        if cls in ("impossible", "privileged") or reason == _UNPAIRED_HIT[1]:
+            return True, "floor: " + reason
+    for number, line in enumerate(lines, 1):
+        if not line.lstrip().startswith("#") and _FLOOR_SQL_RE.search(line):
+            return True, "floor: plan line %d drops or truncates a SQL object" % number
+    return False, "`" + _IRREVERSIBLE_HEADER + " none` and the hook sees no effect without undo"
 
 
 def _plan_pins(plan_text):
@@ -5906,9 +5957,11 @@ def _destructive_decision(
     """Class and permission decision for one Bash command.
 
     ``plan_text``/``plan_hash`` are the content and sha256 hex of the file the
-    DESTRUCTIVE_PLAN marker names (None when there is no readable file). The
-    plan's inner commands are not re-inspected: the owner reads them in the
-    prompt. ``permission_mode`` is the hook input field; whether a hook ``ask``
+    DESTRUCTIVE_PLAN marker names (None when there is no readable file). A
+    plan the form accepts runs at once (class ``plan``, ``owner`` not_needed)
+    unless ``plan_requirement`` says the owner approves it (class
+    ``approval``, ``owner`` requested, or approved when ``approved``); a form
+    refusal carries ``owner`` form_refused. ``permission_mode`` is the hook input field; whether a hook ``ask``
     prompts in bypassPermissions mode is undocumented, so there it becomes a
     deny unless ``destructive.ask_in_bypass``. ``sql_file_texts`` maps each
     path of ``sql_file_paths(command)`` to its text, None when unreadable.
@@ -5918,7 +5971,7 @@ def _destructive_decision(
     against it and the cd's the command runs. ``pin_facts`` maps each path of
     ``plan_pinned_paths(plan_text)`` to ``pin_read.observe``'s facts for it.
     A malformed params value raises.
-    Returns {"decision": allow|ask|deny, "class", "reason"}.
+    Returns {"decision": allow|ask|deny, "class", "reason"}, plus "owner" for a plan run.
     """
     cfg = _decision_cfg(params, sql_file_texts, command or "")
     if len((command or "").encode("utf-8", "surrogatepass")) > int(cfg["command_max_bytes"]):
@@ -5930,14 +5983,16 @@ def _destructive_decision(
         return dict(_PLAN_FORM_DENY, reason=_SUBAGENT_PLAN_DENY) if agent_type else dict(_PLAN_FORM_DENY)
     marker = plan_marker(command)
     if marker:
-        result = _plan_decision(marker[0], marker[1], agent_type, plan_text, plan_hash, cfg, pin_facts)
+        result = _plan_decision(marker[0], marker[1], agent_type, plan_text, plan_hash, cfg, pin_facts, params,
+                                cwd or "")
         if result["decision"] == "ask" and approved:
-            return {"decision": "allow", "class": "approval",
+            return {"decision": "allow", "class": "approval", "owner": "approved",
                     "reason": "plan " + marker[1][:12] + " approved by owner"}
         if result["decision"] == "ask" and permission_mode == "bypassPermissions" and not cfg["ask_in_bypass"]:
-            return {"decision": "deny", "class": "approval", "reason": (
-                "this session cannot prompt; give the owner the plan path " + marker[0] + " to read and ask them to reply "
-                "with the line: APPROVE " + marker[1] + "\n" + result["facts"] + "then run the same command again; the approval is spent when this"
+            return {"decision": "deny", "class": "approval", "owner": "requested", "reason": (
+                result["reason"].split("\n", 1)[0] + "\nthis session cannot prompt; give the owner the plan path "
+                + marker[0] + " to read and ask them to reply with the line: APPROVE " + marker[1] + "\n"
+                + result["facts"] + "then run the same command again; the approval is spent when this"
                 " gate allows, before the other gates answer, so a background run carries its # OUTCOMES: line first"
             )}
     else:
@@ -5955,7 +6010,8 @@ def _destructive_decision(
             return dict(result, decision="deny")
         return {"decision": "deny", "class": result["class"], "reason": (
             result["reason"] + "; this session runs in bypass mode and cannot prompt "
-            "(destructive.ask_in_bypass=false): give the owner the plan path and ask for the line APPROVE <sha256>"
+            "(destructive.ask_in_bypass=false): write a plan (" + _PLAN_HEADER_LIST + ") and run it from the main"
+            " session; ask the owner for the line APPROVE <sha256> only when the hook says the plan needs the owner"
         )}
     return result
 
@@ -5985,9 +6041,10 @@ def _command_decision(command, cfg, cwd):
         reason += ": batch it into a plan script (" + _PLAN_HEADER_LIST + ") run from the main session"
     elif cls == "impossible":
         reason += ("; if the step is needed, write a plan script stating exactly what it does"
-                   " (" + _PLAN_HEADER_LIST.replace("# undo", "# undo: none") + "),"
-                   " give the owner its path and ask for the line APPROVE <sha256>, then run it from the main"
-                   " session as bash <plan>  # DESTRUCTIVE_PLAN sha256=<hex>")
+                   " (" + _PLAN_HEADER_LIST + ", with `# irreversible:` naming the effect that cannot be taken back)"
+                   " and run it from the main session as bash <plan>  # DESTRUCTIVE_PLAN sha256=<hex>; the hook"
+                   " asks the owner for it (give them its path and ask for the line APPROVE <sha256> where the"
+                   " session cannot prompt)")
     return {"decision": _DECISION[cls], "class": cls, "reason": reason}
 
 

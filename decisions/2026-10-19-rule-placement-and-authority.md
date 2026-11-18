@@ -7,7 +7,7 @@ One owner file per rule. A rule lives where the harness injects it at the latest
 ## Owner decisions (retro-evals `owner-criteria.md`, 2026-10-19)
 
 - K27. «Все что дешево и легко откатывается агент может делать сам без апрува. Важное и дорогое - решаю сам, исполнение через план с одним одобрением.» English rule: a production write on our own objects that is cheap and easily reversible is the agent's decision, done at once, no plan and no approval. An important or expensive write, or any write without undo: the owner decides; it runs as one destructive plan.
-- K28. «Агент говорит что точно команда делает (дает путь к файлу скрипта и тп) + APPROVE хук». English rule: the plan states exactly what the command does (script path, scope, count, undo) and starts only after the owner's typed `APPROVE <hash>`; an irreversible effect on client data additionally needs the owner's approval of the effect.
+- K28. «Агент говорит что точно команда делает (дает путь к файлу скрипта и тп) + APPROVE хук». English rule: the plan states exactly what the command does (script path, scope, count, undo) and, when the hook says the plan needs the owner (an effect with no way back, `destructive-plan-asks-the-owner-only-for-an-effect-with-no-way-back.md`), starts only after the owner's approval; an irreversible effect on client data additionally needs the owner's approval of the effect.
 - K29. Decide technical questions myself and say what and why, including irreversible changes on our own objects when the undo cost is stated and recorded in `decisions/`. Escalate only money, business priorities, and irreversible effects on client data or client-visible flows, as one plain question with a recommendation.
 - K30. The agent picks the Pareto finalist when the set differs only on technical axes; the owner picks, through AskUserQuestion with the table, when finalists differ on money, priority, or a client-visible effect. The agent recommends in both cases.
 - K31. CASE-21 Minimum: every reply rate carries RR or hRR; the ESP breakdown shows Other and Unknown apart wherever the data separates them. (Already in `~/.codex/AGENTS.md`; no corpus change here.)
@@ -35,7 +35,7 @@ One owner file per rule. A rule lives where the harness injects it at the latest
 | `kubectl apply` / `patch` / `delete` (controller objects), `drain`, other verbs | approval | approval | - |
 | SQL INSERT/UPDATE/DELETE ... WHERE, SQL from an unread file | approval | approval | - |
 | `helm uninstall`, `flux delete`, `rsync --delete`, inline code that deletes files | approval | approval | - |
-| DROP/TRUNCATE, DELETE without WHERE, Secret writes, namespace/PVC/CRD delete, force push, rm outside ours | impossible (refused, step skipped) | impossible as a bare command; refusal tells the agent to write the plan and ask for `APPROVE <hash>` | - |
+| DROP/TRUNCATE, DELETE without WHERE, Secret writes, namespace/PVC/CRD delete, force push, rm outside ours | impossible (refused, step skipped) | impossible as a bare command; refusal tells the agent to write the plan, which the hook sends to the owner | - |
 
 ## Always-on budget
 

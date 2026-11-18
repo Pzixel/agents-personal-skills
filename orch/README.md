@@ -134,15 +134,29 @@ Hooks enforce the gates; an agent obeys a refusal's message and never works arou
   objects or `-f`/`-k` they are `approval`)
   runs without a prompt; Flux reconcile/suspend/resume is unclassed and runs. `approval` (a live write whose
   undo is not mechanical: SQL writes, `kubectl apply/delete/patch`) goes into
-  one plan script with `# scope / # undo / # count / # contradiction / # prod_position /
-  # way_back / # effect_read` headers, run from the main session as
+  one plan script with `# scope / # undo / # irreversible / # count / # contradiction /
+  # prod_position / # way_back / # effect_read` headers, run from the main session as
   `bash <abs path>  # DESTRUCTIVE_PLAN sha256=<hash>` (that one line plus whole-line `#`
   comments; a command whose top level carries the marker in comment position either is
-  that form or is refused); one approval per batch: the owner's
-  approval of the plan, the permission prompt, or `APPROVE <hash>` where the session
-  cannot prompt. `impossible` (no undo: DROP/TRUNCATE, Secret
-  replace, namespace/PVC delete, force push, rm outside `ours`) is refused as a bare
-  command and runs only from an approved plan that states what it does.
+  that form or is refused). The plan runs at once and the agent reports scope, count and
+  undo right after (the hook says so in `additionalContext`), unless the owner is needed.
+  `# irreversible:` is about production and shared state: `none` only when every such
+  effect can be returned to its prior state by a step the plan states; otherwise it names
+  what cannot (a production DROP or TRUNCATE whatever backup exists, a replaced or deleted
+  Secret value, a deletion or charge at a vendor of something the plan did not create).
+  A local deletion does not change that value; the hook's floor asks for it. The owner is asked (the permission
+  prompt, or `APPROVE <hash>` where the session cannot prompt, one run per approval) for
+  a value other than `none`, a pin line, or what the hook sees in the plan text: an
+  `impossible` or privileged reading, a quote it cannot pair, a reading over its work
+  budget, or a line that drops or truncates a SQL object; that reading includes rm or
+  `find -delete` outside `ours` and a git discard outside a worktree, local or not. No
+  setting turns the owner back on for every plan. Replayed on one owner's 76 approved plan
+  runs, 13 declared an effect with no way back and 9 more were raised by the floor alone;
+  the 0-2 a day target is not met on 11-12 (2 declared, 3 requests), 11-13 (0 declared, 4),
+  11-17 (3 declared, 5) and 11-18 (4 declared, 5).
+  `impossible` (no undo: DROP/TRUNCATE, Secret replace, namespace/PVC delete, force push,
+  rm outside `ours`) is refused as a bare command and runs only from a plan, which the hook
+  sends to the owner.
 - Waits: run the condition once (`wait-for` exits 2 on a broken command), then wait on it
   with a tool made for waiting; never a poll loop, never an agent that ends its turn to wait.
   One monitor per subject, stopped when its work ends.
