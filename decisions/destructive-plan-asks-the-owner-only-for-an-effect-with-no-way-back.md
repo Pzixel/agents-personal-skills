@@ -1,54 +1,41 @@
-# A destructive plan asks the owner only for an effect with no way back
+# A destructive plan asks the owner only for an in-use effect with no way back
 
 ## Decision
-A plan run as `bash <plan>  # DESTRUCTIVE_PLAN sha256=<hex>` that passes the form checks runs at once. It is logged as class `plan`, owner `not_needed`, and the agent reports its scope, count and undo right after the run. The owner approves it (permission prompt, or `APPROVE <sha256>` where the session cannot prompt) only when `gate_policy.plan_requirement` finds one of these:
-1. a `# pin:` line (the owner reads the pinned file's facts);
-2. a `# irreversible:` value other than `none` (case-insensitive, trimmed). The header is mandatory, exactly one line. `none` is allowed only when every effect can be returned to its prior state by a step the plan states;
-3. the floor: the classifier's `impossible` reading of the plan text (a Secret write, a namespace/PVC/CRD delete, a force push, rm outside owned paths, SQL DROP/TRUNCATE/ALTER DROP and DELETE without WHERE where the reading sees them), a privileged hit (sudo and the like hide the command), a quote the reading cannot pair, a reading that runs out of work, or a non-comment line holding `TRUNCATE` or `DROP <object word>`. The declaration is about production and shared state; a local deletion outside owned paths does not make its value other than `none`: it is the floor that asks the owner for it. Bare commands keep their classes. A local DROP DATABASE still asks through the SQL words; proving a target local (files or a local container) is a separate change.
+A plan run as `bash <plan>  # DESTRUCTIVE_PLAN sha256=<hex>` that passes the form checks runs at once (logged class `plan`, owner `not_needed`; the agent reports scope, count and undo right after). The owner approves it (permission prompt, or `APPROVE <sha256>` where the session cannot prompt) only when `gate_policy.plan_requirement` finds:
+1. a `# irreversible:` value (mandatory, one line) other than exactly `none` (case-insensitive, trimmed). The rule (`_IRREVERSIBLE_RULE`, shown by every refusal and ask): `none` unless an effect with no way back touches something in use (something a client sees, an object or money at a vendor, a Secret value, data that code or people read). A way back is a step the plan states that returns the prior state; a saved dump the plan takes and names is one. Deleting data or an object nothing reads is `none` only when `# undo:` or `# effect_read:` states the read that showed it (revision and what was searched); the hook does not read that evidence. A value opening with `none` and going on is a form refusal naming the test (logged as `declared`); an ask raised by the value shows the bare-`none` exit. `replay.py plan-approvals` lists each such refusal or request followed by a run of the same path without the owner;
+2. the floor, over the plan text and each pinned file's hashed text: an `impossible` hit other than a SQL DROP/TRUNCATE/ALTER DROP or DELETE without WHERE (`_FLOOR_LEAVES`), a privileged hit, an unpaired quote, a reading out of work. What stays is in use by nature or unreadable: a Secret write, a namespace/PVC/CRD delete (cascades the text cannot list), a force push, rm, `find -delete` and git discards outside owned paths, a body not readable whole.
 
-The marker form, main session only, size limits (`plan_max_lines` 41), pins and the bare-command classes are unchanged. An approval file is spent only by an owner-needed run. Plan log rows carry `plan_path`, `cwd`, `owner` (`not_needed`, `requested`, `approved`, `form_refused`), `reason` and `stale_approval`.
+A pin line alone no longer asks; pinned-run facts go into the allow context and the `pinned_runs` log field, and a floor reason names the pinned file by path. Bare commands keep their classes: a bare DROP is refused and sent to a plan. Marker, size and pin forms are unchanged.
 
 ## Why
-The owner approved every plan, read none of them, and asked for 0-2 approvals a day, all on production actions with no way back. Reversible and additive production writes are now the agent's to run and report.
+The owner approved plans unread and wants 0-2 a day that he reads. His ruling (2026-11-19, "only what is in use"): APPROVE stays for an effect with no way back on something in use; dead-data deletions with evidence, DROP and TRUNCATE with a saved dump or on dead objects, and pinned plans declaring `none` run without him. Accepted price: an agent's mistake about "nothing reads it" or a table name loses data unseen.
 
 ## Measured
-Measured on 2026-11-18 with `python3 orch/tools/backtest/replay.py plan-approvals --since 2026-10-26 --until 2026-11-19 --labels <labels.tsv>` over one owner's destructive log. The input was 76 allowed plan runs (class approval, decision allow). The stored plans have no `# irreversible:` header, so a label column stands in for it, assigned by reading each plan. The labels file covers 49 runs.
+In the 15 hours after the first narrowing (from 2026-11-18T14:41, read 2026-11-19), the owner was asked for 10 plans, from two sources: 6 approved runs in the hook's log, and 4 asks an agent made ahead of the hook (its transcript: 0 plan runs and 0 hook refusals for those plans, the ask repeated in 110 messages over 4 hours); 1 plan ran without him. By kind: 4 dead-data deletions, 2 forced by the pin line while declaring `none`, 2 runs of one DROP-with-dump plan (floor's SQL word match), 2 in-use effects (client notifications and send stops; account deletion at a vendor). Limit: an ask made ahead of the hook leaves no log row; the log and the replay do not see it.
 
-| outcome of the 76 runs | runs |
-|---|---|
-| owner: declared irreversible (label) | 13 |
-| owner: floor alone (labelled none) | 9 |
-| runs without the owner (labelled none) | 22 |
-| labelled none, plan file gone or rewritten since the run | 5 |
-| log row cut before the plan path (a leading `# OUTCOMES:` line) | 10 |
-| unlabelled: floor raises | 1 |
-| unlabelled: floor silent | 1 |
-| unlabelled: plan file gone or rewritten | 15 |
+`python3 orch/tools/backtest/replay.py plan-files <9 files> --labels <stand-in>` (read-only, latest content, pinned files from disk), on the six logged plan paths and three dead-data clears:
 
-Owner requests per day (declared plus floor alone, labelled runs): 11-08 2, 11-09 2, 11-12 3, 11-13 4, 11-16 1, 11-17 5, 11-18 5; declaration alone is above 2 on 11-17 (3) and 11-18 (4).
+| decision on the nine files | own header value | stand-in (in use: the two above and one pinned pilot; every other file `none`) |
+|---|---|---|
+| owner asks | 5 | 3 |
+| form refusal (`none` plus text) | 2 | 0 |
+| runs without the owner | 2 | 6 |
 
-All 9 floor-alone requests are on plans the labels call reversible. 3 are a database DROP, which the SQL words take. 2 are Secret patches that only add keys, which the classifier cannot tell from a replace. 4 are local rm plans of one day, outside owned paths.
+The pinned pilot is in use: its header names an effect that stays after its undo, on data code reads.
+
+The own-value column is higher because the files were written under the previous meaning (the clears name their dead-key deletion). The code alone removes the floor's SQL asks (1 plan, 2 runs) and pin-alone asks (2 plans); the pinned files' floor raised nothing.
+
+Before this change, on 76 runs of 2026-10-26..11-19, the floor alone asked 9 times on plans labelled reversible: 3 DROPs (gone now), 2 Secret key adds (kept: an add reads like a replace), 4 local rm plans outside owned paths (kept).
 
 ## Left to the declaration (known gaps)
-The floor reads only what is plainly visible in the plan text. Writes it does not see rest on the agent's `# irreversible:` line:
-- DELETE or UPDATE without WHERE beyond what the classifier reads;
-- ClickHouse `ALTER ... DELETE` through an unbound client head;
-- HTTP DELETE or a vendor call;
-- a write inside a script run in a pod, or any write whose text is not in the plan;
-- `ssh host -- <command>` and a function wrapping ssh, which neither the floor nor the bare classes read;
-- a command whose head is an array expansion (`"${K[@]}" delete pvc data-0`), which the classifier does not read;
-- `dropdb`, `redis-cli FLUSHALL`, `DROP OWNED BY`;
-- the bare `approval` writes in a plan declared `none`: `helm uninstall`, `kubectl delete pv`, `kubectl delete all --all`, `rsync --delete`.
-
-This is the accepted risk of the owner's ruling. The threat model is unchanged (`destructive-gate-threat-model-is-agent-mistakes.md`): the gate catches mistakes, and a false `none` is a mistake the floor catches only where it can see it.
+The floor reads only what is plainly visible in the plan or a pinned file; the rest rests on `# irreversible:`: SQL DROP, TRUNCATE and full DELETE (by this decision); writes the classifier misses (vendor and HTTP calls, scripts run in a pod, ssh-carried commands, array-expanded heads, runner functions and `trap` bodies, `dropdb`, `FLUSHALL`); files a pinned file sources or runs (read no deeper than its own text); the bare `approval` writes (`helm uninstall`, `kubectl delete pv`, `rsync --delete`). The kept floor over-fires on Secret key adds and on force pushes of unread branches. Threat model: `destructive-gate-threat-model-is-agent-mistakes.md`.
 
 ## Rejected
-- A local-target exemption by the absence of remote words: nine production plan bodies passed it.
-- A local-file exception, built and removed in this change: the floor left local-effect hits (rm or `find -delete` outside owned paths, git discards outside a worktree) to the agent when no non-comment line held `ssh`, `kubectl` or `docker`. It cleared 4 runs in 24 days, then needed three rounds of bounding rules (functions shipped over ssh, variable-, wrapper- and array-held carriers). With them the floor alone asked 10 times against 5 before it: two reversible production plans and two local plans with a carrier word in a file name now asked. Without it: 9.
-- An open word list for `# undo:`: it missed wordings and fired falsely.
-- Per-statement SQL parsing and reading SQL files from the plan: it leaked and over-fired both ways.
-- A raw regex over the whole body: `[^;]*` crossed lines.
-- A setting that turns the owner back on for every plan: no installer asked for one, and the measured rate is the reason for the change.
+- Accepting a `none` prefix: a hedged `none on our data; labels stay after undo` passes an in-use effect unseen.
+- Anything not exactly `none` asks (previous rule): 3 extra asks on the window's plans, above the target.
+- An `# evidence:` header: the dead-data plans already state it on `# undo:`.
+- Pinned files unread by the floor: reading them costs 15 lines, 1-34 ms a file.
+- Earlier rounds, retry only on new evidence: a local-target exemption by absent remote words (nine production bodies passed it); a local-file exception (asked 10 against 9); an `# undo:` word list; per-statement SQL parsing; an owner-for-every-plan setting.
 
 ## Resume signal
-Reopen when the replay shows a plan declared `none` that destroyed something the owner wanted back. Local targets (files and local containers) are a separate change, reopened when floor requests on local work cost more than 1 a day over a week of the replay; it needs a target proof the plan text can carry, not a word match.
+Reopen when the replay shows a plan declared `none` that destroyed something in use, or the audit shows an ask rewritten to `none` over an in-use effect. Local targets reopen when floor asks on local work pass 1 a day over a replayed week.

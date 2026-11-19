@@ -9,6 +9,7 @@ usage: python3 replay.py <loop.tsv> <control.jsonl> [variants]
             (--policy: gate_policy.py inside a checkout of the base, e.g. a git worktree; a lone copy fails to load)
        python3 replay.py destructive-diff <days | commands.json> --policy <base gate_policy.py> [--extract <json>]
        python3 replay.py plan-approvals --since <YYYY-MM-DD> --until <YYYY-MM-DD> [--labels <tsv>]
+       python3 replay.py plan-files <plan path>... [--labels <tsv>]
        python3 replay.py lever [days] [--judge] [--cap N]
        python3 replay.py ask-spend [days] [--judge] [--out <tsv>]   (default 28 days, ask-spend.tsv)
        python3 replay.py ask-spend-pins <pins.jsonl> [k]
@@ -1161,17 +1162,17 @@ def plan_approvals(since, until, labels=None, log_path="~/.claude/destructive-lo
         text = data.decode("utf-8", "replace")
         if not any(l.strip().lower().startswith("# irreversible:") for l in text.splitlines()):
             text = "# irreversible: none\n" + text
-        needed, why = g.plan_requirement(text, None, row.get("cwd", ""))
-        verdict = ("no owner" if not needed else "floor" if why.startswith("floor")
-                   else "pin" if "pinned" in why else "declared")
+        needed, why = _plan_file_decision(text, row.get("cwd", ""))
+        verdict = ("form refusal" if needed is None else "no owner" if not needed
+                   else "floor" if why.startswith("floor") else "declared")
         count[(prefix if verdict != "declared" else "") + verdict] += 1
         if needed:
             raised.append((day, prefix + base, why[:160]))
-    cols = ("runs", "declared", "floor", "pin", "no owner", "file gone", "no path", "unlabelled floor",
-            "unlabelled pin", "unlabelled no owner", "unlabelled file gone", "logged approved", "logged requested", "logged not_needed")
+    cols = ("runs", "declared", "floor", "form refusal", "no owner", "file gone", "no path", "unlabelled floor",
+            "unlabelled form refusal", "unlabelled no owner", "unlabelled file gone", "logged approved", "logged requested", "logged not_needed")
     print("day (UTC) | allowed plan runs | owner: declared irreversible | owner: floor alone (labelled none)"
-          " | owner: pin line (labelled none) | labelled none, runs without the owner | labelled none, file gone"
-          " or rewritten | log row holds no plan path | unlabelled, floor raises | unlabelled, pin line"
+          " | `none ...` refused by the form (labelled none) | labelled none, runs without the owner | labelled none, file gone"
+          " or rewritten | log row holds no plan path | unlabelled, floor raises | unlabelled, `none ...` refused"
           " | unlabelled, floor silent | unlabelled, file gone or rewritten | logged by the gate: approved by APPROVE"
           " | logged by the gate: asked through the permission prompt (approved or declined, one row per ask)"
           " | logged by the gate: ran without the owner")
@@ -1183,6 +1184,79 @@ def plan_approvals(since, until, labels=None, log_path="~/.claude/destructive-lo
     print("\nfloor-raised runs: day | plan basename | floor source")
     for day, base, why in raised:
         print(day + " | " + base + " | " + why)
+    print("\nan ask the plan's value raised (a `none ...` refusal, or an owner request), then a run of the same plan"
+          " path without the owner (a later text declared exactly `none`): first row at (UTC) | its owner field"
+          " | plan basename | refused value (requests log none) | ran at (UTC)")
+    for first, ran in _none_rewrites([r for r in rows if since <= r.get("ts", "")[:10] < until]):
+        print(" | ".join([first["ts"][:19], first["owner"], os.path.basename(first["plan_path"]),
+                          first.get("declared", "-"), ran["ts"][:19]]))
+
+
+def _none_rewrites(rows):
+    """(first row, run row) pairs: a form refusal that logged a `declared` value, or an owner request, then the
+    first later run of the same plan path that the gate let through without the owner; after a request, only a
+    run of another text (another hash) counts, since the same text asks again."""
+    pairs = []
+    for i, row in enumerate(rows):
+        refused = row.get("owner") == "form_refused" and row.get("declared")
+        if not (refused or row.get("owner") == "requested") or not row.get("plan_path"):
+            continue
+        ran = next((r for r in rows[i + 1:] if r.get("plan_path") == row["plan_path"]
+                    and r.get("owner") == "not_needed" and (refused or r.get("plan_hash") != row.get("plan_hash"))),
+                   None)
+        if ran:
+            pairs.append((row, ran))
+    return pairs
+
+
+def _plan_file_decision(text, cwd):
+    """(owner_needed, why) of the destructive gate on a plan text as it stands, pinned files read from disk;
+    a `none ...` value the form refuses is (None, refusal)."""
+    refusal = g.irreversible_refusal(text)
+    if refusal:
+        return None, refusal
+    pinned = []
+    for path in g.plan_pinned_paths(text):
+        try:
+            with open(path, "rb") as fh:
+                pinned.append((path, fh.read().decode("utf-8", "replace")))
+        except OSError:
+            return True, "floor: pinned file " + path + " is unreadable"
+    return g.plan_requirement(text, None, cwd, pinned)
+
+
+def plan_files(paths, labels=None):
+    """Each plan file at its latest content through the destructive gate, twice: on its own
+    `# irreversible:` value, and on the stand-in of ``labels`` (basename, kind, IRREVERSIBLE|none):
+    none replaces the value, IRREVERSIBLE counts as declared. Read-only; cwd is the file's directory."""
+    stand_in = {}
+    if labels:
+        with open(labels) as fh:
+            stand_in = {r[0]: r[2].strip() for r in csv.reader(fh, delimiter="\t") if len(r) >= 3}
+
+    def verdict(needed, why):
+        return ("form refusal" if needed is None else "runs without the owner" if not needed
+                else "owner: " + ("floor" if why.startswith("floor") else "declared")) + " (" + why[:100] + ")"
+
+    print("plan basename | decision on its own `# irreversible:` value | decision with the stand-in label")
+    total = collections.Counter()
+    for path in paths:
+        with open(path, "rb") as fh:
+            text = fh.read().decode("utf-8", "replace")
+        own = _plan_file_decision(text, os.path.dirname(path))
+        label = stand_in.get(os.path.basename(path))
+        if label == "IRREVERSIBLE":
+            alt = (True, "label: declared")
+        elif label == "none":
+            alt = _plan_file_decision(re.sub(r"(?im)^[ \t]*# irreversible:.*$", "# irreversible: none", text),
+                                      os.path.dirname(path))
+        else:
+            alt = own
+        total["own asks"] += bool(own[0])
+        total["stand-in asks"] += bool(alt[0])
+        print(" | ".join([os.path.basename(path), verdict(*own), verdict(*alt)]))
+    print("owner asks of %d files: own value %d, stand-in %d" % (len(paths), total["own asks"],
+                                                                  total["stand-in asks"]))
 
 
 def main():
@@ -1190,6 +1264,10 @@ def main():
         args = sys.argv[2:]
         opt = {k: args[args.index(k) + 1] for k in ("--since", "--until", "--labels") if k in args}
         return plan_approvals(opt["--since"], opt["--until"], opt.get("--labels"))
+    if sys.argv[1] == "plan-files":
+        args = sys.argv[2:]
+        labels = args[args.index("--labels") + 1] if "--labels" in args else None
+        return plan_files([a for a in args if a not in ("--labels", labels)], labels)
     if sys.argv[1] == "lever":
         args = sys.argv[2:]
         cap = int(args[args.index("--cap") + 1]) if "--cap" in args else LEVER_JUDGE_CAP

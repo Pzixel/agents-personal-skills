@@ -3931,21 +3931,21 @@ _PLAN_HEADERS = (
     "# effect_read:",
 )
 _PLAN_HEADER_LIST = " / ".join(h.rstrip(":") for h in _PLAN_HEADERS)
-# The plan's declaration of an effect no step can take back; `none` lets the plan run without the owner.
+# The plan's declaration of an in-use effect no step can take back; `none` lets the plan run without the owner.
 _IRREVERSIBLE_HEADER = "# irreversible:"
-_IRREVERSIBLE_RULE = ("`# irreversible:` is about production and shared state (a local deletion outside owned paths"
-                      " asks the owner through the hook's own reading, whatever this value says):"
-                      " `none` only when every such effect can be returned to its prior state by a step the"
-                      " plan states; otherwise name what cannot (a production DROP or TRUNCATE whatever backup exists,"
-                      " a replaced or deleted Secret value, a deletion or charge at a vendor of something the plan did"
-                      " not create)")
-# The floor's plain reading of a plan line: a SQL statement that drops or empties an object, wherever
-# the client that runs it is held (an array, a variable, a multi-line ALTER).
-_FLOOR_SQL_RE = re.compile(
-    r"\bTRUNCATE\b|\bDROP\s+(?:TEMPORARY\s+)?(?:TABLE|DATABASE|SCHEMA|INDEX|VIEW|MATERIALIZED\s+VIEW|SEQUENCE"
-    r"|TYPE|FUNCTION|EXTENSION|TRIGGER|POLICY|ROLE|USER|COLUMN|CONSTRAINT|PARTITION|DICTIONARY)\b",
-    re.I,
-)
+_IRREVERSIBLE_RULE = ("`# irreversible:` is exactly `none` unless an effect with no way back touches something in use"
+                      " (something a client sees, an object or money at a vendor, a Secret value, data that code or"
+                      " people read); then the value names that effect and the owner approves the plan. A way back is"
+                      " a step the plan states that returns the prior state (a saved dump the plan takes and names is"
+                      " one), so a DROP or TRUNCATE with such a dump is `none`. Deleting data or an object nothing reads"
+                      " is `none` only when the `# undo:` or `# effect_read:` line states the read that showed nothing"
+                      " reads it (the revision searched and what was searched). The hook's own reading"
+                      " still asks the owner for what it sees in the plan or a pinned file (a Secret write, a"
+                      " namespace/PVC/CRD delete, a force push, a deletion outside owned paths, a body it cannot read)")
+# The owner-needed reason when the plan's own value asks (not the floor).
+_DECLARED_WHY = "the plan declares an effect with no way back: "
+# A `# irreversible:` value that opens with the word `none` and goes on: refused, the agent decides the test.
+_NONE_QUALIFIED_RE = re.compile(r"^none\b.", re.I | re.S)
 # One reason for every command that writes a live Secret, whatever program carries the write.
 _SECRET_WRITE_REASON = "the command writes a live Secret: the previous value cannot be restored"
 _PLAN_INDIRECT_RE = re.compile(r"^\s*(?:(?:source|\.|exec|eval)\s|(?:bash|sh|zsh)\s+\S)")
@@ -4395,6 +4395,11 @@ def _is_plain_relative(path):
     )
 
 
+_SQL_DROP_REASON = "SQL DROP/TRUNCATE/ALTER ... DROP has no undo of its own" + _SQL_READ_HINT
+_SQL_DELETE_ALL_REASON = "SQL DELETE without WHERE has no undo of its own" + _SQL_READ_HINT
+# Classifier readings a plan's floor leaves to `# irreversible:`: a dropped or emptied object may hold
+# data nothing reads, or have a saved dump, which only the plan can state.
+_FLOOR_LEAVES = frozenset({_SQL_DROP_REASON, _SQL_DELETE_ALL_REASON})
 _RM_OWN_HINT = (
     "; write each path absolute (a relative path counts only after an unconditional"
     " top-level cd to an existing directory), or run ~/.claude/tools/rm-own -r <path>..."
@@ -4622,10 +4627,10 @@ def _sql_hits(args, file_texts=()):
     """``file_texts``: text of each file the client reads, None when unknown."""
     text = " ".join(args)
     if _SQL_NO_UNDO_RE.search(text):
-        return [("impossible", "SQL DROP/TRUNCATE/ALTER ... DROP has no undo" + _SQL_READ_HINT)]
+        return [("impossible", _SQL_DROP_REASON)]
     for m in _SQL_DELETE_RE.finditer(text):
         if not re.search(r"\bWHERE\b", m.group(1), re.I):
-            return [("impossible", "SQL DELETE without WHERE has no undo" + _SQL_READ_HINT)]
+            return [("impossible", _SQL_DELETE_ALL_REASON)]
     if _SQL_DELETE_RE.search(text) or _SQL_WRITE_RE.search(text):
         return [("approval", "SQL write to a database" + _SQL_READ_HINT)]
     if _SQL_SIDE_EFFECT_RE.search(text):
@@ -5778,6 +5783,9 @@ def _plan_decision(path, marker_hash, agent_type, plan_text, plan_hash, cfg, pin
         if header == _IRREVERSIBLE_HEADER and len(found) > 1:
             return deny("plan holds %d `%s` lines: keep one" % (len(found), _IRREVERSIBLE_HEADER))
         headers[header] = found[0].strip()
+    refused = irreversible_refusal(plan_text)
+    if refused:
+        return dict(deny(refused), declared=headers[_IRREVERSIBLE_HEADER][len(_IRREVERSIBLE_HEADER):].strip())
     max_lines, max_bytes = int(cfg["plan_max_lines"]), int(cfg["plan_max_bytes"])
     if len(lines) > max_lines or len(plan_text.encode("utf-8")) > max_bytes:
         return deny(
@@ -5796,43 +5804,58 @@ def _plan_decision(path, marker_hash, agent_type, plan_text, plan_hash, cfg, pin
                     "plan line %d runs another file: inline it, or %s; the hook reads only what the plan shows"
                     % (number, _PINNED_FORM)
                 )
-    needed, why = plan_requirement(plan_text, params, cwd)
+    pinned = [(p, pin_facts[p]["text"]) for p in plan_pinned_paths(plan_text)]
+    needed, why = plan_requirement(plan_text, params, cwd, pinned)
+    shown = "".join("Pinned run: " + f + "\n" for f in facts)
     if not needed:
         return {"decision": "allow", "class": "plan", "owner": "not_needed", "reason": "no owner approval needed: " + why,
+                "facts": shown,
                 "context": "Plan " + path + " ran without the owner (" + why + "): report its scope, count and undo"
-                           " to the owner right after the run."}
+                           " to the owner right after the run. " + _IRREVERSIBLE_RULE + ".\n" + shown}
     summary = "Destructive plan " + path + " | owner needed: " + why + " | " + " | ".join(
         headers[h] for h in _PLAN_HEADERS)
-    shown = "".join("Pinned run: " + f + "\n" for f in facts)
+    if why.startswith(_DECLARED_WHY):
+        summary += (" | If the declared effect is on data nothing reads or has a way back the plan states, the value"
+                    " is `none` and the plan runs without the owner; otherwise ask the owner. " + _IRREVERSIBLE_RULE)
     return {"decision": "ask", "class": "approval", "owner": "requested",
             "reason": summary + "\n\n" + shown + plan_text, "facts": shown}
 
 
-def plan_requirement(plan_text, params=None, cwd=""):
-    """(owner_needed, reason) for a plan the form accepts: the owner approves a plan that holds a pin
-    line, one whose `# irreversible:` value is not exactly `none`, and one where the floor sees an
-    effect with no way back (an `impossible` hit of the classifier over the plan text, a reading that
-    runs out of work, or a line that drops or truncates a SQL object); every other plan runs at once.
-    The floor also takes a privileged hit and a quote the walk cannot pair."""
-    if _plan_pins(plan_text):
-        return True, "the plan runs a pinned file the owner reads"
+def irreversible_refusal(plan_text):
+    """The form's refusal of a `# irreversible:` value that opens with the word `none` and goes on, else None.
+    Such a value both says `none` and qualifies it; the agent answers the test instead of the owner."""
+    declared = [l.strip()[len(_IRREVERSIBLE_HEADER):].strip() for l in plan_text.splitlines()
+                if l.strip().lower().startswith(_IRREVERSIBLE_HEADER)]
+    if len(declared) != 1 or not _NONE_QUALIFIED_RE.match(declared[0]):
+        return None
+    return ("`" + _IRREVERSIBLE_HEADER + " " + declared[0] + "` opens with `none` and qualifies it. Answer the test:"
+            " does any effect with no way back touch something in use (something a client sees, an object or money"
+            " at a vendor, a Secret value, data that code or people read), an effect that stays after the undo or an"
+            " undo that can stop working included? If yes, the value names that effect and does not begin with the"
+            " word `none`; the hook then asks the owner. If no, the value is exactly `none`. " + _IRREVERSIBLE_RULE)
+
+
+def plan_requirement(plan_text, params=None, cwd="", pinned_texts=()):
+    """(owner_needed, reason) for a plan the form accepts: the owner approves a plan whose
+    `# irreversible:` value is not exactly `none`, and one where the floor sees an effect with no way
+    back in the plan text or a pinned file's text (``pinned_texts``, (path, text) pairs): an
+    `impossible` hit of the classifier other than a SQL drop or full delete (``_FLOOR_LEAVES``), a privileged hit, a quote
+    the walk cannot pair, or a reading that runs out of work; every other plan runs at once."""
     lines = plan_text.splitlines()
     declared = [l.strip()[len(_IRREVERSIBLE_HEADER):].strip() for l in lines
                 if l.strip().lower().startswith(_IRREVERSIBLE_HEADER)]
     if len(declared) != 1:
         return True, "the plan holds %d `%s` lines, not one" % (len(declared), _IRREVERSIBLE_HEADER)
     if declared[0].lower() != "none":
-        return True, "the plan declares an effect with no way back: " + declared[0]
-    try:
-        hits = _classify_text(plan_text, _decision_cfg(params, {}, plan_text), 0, os.path.realpath(cwd) if cwd else "")
-    except OutOfWork:
-        return True, "floor: " + _OUT_OF_WORK
-    for cls, reason in hits:
-        if cls in ("impossible", "privileged") or reason == _UNPAIRED_HIT[1]:
-            return True, "floor: " + reason
-    for number, line in enumerate(lines, 1):
-        if not line.lstrip().startswith("#") and _FLOOR_SQL_RE.search(line):
-            return True, "floor: plan line %d drops or truncates a SQL object" % number
+        return True, _DECLARED_WHY + declared[0]
+    for where, text in [("", plan_text)] + [("pinned file %s: " % p, t) for p, t in pinned_texts]:
+        try:
+            hits = _classify_text(text, _decision_cfg(params, {}, text), 0, os.path.realpath(cwd) if cwd else "")
+        except OutOfWork:
+            return True, "floor: " + where + _OUT_OF_WORK
+        for cls, reason in hits:
+            if (cls in ("impossible", "privileged") and reason not in _FLOOR_LEAVES) or reason == _UNPAIRED_HIT[1]:
+                return True, "floor: " + where + reason
     return False, "`" + _IRREVERSIBLE_HEADER + " none` and the hook sees no effect without undo"
 
 
@@ -5846,10 +5869,10 @@ def _plan_pins(plan_text):
 
 def plan_pinned_paths(plan_text):
     """Paths a plan pins once and runs by the strict line: the files the hook observes.
-    Empty for a plan without a pin, so such a plan costs no git call."""
+    Empty for a plan without a pin, so such a plan costs no git call; in the order the plan runs them."""
     pins = _plan_pins(plan_text)
-    runs = {m.group(1) for m in map(_PINNED_RUN_RE.match, (plan_text or "").split("\n")) if m}
-    return sorted(p for p in runs if pins.get(p))
+    runs = [m.group(1) for m in map(_PINNED_RUN_RE.match, (plan_text or "").split("\n")) if m]
+    return [p for p in dict.fromkeys(runs) if pins.get(p)]
 
 
 def _pinned_plan(plan_text, lines, pins, pin_facts):
@@ -6068,11 +6091,12 @@ def _command_decision(command, cfg, cwd):
     if cls == "approval" and reason not in _OWN_REMEDY:
         reason += ": batch it into a plan script (" + _PLAN_HEADER_LIST + ") run from the main session"
     elif cls == "impossible":
-        reason += ("; if the step is needed, write a plan script stating exactly what it does"
-                   " (" + _PLAN_HEADER_LIST + ", with `# irreversible:` naming the effect that cannot be taken back)"
-                   " and run it from the main session as bash <plan>  # DESTRUCTIVE_PLAN sha256=<hex>; the hook"
-                   " asks the owner for it (give them its path and ask for the line APPROVE <sha256> where the"
-                   " session cannot prompt)")
+        reason += ("; if the step is needed, write a plan script stating exactly what it does, its way back if"
+                   " it has one, or the read that showed nothing reads the object"
+                   " (" + _PLAN_HEADER_LIST + "), and run it from the main session as"
+                   " bash <plan>  # DESTRUCTIVE_PLAN sha256=<hex>; " + _IRREVERSIBLE_RULE + ". Run the plan first:"
+                   " the hook decides whether the owner approves it, and only when it says so give the owner its"
+                   " path and ask for the line APPROVE <sha256> where the session cannot prompt")
     return {"decision": _DECISION[cls], "class": cls, "reason": reason}
 
 

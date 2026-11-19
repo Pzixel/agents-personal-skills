@@ -1,7 +1,8 @@
 """Observation behind a pinned plan run of hooks/deny-destructive.py: for each
 file a plan pins and runs (gate_policy.plan_pinned_paths), read the file and
 its blob on the local `origin/HEAD` tip of its repository, under one deadline
-for all files. Returns facts only; gate_policy._pin_verdict decides."""
+for all files. Returns facts only, the text that was hashed included (the plan floor reads it);
+gate_policy._pin_verdict decides."""
 
 import hashlib
 import os
@@ -70,7 +71,7 @@ def _observe_one(path, deadline, env):
         return {"error": "git", "detail": str(exc)[:200]}
     return {"real_path": real, "sha256": hashlib.sha256(data).hexdigest(), "file_blob": file_blob,
             "tree_mode": mode or None, "tree_blob": tree_blob, "origin_url": origin_url,
-            "tip": tip, "tip_date": tip_date, "branch": branch}
+            "tip": tip, "tip_date": tip_date, "branch": branch, "text": data.decode("utf-8", "replace")}
 
 
 def _shown_url(url):

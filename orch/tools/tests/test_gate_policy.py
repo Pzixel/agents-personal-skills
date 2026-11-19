@@ -1971,7 +1971,7 @@ _PINNED_HEAD = _PLAN[:_PLAN.index("psql")] + _PIN_LINE
 _PINNED_PLAN = _PINNED_HEAD + "bash /repo/run.sh --apply 5\n"
 _PIN_FACTS = {"real_path": "/repo/run.sh", "sha256": _PIN_HASH, "file_blob": "b" * 40, "tree_mode": "100644",
               "tree_blob": "b" * 40, "origin_url": "git@github.com:o/r.git", "tip": "c" * 40,
-              "tip_date": "2026-11-17T10:00:00+00:00", "branch": "origin/main"}
+              "tip_date": "2026-11-17T10:00:00+00:00", "branch": "origin/main", "text": "echo apply\n"}
 
 
 def _pinned(plan_text, facts=_PIN_FACTS, mode="default", approved=False):
@@ -2073,10 +2073,17 @@ class DestructiveDecisionTest(unittest.TestCase):
             with self.subTest(cmd=cmd):
                 self.assertEqual(_destructive(cmd)["decision"], "deny")
 
-    def test_impossible_refusal_names_the_approved_plan_route(self):
+    def test_impossible_refusal_sends_the_step_to_a_plan_the_hook_decides(self):
         result = _destructive('psql -c "DROP TABLE orders"')
-        self.assertEqual(result["decision"], "deny")
-        self.assertIn("APPROVE <sha256>", result["reason"])
+        self.assertEqual((result["decision"], result["class"]), ("deny", "impossible"))
+        self.assertIn("DESTRUCTIVE_PLAN sha256=<hex>", result["reason"])
+        self.assertIn("only when it says so", result["reason"])
+
+    def test_bare_sql_drop_remedy_names_the_way_back_or_the_read(self):
+        result = _destructive('psql -c "TRUNCATE orders_old"')
+        self.assertEqual((result["decision"], result["class"]), ("deny", "impossible"))
+        self.assertIn("its way back if it has one, or the read that showed nothing reads the object",
+                      result["reason"])
 
     def test_kubectl_verbs_moved_from_the_hook_table(self):
         for cmd, decision in [
@@ -3173,18 +3180,22 @@ class PlanRequirementTest(unittest.TestCase):
                          "not_needed")
 
     def test_any_value_other_than_none_needs_the_owner(self):
-        for value in ("none, a backup exists", "the Secret value is replaced", "no"):
+        for value in ("the Secret value is replaced", "no", "nothing a client sees"):
             with self.subTest(value=value):
                 result = _declared_run(value, "psql -c \"UPDATE orders SET x = 1 WHERE id = 7\"\n")
                 self.assertEqual((result["decision"], result["class"], result["owner"]),
                                  ("ask", "approval", "requested"))
                 self.assertIn(value, result["reason"])
 
+    def test_a_declared_ask_names_the_none_exit_and_a_floor_ask_does_not(self):
+        declared = _declared_run("orders_old rows are deleted", "psql -c \"DELETE FROM orders_old WHERE id < 9\"\n")
+        floor = _declared_run("none", "kubectl delete secret api-token -n prod\n")
+        self.assertIn("the value is `none` and the plan runs without the owner", declared["reason"])
+        self.assertIn("A way back is a step the plan states", declared["reason"])
+        self.assertNotIn("the value is `none` and the plan runs without the owner", floor["reason"])
+
     def test_floor_raises_a_none_plan_with_a_visible_effect_without_undo(self):
         bodies = [
-            'CH=(clickhouse-client --host db)\n"${CH[@]}" --query "DROP TABLE events"\n',
-            'psql -c "ALTER TABLE orders\n  DROP COLUMN note"\n',
-            'psql -c "truncate orders"\n',
             "ssh app-1 rm -rf /var/lib/app/uploads\n",
             "kubectl exec -n prod deploy/api -- rm -rf /data/cache\n",
             "ssh app-1 <<'EOF'\ncd /srv/app && git reset --hard\nEOF\n",
@@ -3197,6 +3208,34 @@ class PlanRequirementTest(unittest.TestCase):
                 result = _declared_run("none", body)
                 self.assertEqual((result["decision"], result["owner"]), ("ask", "requested"))
                 self.assertIn("owner needed: floor", result["reason"])
+
+    def test_sql_drop_truncate_and_full_delete_are_left_to_the_declaration(self):
+        bodies = [
+            'CH=(clickhouse-client --host db)\n"${CH[@]}" --query "DROP TABLE events"\n',
+            'psql -c "ALTER TABLE orders\n  DROP COLUMN note"\n',
+            'psql -c "truncate orders"\n',
+            "pg_dump -t orders_old -Fc > tmp/orders_old.dump\npsql -c 'DROP TABLE orders_old'\n",
+            "psql -c 'DELETE FROM orders_old'\n",
+        ]
+        for body in bodies:
+            with self.subTest(body=body):
+                self.assertEqual(_declared_run("none", body)["owner"], "not_needed")
+                result = _declared_run("the dropped table is read by the billing report", body)
+                self.assertEqual((result["decision"], result["owner"]), ("ask", "requested"))
+
+    def test_none_followed_by_text_is_refused_naming_the_test_and_carrying_the_value(self):
+        for value in ("none (the backup copy stays on the box)", "none on our data; labels stay after undo",
+                      "None; each step is undone by the listed command"):
+            with self.subTest(value=value):
+                result = _declared_run(value, "psql -c \"UPDATE orders SET x = 1 WHERE id = 7\"\n")
+                self.assertEqual((result["decision"], result["owner"], result["declared"]),
+                                 ("deny", "form_refused", value))
+                self.assertIn("does not begin with the word `none`", result["reason"])
+                self.assertIn("the value is exactly `none`", result["reason"])
+
+    def test_value_opening_with_a_longer_word_than_none_asks_the_owner(self):
+        self.assertEqual(_declared_run("nonexistent vendor rows are re-created", "echo done\n")["owner"],
+                         "requested")
 
     def test_local_file_deletion_outside_owned_paths_needs_the_owner(self):
         for body in ("rm -rf ~/Documents/reports\n", "find ~/Documents/old -name '*.csv' -delete\n",
@@ -3239,10 +3278,34 @@ class PlanRequirementTest(unittest.TestCase):
         body = "# DROP TABLE orders was considered and rejected\npsql -c \"DELETE FROM orders WHERE id = 7\"\n"
         self.assertEqual(_declared_run("none", body)["owner"], "not_needed")
 
-    def test_pinned_plan_declared_none_still_needs_the_owner(self):
-        self.assertEqual(_pinned(_PINNED_PLAN.replace(
-            "# irreversible: the delete trigger notifies the billing service", "# irreversible: none"))["decision"],
-            "ask")
+    def test_pinned_plan_declared_none_runs_without_the_owner_and_reports_the_pinned_version(self):
+        result = _pinned(_PINNED_PLAN.replace(
+            "# irreversible: the delete trigger notifies the billing service", "# irreversible: none"),
+            dict(_PIN_FACTS, text="psql -c 'DROP TABLE orders_old'\n"))
+        self.assertEqual((result["decision"], result["owner"]), ("allow", "not_needed"))
+        self.assertIn("origin/main at " + "c" * 40 + ", committed 2026-11-17T10:00:00+00:00", result["context"])
+
+    def test_floor_reads_the_pinned_file(self):
+        plan = _PINNED_PLAN.replace("# irreversible: the delete trigger notifies the billing service",
+                                    "# irreversible: none")
+        for text in ("kubectl delete secret api-token -n prod\n", "rm -rf ~/Documents/reports\n",
+                     "git push --force origin master\n", "sudo systemctl stop app\n", "echo 'it is\n"):
+            with self.subTest(text=text):
+                result = _pinned(plan, dict(_PIN_FACTS, text=text))
+                self.assertEqual((result["decision"], result["owner"]), ("ask", "requested"))
+                self.assertIn("floor: pinned file /repo/run.sh: ", result["reason"])
+
+    def test_floor_names_the_pinned_file_that_raised_it(self):
+        plan = (_PINNED_HEAD.replace("# irreversible: the delete trigger notifies the billing service",
+                                     "# irreversible: none")
+                + "# pin: /repo/b.sh sha256=" + _PIN_HASH + "\nbash /repo/b.sh\nbash /repo/run.sh\n")
+        result = gate_policy.destructive_decision(
+            _PLAN_CMD, "", plan, _PLAN_HASH, None, "default", None, False, None,
+            {"/repo/run.sh": _PIN_FACTS,
+             "/repo/b.sh": dict(_PIN_FACTS, real_path="/repo/b.sh", text="git push --force origin master\n")})
+        self.assertEqual(result["owner"], "requested")
+        self.assertIn("floor: pinned file /repo/b.sh: ", result["reason"])
+        self.assertLess(result["facts"].index("/repo/b.sh"), result["facts"].index("/repo/run.sh"))
 
     def test_plan_without_the_irreversible_header_is_refused_by_the_form(self):
         result = _declared_run(None, "psql -c \"DELETE FROM orders WHERE id = 7\"\n")
@@ -3254,7 +3317,8 @@ class PlanRequirementTest(unittest.TestCase):
         self.assertEqual((result["decision"], result["owner"]), ("allow", "not_needed"))
 
     def test_approved_owner_needed_plan_is_allowed_as_approved(self):
-        result = _declared_run("none", 'psql -c "TRUNCATE orders"\n', "bypassPermissions", approved=True)
+        result = _declared_run("none", "kubectl delete secret api-token -n prod\n", "bypassPermissions",
+                               approved=True)
         self.assertEqual((result["decision"], result["class"], result["owner"]), ("allow", "approval", "approved"))
 
     def test_subagent_cannot_run_a_plan_that_needs_no_owner(self):

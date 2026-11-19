@@ -142,23 +142,25 @@ Hooks enforce the gates; an agent obeys a refusal's message and never works arou
   comments; a command whose top level carries the marker in comment position either is
   that form or is refused). The plan runs at once and the agent reports scope, count and
   undo right after (the hook says so in `additionalContext`), unless the owner is needed.
-  `# irreversible:` is about production and shared state: `none` only when every such
-  effect can be returned to its prior state by a step the plan states; otherwise it names
-  what cannot (a production DROP or TRUNCATE whatever backup exists, a replaced or deleted
-  Secret value, a deletion or charge at a vendor of something the plan did not create).
-  A local deletion does not change that value; the hook's floor asks for it. The owner is asked (the permission
-  prompt, or `APPROVE <hash>` where the session cannot prompt, one run per approval) for
-  a value other than `none`, a pin line, or what the hook sees in the plan text: an
-  `impossible` or privileged reading, a quote it cannot pair, a reading over its work
-  budget, or a line that drops or truncates a SQL object; that reading includes rm or
-  `find -delete` outside `ours` and a git discard outside a worktree, local or not. No
-  setting turns the owner back on for every plan. Replayed on one owner's 76 approved plan
-  runs, 13 declared an effect with no way back and 9 more were raised by the floor alone;
-  the 0-2 a day target is not met on 11-12 (2 declared, 3 requests), 11-13 (0 declared, 4),
-  11-17 (3 declared, 5) and 11-18 (4 declared, 5).
-  `impossible` (no undo: DROP/TRUNCATE, Secret replace, namespace/PVC delete, force push,
-  rm outside `ours`) is refused as a bare command and runs only from a plan, which the hook
-  sends to the owner.
+  `# irreversible:` is exactly `none` unless an effect with no way back touches something
+  in use (something a client sees, an object or money at a vendor, a Secret value, data
+  that code or people read); then it names that effect. Deleting data nothing reads is
+  `none` only when `# undo:` or `# effect_read:` states the read that showed it; the hook
+  does not parse that line. A value that opens with `none` and goes on is refused by the
+  form. The owner is asked (the permission prompt, or `APPROVE <hash>` where the session
+  cannot prompt, one run per approval) for a value other than `none`, or what the hook
+  sees in the plan text or a pinned file's text: an `impossible` reading other than a SQL
+  DROP, TRUNCATE or full DELETE (a Secret write, a namespace/PVC/CRD delete, a force push,
+  rm or `find -delete` outside `ours`, a git discard outside a worktree), a privileged
+  reading, a quote it cannot pair, or a reading over its work budget. A pin line alone no
+  longer asks. No setting turns the owner back on for every plan. Replayed on the nine plan
+  files that reached the owner in the first 15 hours of the previous rule, the built rule
+  asks for 3 of 9 with the in-use stand-in (`decisions/destructive-plan-asks-the-owner-only-for-an-effect-with-no-way-back.md`).
+  A way back is a step the plan states that returns the prior state (a saved dump the plan
+  takes and names is one).
+  `impossible` (no undo of its own: DROP/TRUNCATE, Secret replace, namespace/PVC delete,
+  force push, rm outside `ours`) is refused as a bare command and runs only from a plan; the
+  hook then decides whether the owner approves it, and the agent asks only when it says so.
 - Waits: run the condition once (`wait-for` exits 2 on a broken command), then wait on it
   with a tool made for waiting; never a poll loop, never an agent that ends its turn to wait.
   One monitor per subject, stopped when its work ends.

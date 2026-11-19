@@ -9,8 +9,8 @@ Each rule against a deliberate construction adds parser surface and false positi
 ## Findings recorded and not fixed (deliberate constructions)
 A COMMIT hidden ahead of a read-only marker; psql `-v` interpolation; a second `BEGIN READ WRITE`; `SET transaction_read_only`; `COPY ... TO`, `LOAD` or quoted function names behind a read-only marker; `INTO OUTFILE` under ClickHouse `readonly=1`; `clickhouse local -C <config>`; `eval` rebinding a name or `eval 'echo ... | sh'`; `docker container exec` / `docker run`; psql clusters such as `-1At`; client shell escapes other than psql `\!`, `\o |`, `\g |`.
 
-## Exception: a production deletion never passes unclassified
-The owner relies on this hook so that a real production database deletion waits for his `APPROVE` line (plans: `destructive-plan-asks-the-owner-only-for-an-effect-with-no-way-back.md`). Where a command's shape, not a deliberate construction, hid a deletion, the destructive decision alone reads the command as the shell does:
+## Exception: a bare production deletion never passes unclassified
+A bare deletion is refused toward a plan; its `# irreversible:` line decides a SQL drop's `APPROVE` (`destructive-plan-asks-the-owner-only-...`). Where a command's shape, not a deliberate construction, hid a deletion, the destructive decision alone reads the command as the shell does:
 - quotes and backslashes in a comment are comment text;
 - a `$( )` inside double quotes is a fresh quote context;
 - a heredoc operator with no terminator line hides nothing after it; a delimiter that is no identifier (`<<\SQL`, `<<'END-SQL'`) is read as the shell reads it;

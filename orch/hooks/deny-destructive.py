@@ -13,12 +13,15 @@ the `impossible` class is enforced only here until RBAC is tightened; an
 impossible step runs only from a plan.
 A plan the form accepts runs at once (class `plan`, owner `not_needed`, the
 report instruction in additionalContext) unless gate_policy.plan_requirement
-says the owner approves it: a pin line, a `# irreversible:` value other than
-`none`, or the floor (an impossible or privileged hit of the classifier over
-the plan text, a quote it cannot pair, a reading over its work budget, or a
-line that drops or truncates a SQL object). A plan log row carries plan_path, cwd, owner (not_needed, requested,
-approved, form_refused) and reason; a not_needed row with an approval file
-present carries stale_approval: true (the file stays for a later run).
+says the owner approves it: a `# irreversible:` value other than `none`, or
+the floor (an impossible hit of the classifier other than a SQL drop or full
+delete, a privileged hit, a quote it cannot pair or a reading over its work
+budget, over the plan text and each pinned file's text). A value that opens
+with `none` and goes on is a form refusal. A plan log row carries plan_path, cwd, owner (not_needed, requested,
+approved, form_refused) and reason (first 300 characters), `declared` for a
+refused `none ...` value and `pinned_runs` (whole) for a pinned plan; a
+not_needed row with an approval file present carries stale_approval: true
+(the file stays for a later run).
 When the destructive decision allows, the headroom check (tools/headroom_read.py)
 runs in the same process for every `kubectl exec`; it fails open.
 File tools are checked only for a path under the approvals dir. An approved
@@ -162,6 +165,8 @@ def main():
     row = {"class": result["class"], "decision": result["decision"], "plan_hash": plan_hash}
     if marker:
         row.update(plan_path=marker[0], cwd=cwd, owner=result.get("owner"), reason=result["reason"][:300])
+        row.update({k: v for k, v in (("declared", result.get("declared")),
+                                      ("pinned_runs", result.get("facts"))) if v})
         if approved and result.get("owner") == "not_needed":
             row["stale_approval"] = True
     log(row)
