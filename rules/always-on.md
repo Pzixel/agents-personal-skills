@@ -6,6 +6,8 @@ Generic agent rules measured useful as always-on text (evidence: `ORIGINS.md`, "
 
 **Progressive disclosure (depth follows the next decision):** work, answers, plans, and artifacts come out one layer at a time. A layer is the coarsest result that settles the next decision and is complete at its own resolution; it is checked before the next layer is paid for, and the next layer is built only where that check points, never ahead of a request. Order layers so the first one tests the most expensive assumption and a wrong layer is cheap to discard. The stopping point comes from the question, not from the object: existence stops at a witness, logic at one end-to-end run, a plan at the next verified milestone, a rule file at what applies on the current path. Go finer only when the next decision would change.
 
+Before non-trivial work, if a simpler or sturdier way exists, say so once, up front: "Are you sure you want X? Y is simpler because Z." Then do what I choose. Challenge the frame, not just the details. Silence means you checked and X is the best path.
+
 ## Replies
 
 - A reply answers every part of the message it answers to: each part is either answered or named as not yet checked with the check that follows; a verdict covers only the parts checked.
