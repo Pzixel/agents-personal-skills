@@ -1585,14 +1585,18 @@ class StopReasonRuleTest(unittest.TestCase):
         self.assertIn("recount for the other days",
                       gate_policy.stop_reason_candidates(long_section, gate_policy.next_step_sentence))
 
-    def test_first_cause_skips_only_a_section_that_opens_the_reply(self):
-        opening = "## Почему работа остановлена\nВсё сделано, потому что тесты прошли: 20 из 20, 14:05."
-        self.assertEqual((self._first(opening)["decision"], self._answering(opening)["decision"]), ("allow", "allow"))
+    BLANK_AFTER_LABEL = ("## Why work stopped\n\nDone, because the tests passed: 20 of 20 at 14:05.",
+                         "**Почему работа остановлена**\n\n\nВсё сделано, потому что тесты прошли: 20 из 20, 14:05.")
+
+    def test_first_cause_reads_the_reply_without_the_section(self):
+        for section in self.BLANK_AFTER_LABEL + ("## Почему работа остановлена\nВсё сделано, потому что тесты прошли: 20 из 20, 14:05.",):
+            with self.subTest(section=section):
+                self.assertEqual((self._first(section)["decision"], self._answering(section)["decision"]),
+                                 ("allow", "allow"))
         proven = self.PROVEN + "\n\n## Why work stopped\nDone: the token is renewed.\nUnread: none"
         self.assertEqual((self._first(proven)["decision"], self._answering(proven)["decision"]), ("allow", "allow"))
-        cause_after = ("## Why work stopped\nThe owner said to stop.\n\nОтправку держали лимиты по провайдерам.\n\n"
-                       "I will rerun the send next.")
-        self.assertEqual(self._first(cause_after)["rules"], ["first-cause"])
+        cause_before = "Отправку держали лимиты по провайдерам.\n\n## Why work stopped\nThe owner said to stop."
+        self.assertEqual(self._first(cause_before)["rules"], ["first-cause"])
 
     def test_the_answering_stop_runs_the_deferral_family_only(self):
         first = "Stop hook feedback:\n" + self._first(self.WITNESS_EN)["reason"]
@@ -1971,14 +1975,16 @@ class StopReasonHookProcessTest(unittest.TestCase):
 
     def test_idle_terminal_stop_without_the_section_is_returned(self):
         reason, record = self._run()
-        self.assertEqual((reason.startswith(gate_policy.STOP_REASON_MARKER), record["idle"], record["headless"]),
+        self.assertEqual((reason.startswith(gate_policy.STOP_REASON_MARKER), record["idle"], record["outside_terminal_client"]),
                          (True, True, False))
 
     def test_every_other_entrypoint_is_exempt(self):
         for entrypoint in (None, "sdk-cli", "sdk-ts", "claude-code-github-action", "claude-vscode"):
             with self.subTest(entrypoint=entrypoint):
                 reason, record = self._run(entrypoint=entrypoint)
-                self.assertEqual((reason, record["headless"], record["idle"]), (None, True, None))
+                self.assertEqual((reason, record["outside_terminal_client"], record["idle"]), (None, True, None))
+        section_reply = "Share: 34 %.\n\n## Why work stopped\nThe question is answered."  # judged under `cli`
+        self.assertIsNone(self._run(message=section_reply, entrypoint="sdk-cli")[1]["judge_ms"])
 
     def test_only_a_whole_label_line_with_a_reason_is_the_section(self):
         for message, returned in ((self.REPLY + self.SECTION, False),
@@ -2019,16 +2025,18 @@ class StopReasonHookProcessTest(unittest.TestCase):
         after = ("Share reported.\n\n## Why work stopped\nThe owner asked for the share only.\n\n"
                  "I will run the recount for the other days next.")
         self.assertIn("recount for the other days", self._run(message=after)[1]["next_step_candidate"])
-        long_section = "I will run the recount for the other days next.\n\n## Why work stopped\n" + "Done. " * 120
-        self.assertIn("recount for the other days", self._run(message=long_section)[1]["next_step_candidate"])
 
     def test_first_cause_reads_past_the_section(self):
         proven = ("Proven: the deploy failed on an expired token — `kubectl logs deploy/api`, 14:05 → "
                   "`401 token expired`; explains 3 of 3\n\n## Why work stopped\nDone: the token is renewed.\nUnread: none")
         self.assertIsNone(self._run(message=proven)[0])
-        opening = ("## Why work stopped\nThe owner said to stop.\n\nОтправку держали лимиты по провайдерам.\n\n"
-                   "I will rerun the send next.")
-        self.assertTrue(self._run(message=opening)[0].startswith(gate_policy.FIRST_CAUSE_MARKER))
+        before = "Отправку держали лимиты по провайдерам.\n\n## Why work stopped\nThe owner said to stop."
+        self.assertTrue(self._run(message=before)[0].startswith(gate_policy.FIRST_CAUSE_MARKER))
+        first = gate_policy.reply_lint_decision(self.REPLY, False, stop_idle=True)["reason"]
+        for message in StopReasonRuleTest.BLANK_AFTER_LABEL:
+            for returns in ((), (first,)):
+                with self.subTest(message=message, answering=bool(returns)):
+                    self.assertIsNone(self._run(message=message, returns=returns)[0])
 
     def test_a_section_reply_is_judged(self):
         self._judge(self.NO_VERDICT)

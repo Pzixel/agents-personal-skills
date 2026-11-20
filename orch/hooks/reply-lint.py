@@ -26,8 +26,8 @@ exempt, an unattended caller parses the final message) with nothing of the sessi
 `background_tasks` / `session_crons` lists, else the transcript's live mechanisms and clocks) must close with a
 section headed `Why work stopped` / `Почему работа остановлена` (gate_policy.stop_reason_section); a reply without
 it is returned once. A reply with the section goes to the judge, so its reason is checked by the other rules; the
-next-step and timed-step triggers read the whole reply and the reply without the section, first-cause skips the
-section only when it opens the reply. A judge error, timeout or
+next-step and timed-step triggers read the whole reply and the reply without the section, first-cause reads the
+reply without the section. A judge error, timeout or
 unparsable verdict passes the reply (fail open) and is logged; every record
 names the rules that fired. Measurement and acceptance condition: ORIGINS.md.
 Not claims (2026-10-15): Russian not-verified disclosures, done words as
@@ -178,7 +178,7 @@ def main():
     stop_hook_active = bool(payload.get("stop_hook_active"))
     transcript_path = payload.get("transcript_path") or ""
     transcript = Transcript(transcript_path)
-    headless = os.environ.get(ENTRYPOINT_ENV) != ATTENDED_ENTRYPOINT
+    outside_terminal = os.environ.get(ENTRYPOINT_ENV) != ATTENDED_ENTRYPOINT
     section = gate_policy.stop_reason_section(text)[1]
     feedback = stop_feedback(transcript) if stop_hook_active else []
     cause_open = gate_policy.first_cause_open(feedback)
@@ -186,7 +186,7 @@ def main():
     stop_reason_answer = gate_policy.stop_reason_answer_open(feedback)
     next_step, lever, timed_step, scan_error, idle = "", "", "", None, None
     # cheap facts first: a payload list or a present section settles the rule without a transcript parse
-    if not (headless or stop_hook_active or section or gate_policy.payload_live(payload)):
+    if not (outside_terminal or stop_hook_active or section or gate_policy.payload_live(payload)):
         try:
             facts = transcript.facts()
             idle = facts is not None and not gate_policy.live_at_stop(facts)
@@ -199,7 +199,7 @@ def main():
         except Exception as exc:  # the reply passes; the failure is logged
             scan_error = "%s: %s" % (type(exc).__name__, exc)
     run_judge = gate_policy.reply_lint_judge_needed(text, stop_hook_active, deferral_open, next_step, lever,
-                                                    timed_step, section=bool(section) and not headless)
+                                                    timed_step, section=bool(section) and not outside_terminal)
     started = time.monotonic()
     verdict, judge_error = judge(text, next_step, lever, timed_step) if run_judge else (None, None)
     judge_ms = int((time.monotonic() - started) * 1000) if run_judge else None
@@ -225,7 +225,7 @@ def main():
                 "timed_step_candidate": timed_step,
                 "pinned_while_working": pinned,
                 "idle": idle,
-                "headless": headless,
+                "outside_terminal_client": outside_terminal,
                 "stop_reason_section": bool(section),
                 "scan_error": scan_error,
                 "verdict": verdict,

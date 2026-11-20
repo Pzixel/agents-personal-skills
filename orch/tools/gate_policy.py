@@ -2982,8 +2982,8 @@ _STOP_REASON_REASON = (
     "plain answer: the question is answered and no work of yours remains, one line); the owner's answer or action, "
     "named in full (a question through AskUserQuestion; a blocker with the quoted error of the failed attempt or "
     "the owner's action that clears it); the owner said to stop; or the task is done and a remaining step waits on "
-    "an event or a date this session cannot hold, with the durable record that tracks it named (a file in the "
-    "repository, an issue). A remaining step with no such record is work left for later, not a reason. Append "
+    "an event or a date this session cannot hold, with the durable record that tracks it named (an issue or a "
+    "committed file). A remaining step with no such record is work left for later, not a reason. Append "
     "only the missing part; do not repeat the reply."
 )
 
@@ -3374,9 +3374,9 @@ def _proven_form_ok(rest):
     return counts.start() - start > 2 and rest[start] in _QUOTE_PAIRS and blank[start] != rest[start]
 
 
-def first_paragraph_cause(reply):
+def first_paragraph_cause(reply, whole=None):
     """The first-cause rule. For a reply whose first non-empty line is typed `Proven:` / `Доказано:`:
-    ``UNREAD_MISSING`` unless some line of the reply outside a fenced block or blockquote is exactly `Unread: none`
+    ``UNREAD_MISSING`` unless some line of ``whole`` (default the reply) outside a fenced block or blockquote is exactly `Unread: none`
     / `нет` / `ничего` (``_UNREAD_NONE_RE``); then ``PROVEN_FORM_MISSING``
     unless that first line has its full form (``_proven_form_ok``); then "". For any other
     reply: the first asserted cause word (``_asserted_cause``) of its first paragraph (up to the first blank line,
@@ -3387,7 +3387,7 @@ def first_paragraph_cause(reply):
     line = next((ln for ln in paragraph.splitlines() if ln.strip()), "")
     label = _PROVEN_LINE_RE.match(line)
     if label:
-        if not _UNREAD_NONE_RE.search(_FENCED_BLOCK_RE.sub("", reply)):
+        if not _UNREAD_NONE_RE.search(_FENCED_BLOCK_RE.sub("", reply if whole is None else whole)):
             return UNREAD_MISSING
         return "" if _proven_form_ok(line[label.end():]) else PROVEN_FORM_MISSING
     body = _blank_quoted(paragraph)
@@ -3475,16 +3475,9 @@ def stop_reason_section(reply):
 
 
 def stop_reason_first_cause_text(reply):
-    """The text first-cause reads: when a stop-reason section opens within the reply's first paragraph, the reply
-    without that paragraph's part from the label on (the section's own first paragraph is its reason, not an
-    opening), so the paragraph after it is read as the first; else the whole reply."""
-    reply = (reply or "").strip()
-    span = _stop_reason_span(reply)
-    first_break = _PARAGRAPH_BREAK_RE.search(reply)
-    cut = first_break.start() if first_break else len(reply)
-    if span is None or span[0] > cut:
-        return reply
-    return reply[:span[0]] + reply[cut:]
+    """The text first-cause reads: the reply without its stop-reason section (``stop_reason_section``), whatever
+    its shape (the section's reason is not an opening); a cause before the label is still read."""
+    return stop_reason_section((reply or "").strip())[0].strip()
 
 
 def stop_reason_candidates(reply, sentence):
@@ -3858,9 +3851,10 @@ def parse_judge_verdict(cli_stdout):
     }
 
 
-def _first_cause_fired(text):
-    """The first-cause entry of a reply-lint return: [] or [("first-cause", reason)]."""
-    cause = first_paragraph_cause(text)
+def _first_cause_fired(text, whole):
+    """The first-cause entry of a reply-lint return: [] or [("first-cause", reason)]; ``whole`` is the reply
+    the `Unread:` line is looked for in."""
+    cause = first_paragraph_cause(text, whole)
     if not cause:
         return []
     reason = {PROVEN_FORM_MISSING: _PROVEN_FORM_REASON, UNREAD_MISSING: _UNREAD_REASON,
@@ -3927,7 +3921,7 @@ def reply_lint_decision(last_assistant_text, stop_hook_active, verdict=None, nex
                 joined = " ".join(m for _, m in family)  # each family reason starts with REPLY_LINT_MARKER
                 fired.append(([r for r, _ in family], LATER_DEFERRAL_MARKER + joined[len(REPLY_LINT_MARKER):]))
         if first_cause_open:
-            fired += [([r], m) for r, m in _first_cause_fired(cause_text)]
+            fired += [([r], m) for r, m in _first_cause_fired(cause_text, text)]
         if not fired:
             return {"decision": "allow", "rules": []}
         return {"decision": "block", "rules": [r for rs, _ in fired for r in rs], "reason": " ".join(m for _, m in fired)}
@@ -3940,7 +3934,7 @@ def reply_lint_decision(last_assistant_text, stop_hook_active, verdict=None, nex
     if lever and verdict and verdict.get("lever"):
         fired.append(("lever", _LEVER_REASON))
     fired += _timed_step_fired(verdict, timed_step)
-    fired += _first_cause_fired(cause_text)
+    fired += _first_cause_fired(cause_text, text)
     if stop_idle and not stop_reason_section(text)[1]:
         fired.append(("stop-reason", _STOP_REASON_REASON))
     if not fired:
