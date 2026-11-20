@@ -123,11 +123,12 @@ Hooks enforce the gates; an agent obeys a refusal's message and never works arou
   and not when the verdict finds a hand-off, plus the judge-free `first-cause` rule at most twice per turn (a `Proven:`
   opening is returned first for its unread records unless a line holds only `Unread: none` / `нет` / `ничего`, then for its form;
   backtest `orch/tools/backtest/first_cause_backtest.py`); hand-off,
-  completion claim and lever are first-stop only (except on a later stop answering a `stop-reason`
-  return, on the same later-stop budget), so a turn holds at most four reply-lint returns. Rule `stop-reason`:
-  an interactive main stop with nothing of the session live must close with a section headed `Why work stopped`
-  (`Почему работа остановлена` in a Russian chat); a reply without it is returned once (headless
-  `CLAUDE_CODE_ENTRYPOINT=sdk-cli` runs exempt; details "Gates"). A judge error, timeout or unparsable verdict passes the reply (fail
+  completion claim and lever are first-stop only (a later stop answering a `stop-reason` return runs the
+  deferral family even under a hand-off verdict), so a turn holds at most four reply-lint returns. Rule
+  `stop-reason`: a main stop of the terminal client (`CLAUDE_CODE_ENTRYPOINT=cli`; every other value and an
+  absent one exempt) with nothing of the session live must close with a section under a line holding only
+  `Why work stopped` (`Почему работа остановлена` in a Russian chat); a reply without it is returned once
+  (details "Gates"). A judge error, timeout or unparsable verdict passes the reply (fail
   open) and is logged in `~/.claude/reply-lint-log.jsonl` as `judge_error`, next to
   `rules` (the rules that fired) and `verdict`; a standing failure (no login, rate limit,
   broken install) fails open on every stop, so a silent check is diagnosed from that field.
