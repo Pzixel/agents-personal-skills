@@ -10,6 +10,7 @@ a complete decision dict.
 """
 
 import fnmatch
+import itertools
 import datetime
 import ast
 import bisect
@@ -2975,12 +2976,15 @@ STOP_REASON_MARKER = REPLY_LINT_MARKER + " (stop-reason)"
 _STOP_REASON_REASON = (
     STOP_REASON_MARKER + " nothing of this session is live (no background task, Monitor, agent, scheduled job or "
     "pending wakeup) and the reply has no section headed `Why work stopped`. If work you can do now remains, do "
-    "it now: this return does not end the turn. Only when the turn truly ends, close the reply with a last block "
-    "headed `Why work stopped` (in a Russian chat `Почему работа остановлена`; any other language uses the English "
-    "form) naming one reason: done, with its observation; the owner's answer or action, named in full (a question "
-    "through AskUserQuestion; a blocker with the quoted error of the failed attempt or the owner's action that "
-    "clears it); or the owner said to stop. For a plain answer one line is enough. Append only the missing part; do "
-    "not repeat the reply."
+    "it now: this return does not end the turn. Only when the turn truly ends, close the reply with a last block: "
+    "a line holding only the heading `Why work stopped` (in a Russian chat `Почему работа остановлена`; any other "
+    "language uses the English form), then the reason, of one kind: the task is done, with its observation (for a "
+    "plain answer: the question is answered and no work of yours remains, one line); the owner's answer or action, "
+    "named in full (a question through AskUserQuestion; a blocker with the quoted error of the failed attempt or "
+    "the owner's action that clears it); the owner said to stop; or the task is done and a remaining step waits on "
+    "an event or a date this session cannot hold, with the durable record that tracks it named (a file in the "
+    "repository, an issue). A remaining step with no such record is work left for later, not a reason. Append "
+    "only the missing part; do not repeat the reply."
 )
 
 _PROVEN_FORM = "`Proven: <cause> — <command or query>, <time> → <quoted fragment>; explains <X> of <Y>`"
@@ -3417,34 +3421,78 @@ def stop_reason_answer_open(stop_feedback_texts):
     return any(STOP_REASON_MARKER in t for t in stop_feedback_texts) and later_deferral_open(stop_feedback_texts)
 
 
-# The stop-reason section: a line opening, after heading, list and emphasis markers (not in a blockquote), with
-# one of the two label forms; it runs to the next heading line (`#` or a wholly bold line) or the end of the reply.
-_STOP_REASON_LABEL_RE = re.compile(
-    r"^[ \t]*(?:#{1,6}[ \t]+)?(?:(?:[-*+]|\d+[.)])[ \t]+)*(?:\*\*|__|\*|_)?[ \t]*"
-    r"(?:why work stopped|почему работа остановлена)",
-    re.IGNORECASE | re.MULTILINE,
-)
-_SECTION_END_RE = re.compile(r"^[ \t]*(?:#{1,6}[ \t]|(\*\*|__)[^\n]+\1[ \t:]*$)", re.MULTILINE)
+# The stop-reason label: one of the two phrases as a whole line, optionally after heading marks and wrapped in
+# emphasis, with an optional colon. Data, kept byte-for-byte.
+_STOP_REASON_LABELS = ("why work stopped", "почему работа остановлена")
+_HEADING_RE = re.compile(r"[ \t]{0,3}#{1,6}(?:[ \t]|$)")
 _LETTER_RE = re.compile(r"[^\W\d_]")
 
 
-def stop_reason_section(reply):
-    """(body, section): ``section`` is the reply's last stop-reason section (``_STOP_REASON_LABEL_RE`` outside
-    fenced blocks, to the next heading line or the end) when a letter follows its label inside it, and ``body``
-    is the reply without it; ("reply", "") when there is none."""
-    reply = reply or ""
+def _stop_reason_label(line):
+    """The line is a stop-reason label: heading marks, emphasis, the phrase, an optional colon, nothing else."""
+    text = line.strip()
+    heading = _HEADING_RE.match(text)
+    if heading:
+        text = text[heading.end():]
+    return text.strip(" \t*_:").lower() in _STOP_REASON_LABELS
+
+
+def _heading_line(line):
+    """A Markdown heading or a wholly bold line (an optional colon after it)."""
+    text = line.strip().rstrip(":").rstrip()
+    return bool(_HEADING_RE.match(line)) or (
+        len(text) > 4 and text[:2] in ("**", "__") and text.endswith(text[:2]))
+
+
+def _stop_reason_span(reply):
+    """(start, end) of the reply's last stop-reason section, or None: the label line (outside fenced blocks and
+    blockquotes), its first non-empty line after it (bold included) and the lines after that up to a blank line
+    followed by a heading line, or the end; None when no letter follows the label. Linear in the reply length."""
     blanked = _FENCED_BLOCK_RE.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), reply)
-    labels = list(_STOP_REASON_LABEL_RE.finditer(blanked))
-    if not labels:
+    lines = blanked.splitlines(True)
+    offsets = list(itertools.accumulate([0] + [len(ln) for ln in lines]))
+    label = next((i for i in range(len(lines) - 1, -1, -1) if _stop_reason_label(lines[i])), None)
+    if label is None:
+        return None
+    first = next((i for i in range(label + 1, len(lines)) if lines[i].strip()), None)
+    if first is None:
+        return None
+    end = next((i for i in range(first + 1, len(lines))
+                if not lines[i - 1].strip() and _heading_line(lines[i])), len(lines))
+    if not _LETTER_RE.search(blanked, offsets[first], offsets[end]):
+        return None
+    return offsets[label], offsets[end]
+
+
+def stop_reason_section(reply):
+    """(body, section): ``section`` is the reply's last stop-reason section (``_stop_reason_span``) and ``body``
+    the reply without it; (reply, "") when there is none."""
+    reply = reply or ""
+    span = _stop_reason_span(reply)
+    if span is None:
         return reply, ""
-    label = labels[-1]
-    line_end = blanked.find("\n", label.end())
-    stop = _SECTION_END_RE.search(blanked, line_end) if line_end >= 0 else None
-    end = stop.start() if stop else len(reply)
-    if not _LETTER_RE.search(blanked, label.end(), end):
-        return reply, ""
-    start = blanked.rfind("\n", 0, label.start()) + 1
-    return reply[:start] + reply[end:], reply[start:end]
+    return reply[:span[0]] + reply[span[1]:], reply[span[0]:span[1]]
+
+
+def stop_reason_first_cause_text(reply):
+    """The text first-cause reads: when a stop-reason section opens within the reply's first paragraph, the reply
+    without that paragraph's part from the label on (the section's own first paragraph is its reason, not an
+    opening), so the paragraph after it is read as the first; else the whole reply."""
+    reply = (reply or "").strip()
+    span = _stop_reason_span(reply)
+    first_break = _PARAGRAPH_BREAK_RE.search(reply)
+    cut = first_break.start() if first_break else len(reply)
+    if span is None or span[0] > cut:
+        return reply
+    return reply[:span[0]] + reply[cut:]
+
+
+def stop_reason_candidates(reply, sentence):
+    """A closing-window trigger (``next_step_sentence`` / ``timed_step_sentence``) read on the whole reply and on
+    the reply without its stop-reason section (a long section cannot push the closing sentence out of the window);
+    distinct hits joined, "" when none."""
+    hits = [sentence(reply), sentence(stop_reason_section(reply)[0])]
+    return " ".join(dict.fromkeys(h for h in hits if h))
 
 
 def payload_live(payload):
@@ -3770,7 +3818,7 @@ def reply_lint_judge_needed(reply, stop_hook_active, later_deferral_open, next_s
                             section=False):
     """The judge is called: a candidate, a stop-reason ``section`` (its reason is checked, not trusted) or
     ``needs_judge``, and on a later stop only while ``later_deferral_open`` (the only judged rules there are the
-    deferral family and, answering a stop-reason return, handoff)."""
+    deferral family)."""
     if stop_hook_active and not later_deferral_open:
         return False
     return bool(next_step or lever or timed_step or section) or needs_judge(reply)
@@ -3830,18 +3878,6 @@ def _deferral_fired(verdict, next_step):
     return []
 
 
-def _claim_fired(text):
-    """[] or [("claim", reason)] for a completion claim without its observation."""
-    return [("claim", _CLAIM_REASON)] if _has_done_claim(text) and not _OBSERVATION_RE.search(text) else []
-
-
-def _handoff_fired(verdict, pinned_while_working):
-    """[] or [("handoff", reason)] for a judged hand-off whose question is not already pinned."""
-    if verdict and verdict["handoff"] and not pinned_while_working:
-        return [("handoff", _HANDOFF_REASON.format(sentence=verdict["sentence"].replace('"', "'")))]
-    return []
-
-
 def _timed_step_fired(verdict, timed_step):
     """[] or [("timed-step", reason)] for a timed-step candidate the judge confirmed."""
     if timed_step and verdict and verdict.get("timed_step"):
@@ -3873,38 +3909,39 @@ def reply_lint_decision(last_assistant_text, stop_hook_active, verdict=None, nex
     family (``deferral`` / ``next-step``, ``timed-step``) while ``later_deferral_open`` (no later-stop deferral
     return yet this turn) and the verdict does not say ``handoff`` (work waiting on the owner is not a deferral),
     its reason led by ``LATER_DEFERRAL_MARKER``; and first-cause while ``first_cause_open`` (fewer than two
-    first-cause returns this turn). handoff, claim and lever are first-stop only, except on a later stop that
-    answers a stop-reason return (``stop_reason_answer_open``): there claim, handoff and the deferral family run
-    together, a handoff verdict does not switch the family off, and the return is led by
-    ``LATER_DEFERRAL_MARKER``, so it spends the same budget. So reply-lint returns at most four times per turn:
-    the first stop, two first-cause, one later deferral.
+    first-cause returns this turn). handoff, claim and lever are first-stop only; on a later stop that answers a
+    stop-reason return (``stop_reason_answer_open``) a handoff verdict does not switch the deferral family off. So
+    reply-lint returns at most four times per turn: the first stop, two first-cause, one later deferral.
     Stop-reason (first stop only): when ``stop_idle`` (an interactive main stop with nothing of the session live)
     and the reply has no stop-reason section (``stop_reason_section``), ``stop-reason`` is appended last.
-    first-cause reads the reply without that section."""
+    first-cause reads ``stop_reason_first_cause_text``."""
     text = (last_assistant_text or "").strip()
     if not text:
         return {"decision": "allow", "rules": []}
-    body, section = stop_reason_section(text)
+    cause_text = stop_reason_first_cause_text(text)
     if stop_hook_active:
         fired = []
         if later_deferral_open and (stop_reason_answer or not (verdict and verdict["handoff"])):
-            family = _claim_fired(text) + _handoff_fired(verdict, pinned_while_working) if stop_reason_answer else []
-            family += _deferral_fired(verdict, next_step) + _timed_step_fired(verdict, timed_step)
+            family = _deferral_fired(verdict, next_step) + _timed_step_fired(verdict, timed_step)
             if family:
                 joined = " ".join(m for _, m in family)  # each family reason starts with REPLY_LINT_MARKER
                 fired.append(([r for r, _ in family], LATER_DEFERRAL_MARKER + joined[len(REPLY_LINT_MARKER):]))
         if first_cause_open:
-            fired += [([r], m) for r, m in _first_cause_fired(body)]
+            fired += [([r], m) for r, m in _first_cause_fired(cause_text)]
         if not fired:
             return {"decision": "allow", "rules": []}
         return {"decision": "block", "rules": [r for rs, _ in fired for r in rs], "reason": " ".join(m for _, m in fired)}
-    fired = _claim_fired(text) + _handoff_fired(verdict, pinned_while_working)
+    fired = []
+    if _has_done_claim(text) and not _OBSERVATION_RE.search(text):
+        fired.append(("claim", _CLAIM_REASON))
+    if verdict and verdict["handoff"] and not pinned_while_working:
+        fired.append(("handoff", _HANDOFF_REASON.format(sentence=verdict["sentence"].replace('"', "'"))))
     fired += _deferral_fired(verdict, next_step)
     if lever and verdict and verdict.get("lever"):
         fired.append(("lever", _LEVER_REASON))
     fired += _timed_step_fired(verdict, timed_step)
-    fired += _first_cause_fired(body)
-    if stop_idle and not section:
+    fired += _first_cause_fired(cause_text)
+    if stop_idle and not stop_reason_section(text)[1]:
         fired.append(("stop-reason", _STOP_REASON_REASON))
     if not fired:
         return {"decision": "allow", "rules": []}

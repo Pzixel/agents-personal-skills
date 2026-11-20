@@ -880,7 +880,7 @@ def _owner_stops(days):
 
 def stop_reason(days):
     """Backtest of the reply-lint `stop-reason` rule over the first stops of the owner sessions in the window:
-    per day, interactive stops (transcript `entrypoint` other than `sdk-cli`), idle ones (nothing of
+    per day, interactive stops (transcript `entrypoint` `cli`, the hook's only covered value), idle ones (nothing of
     ``gate_policy.live_at_stop``) split by what started the turn (an owner message or an event), those carrying
     the section, and would-return (idle, no section). One background-watch pass per file: a `turn_duration`
     entry is put after each first stop so the scan yields the facts at it. The Stop payload's lists are not in
@@ -906,7 +906,7 @@ def stop_reason(days):
             if stop is None:
                 continue
             entry = entries[stop][1]
-            if entry.get("entrypoint") == "sdk-cli":
+            if entry.get("entrypoint") != "cli":  # the hook's predicate: only the terminal client is covered
                 continue
             day = per_day[str(entry.get("timestamp"))[:10]]
             day["interactive"] += 1
