@@ -1494,6 +1494,112 @@ class LaterStopDeferralTest(unittest.TestCase):
         self.assertTrue(gate_policy.reply_lint_judge_needed("Таблица ниже.", False, False, lever="Рычаги: x"))
 
 
+class StopReasonRuleTest(unittest.TestCase):
+    """An idle interactive first stop closes with a `Why work stopped` section naming its reason; the section is
+    checked by the other rules, not trusted."""
+
+    SECTION = "\n\n## Why work stopped\nDone: 20 of 20 tests passed, run at 14:05."
+    WITNESS_EN = ("Measured: 41 of 120 replies (34 %) carry the label, query on the replies table at 14:05.\n\n"
+                  "The recount over the other days runs in about a week, not on a timer; it starts on your word "
+                  "or in the next session.")
+    LEFT = "The remaining migration of 12 files is left for a later session."
+
+    @staticmethod
+    def _verdict(handoff=False, deferral=False, next_step=False):
+        return {"handoff": handoff, "sentence": "Your call.", "deferral": deferral, "deferral_sentence": StopReasonRuleTest.LEFT,
+                "next_step": next_step, "next_step_sentence": "I will run the recount next.", "lever": False,
+                "lever_sentence": "", "timed_step": False, "timed_step_sentence": ""}
+
+    def _first(self, text, verdict=None, next_step="", idle=True):
+        return gate_policy.reply_lint_decision(text, False, verdict, next_step, stop_idle=idle)
+
+    def test_section_forms_are_found(self):
+        for body, section in (("Table below.\n\n", "## Why work stopped\nDone."),
+                              ("Table below.\n\n", "**Why work stopped:** the owner said to stop."),
+                              ("Table below.\n", "- Why work stopped: done, exit 0."),
+                              ("Таблица ниже.\n\n", "### Почему работа остановлена\nГотово: 20 из 20 тестов прошли.")):
+            with self.subTest(section=section):
+                self.assertEqual(gate_policy.stop_reason_section(body + section), (body, section))
+
+    def test_label_without_reason_quoted_or_mid_sentence_is_no_section(self):
+        for text in ("Table below.\n\n## Why work stopped\n",
+                     "Table below.\n\n> Why work stopped: done.",
+                     "Table below.\n\n```\nWhy work stopped: done.\n```",
+                     "I added a check on why work stopped early."):
+            with self.subTest(text=text):
+                self.assertEqual(gate_policy.stop_reason_section(text), (text, ""))
+
+    def test_section_ends_at_the_next_heading(self):
+        body, section = gate_policy.stop_reason_section("A.\n## Why work stopped\nDone.\n## Appendix\nB.")
+        self.assertEqual((body, section), ("A.\n## Appendix\nB.", "## Why work stopped\nDone.\n"))
+
+    def test_idle_stop_without_the_section_is_returned_once_last(self):
+        for text in (self.WITNESS_EN,
+                     "Замер: 41 из 120 ответов (34 %) несут метку, запрос к таблице ответов в 14:05.\n\n"
+                     "Пересчёт по остальным дням примерно через неделю, не по таймеру: по вашему слову или в "
+                     "следующей сессии."):
+            with self.subTest(text=text):
+                decision = self._first(text)
+                self.assertEqual((decision["rules"], decision["reason"].startswith(gate_policy.STOP_REASON_MARKER)),
+                                 (["stop-reason"], True))
+        dirty = self._first("Отправку держали лимиты по провайдерам.")
+        self.assertEqual(dirty["rules"], ["first-cause", "stop-reason"])
+
+    def test_section_or_a_live_stop_passes(self):
+        self.assertEqual(self._first(self.WITNESS_EN + self.SECTION)["decision"], "allow")
+        self.assertEqual(self._first(self.WITNESS_EN, idle=False)["decision"], "allow")
+
+    def test_a_later_stop_never_returns_stop_reason(self):
+        decision = gate_policy.reply_lint_decision(self.WITNESS_EN, True, None, stop_idle=True, first_cause_open=True,
+                                                   later_deferral_open=True, stop_reason_answer=True)
+        self.assertEqual(decision["decision"], "allow")
+
+    def test_the_section_is_checked_by_the_other_rules(self):
+        reply = "Recount reported." + self.SECTION
+        self.assertEqual(self._first(reply, self._verdict(next_step=True), "I will run the recount next.")["rules"],
+                         ["next-step"])
+        self.assertEqual(self._first("Report sent.\n\n## Why work stopped\n" + self.LEFT, self._verdict(deferral=True))["rules"],
+                         ["deferral"])
+        blocker = "Report sent.\n\n## Why work stopped\nBlocked: the deploy token is refused (`401 Unauthorized`); the owner renews it."
+        self.assertEqual(self._first(blocker, self._verdict())["decision"], "allow")
+
+    def test_a_section_reply_goes_to_the_judge(self):
+        self.assertTrue(gate_policy.reply_lint_judge_needed("Table below.", False, False, section=True))
+        self.assertFalse(gate_policy.reply_lint_judge_needed("Table below.", False, False))
+
+    def test_because_inside_the_section_is_not_a_first_paragraph_cause(self):
+        reply = "## Почему работа остановлена\nВсё сделано, потому что тесты прошли: 20 из 20, 14:05."
+        self.assertEqual(self._first(reply)["decision"], "allow")
+
+    def test_the_next_step_window_reads_the_reply_without_a_long_section(self):
+        reply = "I will run the recount for the other days next.\n\n## Why work stopped\n" + "Done. " * 120
+        body, _ = gate_policy.stop_reason_section(reply)
+        self.assertIn("recount for the other days", gate_policy.next_step_sentence(body))
+
+    def test_the_answering_stop_runs_claim_handoff_and_deferral_on_the_later_budget(self):
+        first = "Stop hook feedback:\n" + self._first(self.WITNESS_EN)["reason"]
+        other = "Stop hook feedback:\nbackground-watch-gate: x"
+        self.assertTrue(gate_policy.stop_reason_answer_open([first, other]))
+        reply = "Report sent.\n\n## Why work stopped\n" + self.LEFT
+        for verdict, rules in ((self._verdict(deferral=True), ["deferral"]),
+                               (self._verdict(handoff=True, deferral=True), ["handoff", "deferral"])):
+            decision = gate_policy.reply_lint_decision(reply, True, verdict, later_deferral_open=True,
+                                                       stop_reason_answer=True)
+            self.assertEqual((decision["rules"], decision["reason"].startswith(gate_policy.LATER_DEFERRAL_MARKER)),
+                             (rules, True))
+        claim = gate_policy.reply_lint_decision("Done, PR merged.\n\n## Why work stopped\nDone.", True, None,
+                                                later_deferral_open=True, stop_reason_answer=True)
+        self.assertEqual(claim["rules"], ["claim"])
+        spent = "Stop hook feedback:\n" + gate_policy.reply_lint_decision(
+            reply, True, self._verdict(deferral=True), later_deferral_open=True, stop_reason_answer=True)["reason"]
+        self.assertFalse(gate_policy.stop_reason_answer_open([first, spent]))
+
+    def test_payload_lists_with_entries_are_live(self):
+        self.assertEqual([gate_policy.payload_live(p) for p in (
+            {"background_tasks": [{"id": "b1"}]}, {"session_crons": [{"id": "c1"}]},
+            {"background_tasks": [], "session_crons": []}, {})], [True, True, False, False])
+
+
 class FirstCauseRuleTest(unittest.TestCase):
     """A cause stands in the first paragraph of a reply only in the full `Proven:` form (CASE-81)."""
 
@@ -1785,6 +1891,85 @@ class FirstCauseHookProcessTest(unittest.TestCase):
         if os.access(path, os.R_OK):
             self.skipTest("the file stays readable for this user (root)")
         self.assertIsNone(self._reason(path, True))
+
+
+class StopReasonHookProcessTest(unittest.TestCase):
+    """The reply-lint hook process returns an idle interactive first stop without the stop-reason section, and
+    no stop where something of the session is live or the run is headless."""
+
+    HOOK = FirstCauseHookProcessTest.HOOK
+    REPLY = ("Measured: 41 of 120 replies (34 %) carry the label, query on the replies table at 14:05.\n\n"
+             "The recount over the other days runs in about a week, not on a timer.")
+    SECTION = "\n\n## Why work stopped\nDone: the owner asked for the share only."
+
+    def setUp(self):
+        self.home = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.home)
+        os.makedirs(os.path.join(self.home, ".claude"))
+        self.env = {k: v for k, v in os.environ.items() if k not in ("REPLY_LINT_JUDGE", "CLAUDE_CODE_ENTRYPOINT")}
+        self.env.update(HOME=self.home, PATH="/usr/bin:/bin")  # no `claude` binary: a judge call would fail open
+
+    @staticmethod
+    def _use(use_id, name, args):
+        return {"type": "assistant", "message": {"content": [{"type": "tool_use", "id": use_id, "name": name, "input": args}]}}
+
+    @staticmethod
+    def _result(use_id, text):
+        return {"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": use_id, "content": text}]}}
+
+    def _run(self, work=(), message=REPLY, entrypoint=None, **payload_extra):
+        """(reason or None, the hook's log record) for a first stop."""
+        entries = [{"type": "user", "message": {"role": "user", "content": "What share carries the label?"}}]
+        entries += list(work) + [{"type": "assistant", "message": {"content": [{"type": "text", "text": message}]}}]
+        path = os.path.join(self.home, "t.jsonl")
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("".join(json.dumps(e) + "\n" for e in entries))
+        payload = dict({"session_id": "s", "transcript_path": path, "stop_hook_active": False,
+                        "last_assistant_message": message}, **payload_extra)
+        env = dict(self.env, **({"CLAUDE_CODE_ENTRYPOINT": entrypoint} if entrypoint is not None else {}))
+        out = subprocess.run([sys.executable, self.HOOK], input=json.dumps(payload), stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, universal_newlines=True, env=env, timeout=60)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        with open(os.path.join(self.home, ".claude", "reply-lint-log.jsonl"), encoding="utf-8") as fh:
+            record = json.loads(fh.read().splitlines()[-1])
+        return (json.loads(out.stdout)["reason"] if out.stdout.strip() else None), record
+
+    def test_idle_interactive_stop_without_the_section_is_returned(self):
+        for entrypoint in (None, "cli", "claude-vscode"):
+            with self.subTest(entrypoint=entrypoint):
+                reason, record = self._run(entrypoint=entrypoint)
+                self.assertEqual((reason.startswith(gate_policy.STOP_REASON_MARKER), record["idle"],
+                                  record["headless"]), (True, True, False))
+
+    def test_the_section_passes(self):
+        self.assertIsNone(self._run(message=self.REPLY + self.SECTION)[0])
+
+    def test_a_headless_run_is_exempt(self):
+        reason, record = self._run(entrypoint="sdk-cli")
+        self.assertEqual((reason, record["headless"], record["idle"]), (None, True, None))
+
+    def test_live_work_exempts(self):
+        cases = {
+            "monitor": [self._use("m1", "Monitor", {"command": "tail -F log"}),
+                        self._result("m1", "Monitor started (task mx1, expires in 30m)")],
+            "agent": [self._use("g1", "Agent", {"prompt": "build", "run_in_background": True}),
+                      self._result("g1", "Async agent launched successfully.\nagentId: ag1 (internal)")],
+            "pending agent call": [self._use("g2", "Agent", {"prompt": "build"})],
+            "one-shot cron": [self._use("c1", "CronCreate", {"cron": "37 19 29 10 *", "recurring": False, "prompt": "measure"}),
+                              self._result("c1", "Scheduled one-shot task 1db1ccfe (37 19 29 10 *). Next run: Oct 29 7:37pm.")],
+            "recurring cron": [self._use("c2", "CronCreate", {"cron": "23 * * * *", "recurring": True, "prompt": "tick"}),
+                               self._result("c2", "Scheduled recurring job 5e0a11c3 (Every hour at :23).")],
+        }
+        for name, work in cases.items():
+            with self.subTest(name):
+                reason, record = self._run(work)
+                self.assertEqual((reason, record["idle"]), (None, False))
+        reason, record = self._run(background_tasks=[{"id": "bx1"}])
+        self.assertEqual((reason, record["idle"]), (None, None))
+
+    def test_a_long_section_keeps_the_closing_step_candidate(self):
+        message = "I will run the recount for the other days next.\n\n## Why work stopped\n" + "Done. " * 120
+        self.assertIn("recount for the other days", self._run(message=message)[1]["next_step_candidate"])
 
 
 class HandoffJudgeTest(unittest.TestCase):
