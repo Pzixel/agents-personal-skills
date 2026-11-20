@@ -18,8 +18,15 @@ turn's Stop-hook feedback in the transcript: the deferral family (deferral,
 next-step, timed-step; judged while no later-stop deferral return exists this
 turn, returned at most once, not when the verdict says handoff) and first-cause
 (at most twice per turn; a `Proven:` opening is returned first for its unread records unless a line holds only
-`Unread: none` / `нет` / `ничего`, then for its form); handoff, claim and lever stay first-stop only. So a
-turn holds at most four returns, never a loop. A judge error, timeout or
+`Unread: none` / `нет` / `ничего`, then for its form); handoff, claim and lever stay first-stop only, except
+on a later stop answering a stop-reason return, where they run with the deferral family on its budget. So a
+turn holds at most four returns, never a loop.
+Stop-reason (first stop only): an interactive main stop with nothing of the session live (the payload's
+`background_tasks` / `session_crons` lists, else the transcript's live mechanisms and clocks) must close with a
+section headed `Why work stopped` / `Почему работа остановлена` (gate_policy.stop_reason_section); a reply without
+it is returned once. Headless runs (`CLAUDE_CODE_ENTRYPOINT=sdk-cli`, their caller parses the final message) are
+exempt. A reply with the section goes to the judge, so its reason is checked by the other rules; the next-step,
+timed-step and first-cause triggers read the reply without the section. A judge error, timeout or
 unparsable verdict passes the reply (fail open) and is logged; every record
 names the rules that fired. Measurement and acceptance condition: ORIGINS.md.
 Not claims (2026-10-15): Russian not-verified disclosures, done words as
@@ -51,47 +58,61 @@ import transcript as transcript_scan  # noqa: E402
 
 LOG_PATH = os.path.expanduser("~/.claude/reply-lint-log.jsonl")
 JUDGE_ENV = "REPLY_LINT_JUDGE"
+# A headless `claude -p` run (its caller parses the final message) is exempt from the stop-reason rule.
+HEADLESS_ENV, HEADLESS_ENTRYPOINT = "CLAUDE_CODE_ENTRYPOINT", "sdk-cli"
 # 5 s under the hook's 30 s timeout; sized from the judge wall time in decisions/lever-starts-from-who-consumes-the-work.md.
 JUDGE_TIMEOUT_S = 25
 JUDGE_ARGS = model_judge.judge_args("haiku", "You classify one reply. Respond with JSON only.")
 
 
-def candidates(text, transcript_path):
-    """(next-step, timed-step) trigger sentences after gate_policy.exempt_candidates. One transcript scan,
-    only on a match."""
+def candidates(text, scan):
+    """(next-step, timed-step) trigger sentences after gate_policy.exempt_candidates; ``scan()`` (the transcript
+    facts, None without a transcript) runs only on a match."""
     next_step, timed_step = gate_policy.next_step_sentence(text), gate_policy.timed_step_sentence(text)
-    if not (next_step or timed_step) or not os.path.isfile(transcript_path):
+    if not (next_step or timed_step):
         return "", ""
-    facts = None
-    for facts in transcript_scan.background_watch_scan(transcript_scan.entries_of(transcript_path), "\x00"):
-        pass
-    return gate_policy.exempt_candidates(next_step, timed_step, facts)
+    return gate_policy.exempt_candidates(next_step, timed_step, scan())
 
 
-def pinned_while_working(payload):
+def pinned_while_working(payload, scan):
     """The session has a non-empty open-question file and live work in its transcript scan (CASE-80)."""
-    session, source = payload.get("session_id"), payload.get("transcript_path") or ""
-    if not gate_policy.session_id_ok(session) or not os.path.isfile(source):
+    session = payload.get("session_id")
+    if not gate_policy.session_id_ok(session):
         return False
     path = gate_policy.open_question_path(os.path.expanduser("~"), session)
     if not os.path.isfile(path):
         return False
     with open(path, encoding="utf-8", errors="replace") as fh:
         pinned_text = fh.read()
-    facts = None
-    if pinned_text.strip():
-        for facts in transcript_scan.background_watch_scan(transcript_scan.entries_of(source), "\x00"):
-            pass
-    return gate_policy.question_pinned_while_working(pinned_text, facts)
+    facts = scan() if pinned_text.strip() else None
+    return facts is not None and gate_policy.question_pinned_while_working(pinned_text, facts)
 
 
-def stop_feedback(transcript_path):
+class Transcript:
+    """The transcript read at most once per stop: its entries and its last background-watch facts."""
+
+    def __init__(self, path):
+        self.path = path
+        self._entries = self._facts = None
+
+    def entries(self):
+        if self._entries is None:
+            self._entries = transcript_scan.entries_of(self.path) if os.path.isfile(self.path) else []
+        return self._entries
+
+    def facts(self):
+        """The background-watch facts at the stop; None when there is no transcript."""
+        if self._facts is None and os.path.isfile(self.path):
+            for self._facts in transcript_scan.background_watch_scan(self.entries(), "\x00"):
+                pass
+        return self._facts
+
+
+def stop_feedback(transcript):
     """This turn's Stop-hook feedback texts at a later stop; [] when the transcript is missing or unreadable,
     which closes both later-stop budgets."""
     try:
-        if not os.path.isfile(transcript_path):
-            return []
-        return transcript_scan.stop_feedback_this_turn(transcript_scan.entries_of(transcript_path))
+        return transcript_scan.stop_feedback_this_turn(transcript.entries())
     except Exception:
         return []
 
@@ -152,30 +173,39 @@ def main():
         text = last_assistant_text(transcript)
     stop_hook_active = bool(payload.get("stop_hook_active"))
     transcript_path = payload.get("transcript_path") or ""
-    feedback = stop_feedback(transcript_path) if stop_hook_active else []
+    transcript = Transcript(transcript_path)
+    headless = os.environ.get(HEADLESS_ENV) == HEADLESS_ENTRYPOINT
+    body, section = gate_policy.stop_reason_section(text)
+    feedback = stop_feedback(transcript) if stop_hook_active else []
     cause_open = gate_policy.first_cause_open(feedback)
     deferral_open = gate_policy.later_deferral_open(feedback)
-    next_step, lever, timed_step, scan_error = "", "", "", None
-    if not stop_hook_active or deferral_open:
-        try:
-            next_step, timed_step = candidates(text, transcript_path)
+    stop_reason_answer = gate_policy.stop_reason_answer_open(feedback)
+    next_step, lever, timed_step, scan_error, idle = "", "", "", None, None
+    try:
+        # cheap facts first: a payload list or a present section settles the rule without a transcript parse
+        if not (headless or stop_hook_active or section or gate_policy.payload_live(payload)):
+            facts = transcript.facts()
+            idle = facts is not None and not gate_policy.live_at_stop(facts)
+        if not stop_hook_active or deferral_open:
+            next_step, timed_step = candidates(body, transcript.facts)
             lever = "" if stop_hook_active else gate_policy.lever_candidate(text)
-        except Exception as exc:  # the reply passes; the failure is logged
-            scan_error = "%s: %s" % (type(exc).__name__, exc)
+    except Exception as exc:  # the reply passes; the failure is logged
+        scan_error = "%s: %s" % (type(exc).__name__, exc)
     run_judge = gate_policy.reply_lint_judge_needed(text, stop_hook_active, deferral_open, next_step, lever,
-                                                    timed_step)
+                                                    timed_step, section=bool(section))
     started = time.monotonic()
     verdict, judge_error = judge(text, next_step, lever, timed_step) if run_judge else (None, None)
     judge_ms = int((time.monotonic() - started) * 1000) if run_judge else None
     pinned = False
-    if verdict and verdict["handoff"] and not stop_hook_active:
+    if verdict and verdict["handoff"] and (not stop_hook_active or stop_reason_answer):
         try:
-            pinned = pinned_while_working(payload)
+            pinned = pinned_while_working(payload, transcript.facts)
         except Exception as exc:  # the hand-off rule stays in force; the failure is logged
             scan_error = "%s: %s" % (type(exc).__name__, exc)
     decision = gate_policy.reply_lint_decision(text, stop_hook_active, verdict, next_step, lever,
                                             timed_step=timed_step, pinned_while_working=pinned,
-                                            first_cause_open=cause_open, later_deferral_open=deferral_open)
+                                            first_cause_open=cause_open, later_deferral_open=deferral_open,
+                                            stop_idle=bool(idle), stop_reason_answer=stop_reason_answer)
     if os.path.isfile(transcript_path):
         log(
             {
@@ -187,6 +217,9 @@ def main():
                 "lever_candidate": lever,
                 "timed_step_candidate": timed_step,
                 "pinned_while_working": pinned,
+                "idle": idle,
+                "headless": headless,
+                "stop_reason_section": bool(section),
                 "scan_error": scan_error,
                 "verdict": verdict,
                 "judge_error": judge_error,

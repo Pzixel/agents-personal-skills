@@ -2970,6 +2970,19 @@ _TIMED_STEP_REASON = (
 # Starts a deferral-family return of a later stop; the next later stop of the turn finds it (``later_deferral_open``).
 LATER_DEFERRAL_MARKER = REPLY_LINT_MARKER + " (later stop)"
 
+# Starts the stop-reason return; a later stop of the same turn finds it (``stop_reason_answer_open``).
+STOP_REASON_MARKER = REPLY_LINT_MARKER + " (stop-reason)"
+_STOP_REASON_REASON = (
+    STOP_REASON_MARKER + " nothing of this session is live (no background task, Monitor, agent, scheduled job or "
+    "pending wakeup) and the reply has no section headed `Why work stopped`. If work you can do now remains, do "
+    "it now: this return does not end the turn. Only when the turn truly ends, close the reply with a last block "
+    "headed `Why work stopped` (in a Russian chat `Почему работа остановлена`; any other language uses the English "
+    "form) naming one reason: done, with its observation; the owner's answer or action, named in full (a question "
+    "through AskUserQuestion; a blocker with the quoted error of the failed attempt or the owner's action that "
+    "clears it); or the owner said to stop. For a plain answer one line is enough. Append only the missing part; do "
+    "not repeat the reply."
+)
+
 _PROVEN_FORM = "`Proven: <cause> — <command or query>, <time> → <quoted fragment>; explains <X> of <Y>`"
 # Starts every first-cause reason; a later stop of the same turn finds it in the transcript (``first_cause_open``).
 FIRST_CAUSE_MARKER = REPLY_LINT_MARKER + " (first-cause)"
@@ -3398,6 +3411,53 @@ def later_deferral_open(stop_feedback_texts):
     return _returns_open(stop_feedback_texts, LATER_DEFERRAL_MARKER, 1)
 
 
+def stop_reason_answer_open(stop_feedback_texts):
+    """A later stop answers a stop-reason return of this turn (``STOP_REASON_MARKER`` in any of the turn's
+    returns, in any order: another hook may return the same stop) while ``later_deferral_open``."""
+    return any(STOP_REASON_MARKER in t for t in stop_feedback_texts) and later_deferral_open(stop_feedback_texts)
+
+
+# The stop-reason section: a line opening, after heading, list and emphasis markers (not in a blockquote), with
+# one of the two label forms; it runs to the next heading line (`#` or a wholly bold line) or the end of the reply.
+_STOP_REASON_LABEL_RE = re.compile(
+    r"^[ \t]*(?:#{1,6}[ \t]+)?(?:(?:[-*+]|\d+[.)])[ \t]+)*(?:\*\*|__|\*|_)?[ \t]*"
+    r"(?:why work stopped|почему работа остановлена)",
+    re.IGNORECASE | re.MULTILINE,
+)
+_SECTION_END_RE = re.compile(r"^[ \t]*(?:#{1,6}[ \t]|(\*\*|__)[^\n]+\1[ \t:]*$)", re.MULTILINE)
+_LETTER_RE = re.compile(r"[^\W\d_]")
+
+
+def stop_reason_section(reply):
+    """(body, section): ``section`` is the reply's last stop-reason section (``_STOP_REASON_LABEL_RE`` outside
+    fenced blocks, to the next heading line or the end) when a letter follows its label inside it, and ``body``
+    is the reply without it; ("reply", "") when there is none."""
+    reply = reply or ""
+    blanked = _FENCED_BLOCK_RE.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), reply)
+    labels = list(_STOP_REASON_LABEL_RE.finditer(blanked))
+    if not labels:
+        return reply, ""
+    label = labels[-1]
+    line_end = blanked.find("\n", label.end())
+    stop = _SECTION_END_RE.search(blanked, line_end) if line_end >= 0 else None
+    end = stop.start() if stop else len(reply)
+    if not _LETTER_RE.search(blanked, label.end(), end):
+        return reply, ""
+    start = blanked.rfind("\n", 0, label.start()) + 1
+    return reply[:start] + reply[end:], reply[start:end]
+
+
+def payload_live(payload):
+    """The Stop payload lists live work: a non-empty ``background_tasks`` or ``session_crons`` list."""
+    return any(isinstance(payload.get(k), list) and payload[k] for k in ("background_tasks", "session_crons"))
+
+
+def live_at_stop(facts):
+    """Everything of the session live at the stop for the stop-reason rule: ``live_mechanisms`` and
+    ``live_clocks`` (a recurring job and a pending wakeup are waits here), each id once."""
+    return list(dict.fromkeys(live_mechanisms(facts) + live_clocks(facts)))
+
+
 def live_clocks(facts):
     """Condition (c) of the timed-step rule: what will wake the session on a clock, live at the stop
     (``transcript.background_watch_scan`` facts): one-shot and recurring cron jobs and a pending /loop
@@ -3706,12 +3766,14 @@ def needs_judge(reply):
     return addresses_owner(reply) or bool(_PROMISE_RE.search(_blank_quoted(reply)))
 
 
-def reply_lint_judge_needed(reply, stop_hook_active, later_deferral_open, next_step="", lever="", timed_step=""):
-    """The judge is called: a candidate or ``needs_judge``, and on a later stop only while
-    ``later_deferral_open`` (the only judged rules there are the deferral family)."""
+def reply_lint_judge_needed(reply, stop_hook_active, later_deferral_open, next_step="", lever="", timed_step="",
+                            section=False):
+    """The judge is called: a candidate, a stop-reason ``section`` (its reason is checked, not trusted) or
+    ``needs_judge``, and on a later stop only while ``later_deferral_open`` (the only judged rules there are the
+    deferral family and, answering a stop-reason return, handoff)."""
     if stop_hook_active and not later_deferral_open:
         return False
-    return bool(next_step or lever or timed_step) or needs_judge(reply)
+    return bool(next_step or lever or timed_step or section) or needs_judge(reply)
 
 
 def judge_prompt(reply, next_step="", lever="", *, timed_step=""):
@@ -3768,6 +3830,18 @@ def _deferral_fired(verdict, next_step):
     return []
 
 
+def _claim_fired(text):
+    """[] or [("claim", reason)] for a completion claim without its observation."""
+    return [("claim", _CLAIM_REASON)] if _has_done_claim(text) and not _OBSERVATION_RE.search(text) else []
+
+
+def _handoff_fired(verdict, pinned_while_working):
+    """[] or [("handoff", reason)] for a judged hand-off whose question is not already pinned."""
+    if verdict and verdict["handoff"] and not pinned_while_working:
+        return [("handoff", _HANDOFF_REASON.format(sentence=verdict["sentence"].replace('"', "'")))]
+    return []
+
+
 def _timed_step_fired(verdict, timed_step):
     """[] or [("timed-step", reason)] for a timed-step candidate the judge confirmed."""
     if timed_step and verdict and verdict.get("timed_step"):
@@ -3778,7 +3852,7 @@ def _timed_step_fired(verdict, timed_step):
 
 def reply_lint_decision(last_assistant_text, stop_hook_active, verdict=None, next_step="", lever="", *,
                         timed_step="", pinned_while_working=False, first_cause_open=False,
-                        later_deferral_open=False):
+                        later_deferral_open=False, stop_idle=False, stop_reason_answer=False):
     """Return the main session once when its final reply claims completion
     without an observation, or the judge ``verdict`` (``parse_judge_verdict``,
     None when no verdict exists) finds a plain-text hand-off to the owner or an
@@ -3799,33 +3873,39 @@ def reply_lint_decision(last_assistant_text, stop_hook_active, verdict=None, nex
     family (``deferral`` / ``next-step``, ``timed-step``) while ``later_deferral_open`` (no later-stop deferral
     return yet this turn) and the verdict does not say ``handoff`` (work waiting on the owner is not a deferral),
     its reason led by ``LATER_DEFERRAL_MARKER``; and first-cause while ``first_cause_open`` (fewer than two
-    first-cause returns this turn). handoff, claim and lever are first-stop only. So reply-lint returns at most
-    four times per turn: the first stop, two first-cause, one later deferral."""
+    first-cause returns this turn). handoff, claim and lever are first-stop only, except on a later stop that
+    answers a stop-reason return (``stop_reason_answer_open``): there claim, handoff and the deferral family run
+    together, a handoff verdict does not switch the family off, and the return is led by
+    ``LATER_DEFERRAL_MARKER``, so it spends the same budget. So reply-lint returns at most four times per turn:
+    the first stop, two first-cause, one later deferral.
+    Stop-reason (first stop only): when ``stop_idle`` (an interactive main stop with nothing of the session live)
+    and the reply has no stop-reason section (``stop_reason_section``), ``stop-reason`` is appended last.
+    first-cause reads the reply without that section."""
     text = (last_assistant_text or "").strip()
     if not text:
         return {"decision": "allow", "rules": []}
+    body, section = stop_reason_section(text)
     if stop_hook_active:
         fired = []
-        if later_deferral_open and not (verdict and verdict["handoff"]):
-            family = _deferral_fired(verdict, next_step) + _timed_step_fired(verdict, timed_step)
+        if later_deferral_open and (stop_reason_answer or not (verdict and verdict["handoff"])):
+            family = _claim_fired(text) + _handoff_fired(verdict, pinned_while_working) if stop_reason_answer else []
+            family += _deferral_fired(verdict, next_step) + _timed_step_fired(verdict, timed_step)
             if family:
                 joined = " ".join(m for _, m in family)  # each family reason starts with REPLY_LINT_MARKER
                 fired.append(([r for r, _ in family], LATER_DEFERRAL_MARKER + joined[len(REPLY_LINT_MARKER):]))
         if first_cause_open:
-            fired += [([r], m) for r, m in _first_cause_fired(text)]
+            fired += [([r], m) for r, m in _first_cause_fired(body)]
         if not fired:
             return {"decision": "allow", "rules": []}
         return {"decision": "block", "rules": [r for rs, _ in fired for r in rs], "reason": " ".join(m for _, m in fired)}
-    fired = []
-    if _has_done_claim(text) and not _OBSERVATION_RE.search(text):
-        fired.append(("claim", _CLAIM_REASON))
-    if verdict and verdict["handoff"] and not pinned_while_working:
-        fired.append(("handoff", _HANDOFF_REASON.format(sentence=verdict["sentence"].replace('"', "'"))))
+    fired = _claim_fired(text) + _handoff_fired(verdict, pinned_while_working)
     fired += _deferral_fired(verdict, next_step)
     if lever and verdict and verdict.get("lever"):
         fired.append(("lever", _LEVER_REASON))
     fired += _timed_step_fired(verdict, timed_step)
-    fired += _first_cause_fired(text)
+    fired += _first_cause_fired(body)
+    if stop_idle and not section:
+        fired.append(("stop-reason", _STOP_REASON_REASON))
     if not fired:
         return {"decision": "allow", "rules": []}
     return {"decision": "block", "rules": [r for r, _ in fired], "reason": " ".join(m for _, m in fired)}
