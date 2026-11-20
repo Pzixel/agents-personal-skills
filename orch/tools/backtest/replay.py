@@ -878,6 +878,56 @@ def _owner_stops(days):
                 yield path, entries, stop, stamp
 
 
+def stop_reason(days):
+    """Backtest of the reply-lint `stop-reason` rule over the first stops of the owner sessions in the window:
+    per day, interactive stops (transcript `entrypoint` other than `sdk-cli`), idle ones (nothing of
+    ``gate_policy.live_at_stop``) split by what started the turn (an owner message or an event), those carrying
+    the section, and would-return (idle, no section). One background-watch pass per file: a `turn_duration`
+    entry is put after each first stop so the scan yields the facts at it. The Stop payload's lists are not in
+    the transcript, so a stop live only by them counts as idle here. Prints counts only, no transcript text."""
+    per_day = collections.defaultdict(collections.Counter)
+    seconds = time.monotonic()
+    cut = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=days)).isoformat()
+    for path in main_transcripts(days, _SUBJECT_DIR_RE):
+        entries = transcript.entries_of(path)
+        if _subject_session(entries):
+            continue
+        stops = {s for s in first_stops(entries) if str(entries[s][1].get("timestamp") or "") >= cut}
+        if not stops:
+            continue
+        marked, at = [], {}
+        for i, pair in enumerate(entries):
+            marked.append(pair)
+            if i in stops:
+                at[len(marked)] = i
+                marked.append(("", {"type": "system", "subtype": "turn_duration"}))
+        for facts in transcript.background_watch_scan(marked, "\x00"):
+            stop = at.get(facts["index"])
+            if stop is None:
+                continue
+            entry = entries[stop][1]
+            if entry.get("entrypoint") == "sdk-cli":
+                continue
+            day = per_day[str(entry.get("timestamp"))[:10]]
+            day["interactive"] += 1
+            if g.live_at_stop(facts):
+                continue
+            opener = next((e for _, e in marked[facts["turn_start"]:facts["index"]] if e.get("type") == "user"
+                           and not e.get("isMeta") and not any(b.get("type") == "tool_result"
+                                                               for b in transcript.blocks_of(e))), None)
+            day["idle owner-typed" if opener is not None and _owner_message(opener) else "idle event-started"] += 1
+            day["with section" if g.stop_reason_section(_entry_text(entry))[1] else "would return"] += 1
+    keys = ("interactive", "idle owner-typed", "idle event-started", "with section", "would return")
+    print("day | " + " | ".join(keys))
+    total = collections.Counter()
+    for day in sorted(per_day):
+        total.update(per_day[day])
+        print(day + " | " + " | ".join(str(per_day[day][k]) for k in keys))
+    print("total | " + " | ".join(str(total[k]) for k in keys))
+    print("days %d, would return per day %.1f, scan %.0f s" % (len(per_day), total["would return"] / max(len(per_day), 1),
+                                                               time.monotonic() - seconds))
+
+
 def _facts_at(entries, stop):
     facts = None
     for facts in transcript.background_watch_scan(entries[: stop + 1], "\x00"):
@@ -1312,6 +1362,8 @@ def main():
         return wrapper_tails(int(sys.argv[2]), sys.argv[sys.argv.index("--policy") + 1])
     if sys.argv[1] == "merge-gate":
         return merge_gate(int(sys.argv[2]) if len(sys.argv) > 2 else 28)
+    if sys.argv[1] == "stop-reason":
+        return stop_reason(int(sys.argv[2]) if len(sys.argv) > 2 else 14)
     if sys.argv[1] == "background-watch":
         return background_watch(int(sys.argv[2]) if len(sys.argv) > 2 else 14)
     if sys.argv[1] == "outcomes":
