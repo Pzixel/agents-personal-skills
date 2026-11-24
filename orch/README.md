@@ -172,7 +172,7 @@ Hooks enforce the gates; an agent obeys a refusal's message and never works arou
 - Waits: run the condition once (`wait-for` exits 2 on a broken command), then wait on it
   with a tool made for waiting; never a poll loop, never an agent that ends its turn to wait.
   One monitor per subject, stopped when its work ends.
-- Delegation: a builder brief carries `files:` and `check:`, a prod-probe brief `access:`
+- Delegation: a builder brief carries `files:`, `check:` and one `parts:` line (the task's parts, their order, the whole-task estimate, the part this builder owns; over `parallel.split_above_minutes` a builder owns one part, decisions/parallel-builders-for-declared-parts-over-one-hour.md), a prod-probe brief `access:`
   (the route to every system it reads); the spawn hook refuses the spawn without them.
 - `secretctl` (secrets) manages the vault (`list` / `run` / `each` / `import`; `run` and `each` pass
   `$SECRET_VALUE` by reference). `secret-vault-gate` refuses direct reads of the vault,
