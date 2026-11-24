@@ -1,0 +1,136 @@
+#!/usr/bin/python3
+"""Measured pace of orchestrated tasks of one repository, from Claude Code transcripts (read-only).
+
+    pace <repository name or path> [days=14] [--tasks]
+
+Prints, for tasks with a builder event in the last <days> days (a whole number above 0): tasks landed, minutes
+from the first builder event to the merge of the task's own PR (median; all and by the `size:` tier of the step-1
+prompt), summed wall minutes of the task's builder runs, builder and reviewer runs per task. `--tasks` adds one
+row per task (its landing merge and minutes) for checking the links by hand. Reads only transcripts modified
+inside the window: builder and reviewer transcripts of the repository in full, main sessions that spawned orch
+agents only on the lines of PR commands and their results. Sessions under a temporary directory (eval replays)
+are skipped. Transcripts live under $CLAUDE_CONFIG_DIR (default ~/.claude)/projects. Rules: pace_policy.py.
+"""
+
+import json
+import os
+import re
+import sys
+import time
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+
+from pace_policy import WORKTREE_RE, bash_calls, pr_events, report, rows_of, run_of, task_lines, tasks_of  # noqa: E402
+from transcript import entries_of  # noqa: E402
+
+KINDS = {"orch:builder": "builder", "orch:reviewer": "reviewer"}
+TOOL_ID_RE = re.compile(rb'"id":"([A-Za-z0-9_-]+)"')
+
+
+def projects_dir():
+    base = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude")
+    return os.path.realpath(os.path.join(base, "projects"))
+
+
+def temporary(project):
+    return "-tmp-" in project or project.startswith(("-private-", "-var-folders-"))
+
+
+def first_prompt(path):
+    """(prompt, cwd) of the first user entry, reading only up to it."""
+    with open(path, errors="replace") as fh:
+        for line in fh:
+            if '"type":"user"' not in line:
+                continue
+            try:
+                run = run_of("probe", [json.loads(line)])
+            except ValueError:
+                continue
+            if run:
+                return run.prompt, run.cwd
+    return "", ""
+
+
+def pr_lines(path):
+    """Parsed entries of a main transcript limited to lines naming `gh pr ` and the results of their tool uses."""
+    wanted, out = set(), []
+    with open(path, "rb") as fh:
+        for line in fh:
+            keep = b"gh pr " in line
+            if keep:
+                wanted.update(TOOL_ID_RE.findall(line))
+            elif wanted and b"tool_result" in line:
+                keep = any(i in line for i in wanted)
+            if keep:
+                try:
+                    out.append(json.loads(line))
+                except ValueError:
+                    pass
+    return out
+
+
+def main():
+    args = [a for a in sys.argv[1:] if a != "--tasks"]
+    if len(args) not in (1, 2) or (len(args) == 2 and not args[1].lstrip("-").isdigit()):
+        sys.exit(__doc__)
+    days = int(args[1]) if len(args) == 2 else 14
+    if days <= 0:
+        sys.exit("pace: days must be a whole number above 0, got %s" % args[1])
+    wanted = args[0].rstrip("/")
+    repo = os.path.realpath(wanted) if os.path.isdir(wanted) else None
+    end = time.time()
+    start = end - days * 86400
+    root = projects_dir()
+
+    def ours(prompt, cwd):
+        found = WORKTREE_RE.search(prompt)
+        place = found.group(1).split("/.worktrees/")[0] if found else cwd
+        return place == repo or place.startswith(repo + "/") if repo else os.path.basename(place) == wanted
+
+    runs, sessions = [], []
+    for project in os.scandir(root):
+        if not project.is_dir() or temporary(project.name):
+            continue
+        for session in os.scandir(project.path):
+            agents = os.path.join(session.path, "subagents")
+            if not session.is_dir() or not os.path.isdir(agents):
+                continue
+            orch = False
+            for meta in os.scandir(agents):
+                if not meta.name.endswith(".meta.json"):
+                    continue
+                try:
+                    with open(meta.path) as fh:
+                        kind = json.load(fh).get("agentType", "")
+                except ValueError:
+                    continue
+                orch = orch or kind.startswith("orch:")
+                path = meta.path[: -len(".meta.json")] + ".jsonl"
+                if kind not in KINDS or not os.path.exists(path) or os.path.getmtime(path) < start:
+                    continue
+                if ours(*first_prompt(path)):
+                    run = run_of(KINDS[kind], (e for _, e in entries_of(path)))
+                    if run:
+                        runs.append(run)
+            main_path = session.path + ".jsonl"
+            if orch and os.path.exists(main_path) and os.path.getmtime(main_path) >= start:
+                sessions.append(main_path)
+    if repo is None:
+        repos = {m.group(1).split("/.worktrees/")[0] for r in runs for m in [WORKTREE_RE.search(r.prompt)] if m}
+        if len(repos) != 1:
+            sys.exit("pace: %s names %s" % (wanted, ", ".join(sorted(repos)) or "no repository with builder runs"
+                                             " in the window; pass a path"))
+        repo = repos.pop()
+    created, merges = [], []
+    for path in sessions:
+        made, merged = pr_events(bash_calls(pr_lines(path)))
+        created += made
+        merges += merged
+    rows = rows_of(repo, tasks_of(repo, runs, start, end), created, merges)
+    print(report(repo, rows, start, end))
+    if "--tasks" in sys.argv[1:]:
+        print(task_lines(rows))
+
+
+if __name__ == "__main__":
+    main()
