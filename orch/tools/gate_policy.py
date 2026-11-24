@@ -1039,6 +1039,7 @@ def budget_decision(
 
 DEFAULT_PARAMS = {
     "plan_simplify": {"fan_out_min_words": 1200, "fan_out_min_agents": 2},
+    "parallel": {"split_above_minutes": 60},
     "work_agent_types": ["builder", "reviewer"],
     "context_soft": 150000,
     "context_hard": 220000,
@@ -2298,7 +2299,7 @@ def spawn_gate_decision(spawner_type, requested_type, model, prompt, params=None
     if decision["decision"] != "deny":
         decision = model_override_decision(spawner_type, requested_type, model, params)
     if decision["decision"] != "deny":
-        decision = brief_decision(requested_type, prompt)
+        decision = brief_decision(requested_type, prompt, params)
     if decision["decision"] == "deny" and reason:
         return {"decision": "override", "reason": reason}
     return decision
@@ -4072,23 +4073,98 @@ _BRIEF_REASON = (
 )
 
 
-def brief_decision(requested_type, prompt):
-    """Deny a builder spawn without ``files:`` and ``check:`` lines, and a
-    prod-probe spawn without an ``access:`` line."""
+_PART_NAME = r"[A-Za-z0-9._-]+"  # the worktree name class (worktree_policy.WT_PATH)
+_PARTS_LINE_RE = re.compile(r"^\s*parts:(.*)$", re.M)
+_PARTS_MINUTES_RE = re.compile(r"(\d+)\s*min")
+_PARTS_PART_RE = re.compile(r"(%s)(?:\s+after\s+(%s(?:\s*,\s*%s)*))?" % ((_PART_NAME,) * 3))
+_PARTS_MINE_RE = re.compile(r"mine:\s*(%s(?:\s*,\s*%s)*)" % (_PART_NAME, _PART_NAME))
+_HANDOFF_LINE_RE = re.compile(r"^\s*handoff:", re.M)
+_PARTS_GRAMMAR = (
+    "`parts: <N> min; <name>[ after <name>, ...]; ...; mine: <name>`, on ONE line (continuation lines are not "
+    "read); N = the whole task in minutes built one part after another, the same on every part's prompt; a name "
+    "holds only letters, digits, `.`, `_` and `-`; a task of one part writes `parts: <N> min; whole; mine: whole`"
+)
+_PARTS_MISSING = (
+    "Refused by brief-gate: a builder prompt needs a parsable line " + _PARTS_GRAMMAR + ". The parts, what each "
+    "comes after and the estimate are written before the step 1 spawn (orchestrate SKILL.md, Parts)."
+)
+_PARTS_UNDECLARED = (
+    "Refused by brief-gate: `mine:` names {names}, not declared on the `parts:` line. Grammar: " + _PARTS_GRAMMAR
+    + "."
+)
+_PARTS_ONE_OWNER = (
+    "Refused by brief-gate: the `parts:` line estimates {minutes} min, over "
+    "`parallel.split_above_minutes` ({threshold}), and `mine:` names {count} parts. Over that estimate every "
+    "part with no dependency gets its own worktree, branch and builder, all spawned in one message; a part "
+    "that comes after others starts when they have landed (orchestrate SKILL.md, Parts). Give this builder one "
+    "part, or declare the task as one part when no piece of it can be merged on its own."
+)
+
+
+def parts_line(prompt):
+    """The first ``parts:`` line of a prompt as ``(minutes, {part: [parts it comes after]}, [owned parts])``,
+    or None when there is no such line or it does not follow ``_PARTS_GRAMMAR``. Only that one line is read."""
+    found = _PARTS_LINE_RE.search(prompt or "")
+    if not found:
+        return None
+    fields = [f.strip() for f in found.group(1).strip().rstrip(".").split(";")]
+    fields = [f for f in fields if f]
+    if len(fields) < 3:
+        return None
+    minutes = _PARTS_MINUTES_RE.fullmatch(fields[0])
+    mine = _PARTS_MINE_RE.fullmatch(fields[-1])
+    if not minutes or not mine:
+        return None
+    parts = {}
+    for field in fields[1:-1]:
+        part = _PARTS_PART_RE.fullmatch(field)
+        if not part:
+            return None
+        parts[part.group(1)] = re.split(r"\s*,\s*", part.group(2)) if part.group(2) else []
+    return int(minutes.group(1)), parts, re.split(r"\s*,\s*", mine.group(1))
+
+
+def parts_decision(prompt, params=None):
+    """The `parts:` rule of a builder prompt: exempt with a ``handoff:`` line; else refused when the line is
+    missing or unparsable, when ``mine:`` names an undeclared part, or when the whole-task estimate is over
+    ``parallel.split_above_minutes`` and ``mine:`` names more than one part. Whether the parts are honest (one
+    `whole`, a chain, a low estimate) is not decided here."""
+    if _HANDOFF_LINE_RE.search(prompt or ""):
+        return {"decision": "allow"}
+    line = parts_line(prompt)
+    if line is None:
+        return {"decision": "deny", "reason": _PARTS_MISSING}
+    minutes, parts, mine = line
+    undeclared = [name for name in mine if name not in parts]
+    if undeclared:
+        return {"decision": "deny",
+                "reason": _PARTS_UNDECLARED.format(names=", ".join("`%s`" % n for n in undeclared))}
+    threshold = _merged_params(params)["parallel"]["split_above_minutes"]
+    if minutes > threshold and len(mine) > 1:
+        return {"decision": "deny",
+                "reason": _PARTS_ONE_OWNER.format(minutes=minutes, threshold=threshold, count=len(mine))}
+    return {"decision": "allow"}
+
+
+def brief_decision(requested_type, prompt, params=None):
+    """Deny a builder spawn without ``files:`` and ``check:`` lines or against the `parts:` rule
+    (``parts_decision``), and a prod-probe spawn without an ``access:`` line."""
     requested = agent_type_name(requested_type)
     needed = _BRIEF_LINES.get(requested)
     if not needed:
         return {"decision": "allow"}
     present = {m.group(1).lower() for m in re.finditer(r"^\s*([a-z]+:)", prompt or "", re.M)}
     missing = [line for line in needed if line not in present]
-    if not missing:
-        return {"decision": "allow"}
-    return {
-        "decision": "deny",
-        "reason": _BRIEF_REASON.format(
-            requested=requested, missing=", ".join("`%s`" % m for m in missing)
-        ),
-    }
+    if missing:
+        return {
+            "decision": "deny",
+            "reason": _BRIEF_REASON.format(
+                requested=requested, missing=", ".join("`%s`" % m for m in missing)
+            ),
+        }
+    if requested == "builder":
+        return parts_decision(prompt, params)
+    return {"decision": "allow"}
 
 
 # -- secrets: masked at the Bash output boundary, never in a transcript --

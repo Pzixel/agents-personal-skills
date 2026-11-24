@@ -2148,7 +2148,7 @@ class BriefDecisionTest(unittest.TestCase):
         self.assertIn("`check:`", decision["reason"])
 
     def test_builder_with_lines_is_allowed(self):
-        prompt = "task: fix it\nfiles: a.py:10, b.py:3\ncheck: cargo test -p x"
+        prompt = "task: fix it\nfiles: a.py:10, b.py:3\ncheck: cargo test -p x\nparts: 30 min; whole; mine: whole"
         self.assertEqual(gate_policy.brief_decision("builder", prompt)["decision"], "allow")
 
     def test_probe_without_access_is_denied(self):
@@ -2182,7 +2182,7 @@ class RedactSecretsTest(unittest.TestCase):
 
 
 class OverrideGatesTest(unittest.TestCase):
-    BRIEF = "files: a\ncheck: b\n"
+    BRIEF = "files: a\ncheck: b\nparts: 30 min; whole; mine: whole\n"
 
     def test_main_marker_turns_a_refused_spawn_into_an_override(self):
         self.assertEqual(

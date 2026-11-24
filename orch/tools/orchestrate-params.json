@@ -216,6 +216,10 @@
     "fan_out_min_words": 1200,
     "fan_out_min_agents": 2
   },
+  "parallel": {
+    "_doc": "brief-gate (gate_policy.parts_decision): a builder prompt whose `parts:` line estimates the whole task, built one part after another, at more than split_above_minutes may own only one part (`mine:`). The owner's number; the orchestrate skill's Parts paragraph names this parameter. Measurement and the rejected Stop rule: decisions/parallel-builders-for-declared-parts-over-one-hour.md.",
+    "split_above_minutes": 60
+  },
   "tmp_evict": {
     "_doc": "tools/tmp-evict: a first-level entry of a repository tmp directory idle (latest max(mtime, ctime) inside and latest transcript reference) more than big_idle_days when it holds big_bytes or more, else more than small_idle_days, is moved to <tmp>/.evicted/; grace_days after that it is deleted unless used again (then moved back). The 14-day class bounds large scratch output, where reuse after a two-week idle gap is rare; small entries cost little disk and keep the long 180-day class.",
     "big_bytes": 100000000,
