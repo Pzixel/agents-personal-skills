@@ -52,19 +52,24 @@ def epoch(timestamp):
         return None
 
 
-def entries_of(path):
-    """(raw line, parsed entry) pairs in transcript order."""
+def numbered_entries(path):
+    """(1-based file line, raw line, parsed entry) in transcript order; lines that are not JSON objects skipped."""
     out = []
     with open(path, errors="replace") as fh:
-        for line in fh:
+        for number, line in enumerate(fh, 1):
             line = line.strip()
             if not line.startswith("{"):
                 continue
             try:
-                out.append((line, json.loads(line)))
+                out.append((number, line, json.loads(line)))
             except Exception:
                 continue
     return out
+
+
+def entries_of(path):
+    """(raw line, parsed entry) pairs in transcript order."""
+    return [(line, entry) for _, line, entry in numbered_entries(path)]
 
 
 def entries_from_end(path, max_bytes, block_size=1 << 16):

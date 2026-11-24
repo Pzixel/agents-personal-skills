@@ -2110,9 +2110,15 @@ class HandoffJudgeTest(unittest.TestCase):
                 gate_policy.parse_judge_verdict(self._cli(result)),
                 {"handoff": True, "sentence": "Your call.", "deferral": False, "deferral_sentence": "none",
                  "next_step": False, "next_step_sentence": "none", "lever": False, "lever_sentence": "",
-                 "timed_step": False, "timed_step_sentence": ""},
+                 "timed_step": False, "timed_step_sentence": "", "duration": False, "duration_sentence": ""},
                 result,
             )
+
+    def test_duration_answer_is_parsed(self):
+        result = ('{"sentence": "none", "handoff": false, "deferral": false, "next_step": false, '
+                  '"duration_sentence": "Займёт 2 недели.", "duration": true}')
+        verdict = gate_policy.parse_judge_verdict(self._cli(result))
+        self.assertEqual((verdict["duration"], verdict["duration_sentence"]), (True, "Займёт 2 недели."))
 
     def test_anything_but_one_verdict_object_is_no_verdict(self):
         for stdout in (
@@ -3835,7 +3841,7 @@ class AskSpendRuleTest(unittest.TestCase):
 
     def test_judged_spend_needs_one_question_with_a_full_spend_line(self):
         for stems, refused in (
-            (("Recreate the inboxes?",), True),
+            (("Buy the inboxes again?",), True),
             (("Buy 39 domains?\n" + SPEND_LINE,), False),
             (("**Spend:** 467 USD, ceiling 507 USD; account: registrar, left 1200 USD; later: none\nBuy?",), False),
             (("Buy 39 domains?\n" + SPEND_LINE, "And which workspace?"), True),
@@ -3912,8 +3918,12 @@ class AskSpendRuleTest(unittest.TestCase):
         def envelope(result, is_error=False):
             return json.dumps({"is_error": is_error, "result": result})
         for stdout, verdict in (
-            (envelope('{"spend": true, "sentence": "buy domains"}'), {"spend": True, "sentence": "buy domains"}),
-            (envelope('```json\n{"spend": false}\n```'), {"spend": False, "sentence": ""}),
+            (envelope('{"spend": true, "sentence": "buy domains"}'),
+             {"spend": True, "sentence": "buy domains", "duration": False, "duration_sentence": ""}),
+            (envelope('```json\n{"spend": false}\n```'),
+             {"spend": False, "sentence": "", "duration": False, "duration_sentence": ""}),
+            (envelope('{"spend": false, "sentence": "", "duration": true, "duration_sentence": "3 дня"}'),
+             {"spend": False, "sentence": "", "duration": True, "duration_sentence": "3 дня"}),
             (envelope('{"spend": "yes"}'), None),
             (envelope('{"handoff": true, "deferral": false, "next_step": false}'), None),
             (envelope('{"spend": true}', is_error=True), None),

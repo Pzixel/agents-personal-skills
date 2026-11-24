@@ -44,6 +44,7 @@ import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 import gate_policy as g  # noqa: E402
+import model_judge  # noqa: E402
 import transcript  # noqa: E402
 
 MUX = {"gh", "kubectl", "docker", "git", "infra.py", "history.py", "secretctl", "perl", "cargo"}
@@ -825,6 +826,8 @@ def _hook_judge_args(name="JUDGE_ARGS"):
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "hooks", "reply-lint.py")
     for node in ast.parse(open(path).read()).body:
         if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == name:
+            if isinstance(node.value, ast.Call):  # JUDGE_ARGS = model_judge.judge_args(<literals>)
+                return model_judge.judge_args(*[ast.literal_eval(a) for a in node.value.args])
             return ast.literal_eval(node.value)
     raise SystemExit(name + " not found in " + path)
 
@@ -842,14 +845,9 @@ def _judge(policy, prompt, args, timeout, run_tag=""):
     if os.path.isfile(path):
         with open(path) as fh:
             return json.load(fh)
-    try:
-        run = subprocess.run(args + [prompt], capture_output=True, text=True,
-                             timeout=timeout, env=dict(os.environ, REPLY_LINT_JUDGE="1"), cwd="/tmp")
-    except subprocess.TimeoutExpired:
-        return "timeout"
-    verdict = policy.parse_judge_verdict(run.stdout)
+    verdict, error = model_judge.run(args, prompt, timeout, "REPLY_LINT_JUDGE", policy.parse_judge_verdict)
     if verdict is None:
-        return "error"
+        return "timeout" if error == "TimeoutExpired" else "error"
     os.makedirs(_CACHE_DIR, exist_ok=True)
     with open(path, "w") as fh:
         json.dump(verdict, fh)
@@ -926,6 +924,73 @@ def stop_reason(days):
     print("total | " + " | ".join(str(total[k]) for k in keys))
     print("days %d, would return per day %.1f, scan %.0f s" % (len(per_day), total["would return"] / max(len(per_day), 1),
                                                                time.monotonic() - seconds))
+
+
+_DURATION_FIXTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tests", "fixtures")
+
+
+def _duration_set_counts(judge_one):
+    """Question F on the labelled sets (the reviews' adversarial replies, the CASE-88 real replies): estimates missed
+    and non-estimates returned, each as a count of its set."""
+    with open(os.path.join(_DURATION_FIXTURES, "duration_adversarial.json"), encoding="utf-8") as fh:
+        adversarial = json.load(fh)
+    with open(os.path.join(_DURATION_FIXTURES, "duration_replies.json"), encoding="utf-8") as fh:
+        real = json.load(fh)
+    sets = (("adversarial", adversarial["estimate"], adversarial["not_estimate"]),
+            ("real", list(real["fire"].values()), [v["text"] for v in real["pass"].values()]))
+    for name, estimates, others in sets:
+        missed = [t for t in estimates if judge_one(t) != "true"]
+        returned = [t for t in others if judge_one(t) == "true"]
+        print("%s set: estimates missed %d of %d, non-estimates returned %d of %d"
+              % (name, len(missed), len(estimates), len(returned), len(others)))
+        for t in missed:
+            print("  missed |", re.sub(r"\s+", " ", t)[:120])
+        for t in returned:
+            print("  returned |", re.sub(r"\s+", " ", t)[:120])
+
+
+def duration(days, judge=False):
+    """Backtest of the reply-lint `duration` rule at the first stop of every turn of the owner sessions in the
+    window (its only stop): trigger candidates (``gate_policy.duration_candidate``) and the extra judge calls a day
+    they add, i.e. candidates at stops where neither ``needs_judge`` nor a lever candidate already calls the judge
+    (next-step and timed-step candidates are not counted as calling it, so the number is an upper bound). With
+    ``judge``, question F through the hook's judge on every candidate and on the labelled sets; each return printed
+    as time, session prefix, transcript line and candidate."""
+    from concurrent.futures import ThreadPoolExecutor
+    n, rows, days_seen = collections.Counter(), [], set()
+    for path, entries, stop, stamp in _owner_stops(days):
+        n["stops"] += 1
+        days_seen.add(stamp[:10])
+        text = _entry_text(entries[stop][1])
+        candidate = g.duration_candidate(text)
+        if not candidate:
+            continue
+        lever = g.lever_candidate(text)
+        extra = not (g.needs_judge(text) or lever)
+        n["candidates"] += 1
+        n["extra judge calls"] += extra
+        rows.append([stamp, path, stop, text, candidate, lever, extra, "-"])
+    per_day = max(len(days_seen), 1)
+    print("stops %d, candidates %d, extra judge calls %d over %d days (%.1f a day)"
+          % (n["stops"], n["candidates"], n["extra judge calls"], len(days_seen), n["extra judge calls"] / per_day))
+    print("extra judge calls per day:", dict(sorted(collections.Counter(r[0][:10] for r in rows if r[6]).items())))
+    if not judge:
+        return
+    args, timeout = _hook_judge_args(), _hook_judge_args("JUDGE_TIMEOUT_S")
+
+    def answer(text, candidate, lever=""):
+        verdict = _judge(g, g.judge_prompt(text, lever=lever, duration=candidate), args, timeout)
+        return verdict if isinstance(verdict, str) else str(verdict["duration"]).lower()
+    with ThreadPoolExecutor(8) as pool:
+        for row, got in zip(rows, pool.map(lambda r: answer(r[3], r[4], r[5]), rows)):
+            row[7] = got
+        _duration_set_counts(lambda t: answer(t, g.duration_candidate(t)))
+    returns = sorted(r for r in rows if r[7] == "true")
+    print("judged %d, returns %d, judge errors %d" % (len(rows), len(returns), sum(r[7] not in ("true", "false") for r in rows)))
+    print("returns per day:", dict(sorted(collections.Counter(r[0][:10] for r in returns).items())))
+    for stamp, path, stop, _, candidate, _, _, _ in returns:
+        line = transcript.numbered_entries(path)[stop][0]
+        print("return %s %s L%d | %s" % (stamp[:16], _session_prefix(path), line, candidate[:200]))
 
 
 def _facts_at(entries, stop):
@@ -1364,6 +1429,8 @@ def main():
         return merge_gate(int(sys.argv[2]) if len(sys.argv) > 2 else 28)
     if sys.argv[1] == "stop-reason":
         return stop_reason(int(sys.argv[2]) if len(sys.argv) > 2 else 14)
+    if sys.argv[1] == "duration":
+        return duration(int(sys.argv[2]) if len(sys.argv) > 2 else 14, judge="judge" in sys.argv[3:])
     if sys.argv[1] == "background-watch":
         return background_watch(int(sys.argv[2]) if len(sys.argv) > 2 else 14)
     if sys.argv[1] == "outcomes":

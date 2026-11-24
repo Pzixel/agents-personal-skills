@@ -1471,12 +1471,21 @@ def spend_candidate(tool_input):
 
 
 def spend_judge_prompt(tool_input):
+    """The AskUserQuestion judge prompt: the spend question, plus the duration question (``_DURATION_QUESTION``,
+    the same one the reply judge asks) when ``ask_duration_candidate`` matches."""
     questions = [
         {"question": q.get("question"), "options": [
             {"label": o.get("label"), "description": o.get("description")}
             for o in (q.get("options") or []) if isinstance(o, dict)]}
         for q in tool_input.get("questions") or [] if isinstance(q, dict)]
-    return SPEND_JUDGE_PROMPT.format(question=json.dumps(questions, ensure_ascii=False, indent=1))
+    prompt = SPEND_JUDGE_PROMPT.format(question=json.dumps(questions, ensure_ascii=False, indent=1))
+    duration = ask_duration_candidate(tool_input)
+    if not duration:
+        return prompt
+    return (prompt + "\n\nAnswer one more question about the same text.\n"
+            + _DURATION_QUESTION.format(label="2", sentence=duration.replace('"', "'"))
+            + 'Add two keys to the same JSON object: "duration_sentence": "<the duration sentence quoted, at most 15 '
+            'words, or empty>", "duration": true|false.')
 
 
 def judge_result_text(cli_stdout):
@@ -1508,7 +1517,8 @@ def parse_spend_verdict(cli_stdout):
     verdict = _judge_object(cli_stdout)
     if verdict is None or not isinstance(verdict.get("spend"), bool):
         return None
-    return {"spend": verdict["spend"], "sentence": str(verdict.get("sentence") or "")}
+    return {"spend": verdict["spend"], "sentence": str(verdict.get("sentence") or ""),
+            "duration": verdict.get("duration") is True, "duration_sentence": str(verdict.get("duration_sentence") or "")}
 
 
 def spend_stated(tool_input):
@@ -1542,14 +1552,20 @@ def source_clauses(tool_input):
 def ask_existing_decision(tool_input, spend=None):
     """AskUserQuestion gate, one refusal at a time. Spend rule first: when the judge ``spend`` verdict
     (``parse_spend_verdict``; None when not judged or failed: fail open) says the question commits our
-    money and the call is not one question with a full `Spend:` stem line, the spend refusal. Then the
-    `Existing:` rule: None when ``source_clauses`` hold `existing: n/a` or a line of some
+    money and the call is not one question with a full `Spend:` stem line, the spend refusal. Then rule
+    `duration`: ``duration_return`` over ``ask_duration_candidate`` and the same verdict (its `duration` key),
+    the reply-lint return body naming the question. The spend verdict counts only for a ``spend_candidate``:
+    a dialog judged for its days alone is not refused on spend. Then the `Existing:` rule: None when ``source_clauses`` hold `existing: n/a` or a line of some
     question stem starts with a non-empty `Existing:`; else the measured refusal. A citation only in
     metadata does not pass: the owner never sees metadata. Fails open (None) on an input with no
     non-empty string stem: a harness shape change must not block every question to the owner."""
     tool_input = tool_input if isinstance(tool_input, dict) else {}
-    if isinstance(spend, dict) and spend.get("spend") is True and not spend_stated(tool_input):
+    if (isinstance(spend, dict) and spend.get("spend") is True and spend_candidate(tool_input)
+            and not spend_stated(tool_input)):
         return _ASK_SPEND_REASON
+    duration = duration_return(ask_duration_candidate(tool_input), spend, _ASK_DURATION_REASON)
+    if duration:
+        return duration
     if re.match(r"n/a\b", source_clauses(tool_input).get("existing", ""), re.I):
         return None
     questions = tool_input.get("questions")
@@ -3083,6 +3099,84 @@ def lever_candidate(reply):
     return re.sub(r"\s+", " ", " ".join(sentences))[:LEVER_CHARS]
 
 
+# -- duration: a work estimate in days or weeks with no builder-run basis next to it (CASE-63, CASE-88) --
+
+# One body for both entries; {subject} names what is returned (the reply, or the AskUserQuestion dialog).
+_DURATION_BODY = (
+    " (duration) the {subject} gives a duration for the agent's own or a delegate's work in days or "
+    "weeks. Derive it from measured runs: the minutes one recent builder run took for a comparable part, its review "
+    "and fix rounds, CI minutes and rollout minutes; `~/.claude/tools/pace <repository>` prints the measured minutes "
+    "from the first builder event to the merge (median). Parts that do not depend on each other are "
+    "built at the same time, so the duration is the longest chain of dependent parts, not the sum of all parts. The lines or commits a "
+    "repository received per calendar day measure how much work was asked for, not how fast it is done, and are not "
+    "a pace. State the result in hours with these numbers next to it; days appear only for a named wait on "
+    "something that is not the agent. Open the correction with the re-derived hours and the runs they come from; "
+    "withdraw the old number after that in one sentence that does not say why it was wrong, since a cause in the "
+    "first paragraph is returned again by `first-cause`."
+)
+_DURATION_REASON = REPLY_LINT_MARKER + _DURATION_BODY.format(subject="reply")
+_ASK_DURATION_REASON = "Refused by ask-existing-gate" + _DURATION_BODY.format(subject="question")
+DURATION_CHARS = 400
+_DURATION_NUMBER = (
+    r"(?:\d+(?:[.,]\d+)?(?:\s*[–—-]\s*\d+(?:[.,]\d+)?)?"
+    r"|од(?:ин|на|ну|ного|ной|ним)|дв(?:а|е|ух|ое|умя)|тр(?:и|[её]х|ое|емя)|четыр\w*|пят\w*|шест\w*|сем[ьи]"
+    r"|вос[еь]м\w*|девят\w*|десят\w*|пар[уыа]|нескольк\w*|полтор[аы]"
+    r"|one|two|three|four|five|six|seven|eight|nine|ten|(?:a\s+)?few|several|(?:a\s+)?couple(?:\s+of)?)"
+)
+_DURATION_UNIT = r"(?:дн(?:я|ей|ям|ями)|день|сут(?:ок|ки)|недел\w*|days?|weeks?)"
+# Broad on purpose: a number before or after a day or week unit, or a bare accusative week; the judge decides.
+_DURATION_RE = re.compile(
+    r"(?<![\w.,])(?:" + _DURATION_NUMBER + r"\s*(?:-\s*)?(?:(?:календарн|рабоч)\w*\s+|(?:working|calendar|business)\s+)?"
+    + _DURATION_UNIT
+    + r"|(?:дн(?:я|ей)|день|сут(?:ок|ки)|недел[июь])\s*[–—-]?\s*(?:\d+|дв[ае]|тр[иёе]\w*|четыр\w*|пят\w*)"
+    + r"|недел(?:ю|ьку)|пол(?:дня|недели|суток)|(?<!per\s)(?<!once\s)(?<!times\s)a\s+(?:day|week))(?!\w)",
+    re.IGNORECASE,
+)
+_DURATION_SENTENCE_RE = re.compile(r"[.!?](?=\s|$)|(?<!\d)[.!?](?!\d)|\n")
+
+
+def duration_candidate(text):
+    """The sentences of ``text`` that give a duration in days or weeks (``_DURATION_RE``, at most
+    ``DURATION_CHARS``), else "": the cheap trigger of question F; whether it is a work estimate without a run
+    basis is the judge's answer. Code and paths are blanked first."""
+    blanked = _blank_code_paths_quoted(text or "")
+    sentences = [s.strip() for s in _DURATION_SENTENCE_RE.split(blanked) if _DURATION_RE.search(s)]
+    return re.sub(r"\s+", " ", " ".join(sentences))[:DURATION_CHARS]
+
+
+def ask_duration_candidate(tool_input):
+    """``duration_candidate`` over every stem, option label and description of an AskUserQuestion input."""
+    return duration_candidate("\n".join(_ask_texts(tool_input)))
+
+
+def duration_return(candidate, verdict, reason=_DURATION_REASON):
+    """The one decision of rule `duration` for both entries (a reply at its first stop, an AskUserQuestion
+    input, whose caller passes ``_ASK_DURATION_REASON``): ``reason`` when the trigger matched and the judge
+    ``verdict`` says the text gives a work duration in days or weeks with no run basis, else None (no verdict:
+    fail open)."""
+    if candidate and isinstance(verdict, dict) and verdict.get("duration") is True:
+        return reason
+    return None
+
+
+_DURATION_QUESTION = (
+    "QUESTION {label}, WORK DURATION WITHOUT A RUN BASIS. The text names days or weeks: \"{sentence}\". Answer "
+    "true when it gives the owner a duration in days or weeks (a number, a range, a bound such as \"up to\" or "
+    "\"more than\", or \"a week\") for work the agent itself or its delegates (builders, subagents, reviewers it "
+    "runs) will do, and that duration is not derived, in the text, from measured run times: the minutes a recent "
+    "builder run took for a comparable part, its review and fix rounds, CI minutes and rollout minutes. Not such "
+    "a basis, so still true: a conversion to hours (\"2 weeks, that is about 80 hours\"), a CI or wait time "
+    "next to the duration that it is not derived from (\"3 weeks; CI takes 12 minutes\"), a pace from lines or "
+    "commits a day, a delegate's or a human's count of days. Answer false when the days or weeks are a wait on a "
+    "named other party or on an event the agent does not do (a vendor, a colleague, a provider's approval, mailbox "
+    "warmup, data accumulating), days counted as data rather than as time the work takes (the days of data a "
+    "test, a job or a recompute covers or has left), a retention period, a measurement or data window, an age, a "
+    "schedule or a recurrence, the length of work already done, the owner's or someone else's words quoted or reported, an "
+    "estimate the text withdraws without giving it again in days or weeks, or a rule or an example. When unsure, "
+    "answer false.\n\n"
+)
+
+
 # -- next-step trigger (a): the closing part of the reply names a step of the agent's own --
 
 NEXT_STEP_CLOSING_CHARS = 600
@@ -3698,6 +3792,7 @@ JUDGE_PROMPT = (
     "{question_c}"
     "{question_d}"
     "{question_e}"
+    "{question_f}"
     "For each question, find the one sentence that makes it true. If none exists, or a NOT case covers it, "
     "the answer is false. When unsure, answer false.\n\n"
     "Respond with one JSON object only, no other text, sentences written before the booleans:\n"
@@ -3709,7 +3804,9 @@ JUDGE_PROMPT = (
     "\"lever_sentence\": \"<the lever sentence quoted, at most 15 words, or none>\", "
     "\"lever\": <true or false>, "
     "\"timed_step_sentence\": \"<the timed step sentence quoted, at most 15 words, or none>\", "
-    "\"timed_step\": <true or false>}}"
+    "\"timed_step\": <true or false>, "
+    "\"duration_sentence\": \"<the duration sentence quoted, at most 15 words, or none>\", "
+    "\"duration\": <true or false>}}"
 )
 _QUESTION_C = (
     "QUESTION C, OWN NEXT STEP. The reply's closing part names a step the agent itself will take "
@@ -3759,6 +3856,7 @@ _QUESTION_E = (
     "or when a one-shot id is named as armed. When unsure, answer false.\n\n"
 )
 _NO_QUESTION_E = "QUESTION E is not asked for this reply: answer timed_step false.\n\n"
+_NO_QUESTION_F = "QUESTION F is not asked for this reply: answer duration false.\n\n"
 _HANDOFF_REASON = (
     REPLY_LINT_MARKER + " the reply leaves work waiting on the owner in plain text "
     "(\"{sentence}\"). If the decision is inside your authority (a technical question by the "
@@ -3808,24 +3906,27 @@ def needs_judge(reply):
 
 
 def reply_lint_judge_needed(reply, stop_hook_active, later_deferral_open, next_step="", lever="", timed_step="",
-                            section=False):
+                            section=False, duration=""):
     """The judge is called: a candidate, a stop-reason ``section`` (its reason is checked, not trusted) or
     ``needs_judge``, and on a later stop only while ``later_deferral_open`` (the only judged rules there are the
     deferral family)."""
     if stop_hook_active and not later_deferral_open:
         return False
-    return bool(next_step or lever or timed_step or section) or needs_judge(reply)
+    return bool(next_step or lever or timed_step or section or duration) or needs_judge(reply)
 
 
-def judge_prompt(reply, next_step="", lever="", *, timed_step=""):
+def judge_prompt(reply, next_step="", lever="", *, timed_step="", duration=""):
     """The judge prompt for one final reply; the reply goes in as a JSON string. Question C is
     asked only for a next-step candidate (``next_step`` = its trigger sentence), question D only
-    for a lever candidate (``lever`` = ``lever_candidate``), question E only for a timed-step candidate."""
+    for a lever candidate (``lever`` = ``lever_candidate``), question E only for a timed-step candidate,
+    question F only for a duration candidate (``duration_candidate``)."""
     question_c = _QUESTION_C.format(sentence=next_step.replace('"', "'")) if next_step else _NO_QUESTION_C
     question_d = _QUESTION_D.format(sentence=lever.replace('"', "'")) if lever else _NO_QUESTION_D
     question_e = _QUESTION_E.format(sentence=timed_step.replace('"', "'")) if timed_step else _NO_QUESTION_E
+    question_f = (_DURATION_QUESTION.format(label="F", sentence=duration.replace('"', "'")) if duration
+                  else _NO_QUESTION_F)
     return JUDGE_PROMPT.format(reply=json.dumps(reply, ensure_ascii=False), question_c=question_c,
-                               question_d=question_d, question_e=question_e)
+                               question_d=question_d, question_e=question_e, question_f=question_f)
 
 
 def parse_judge_verdict(cli_stdout):
@@ -3848,6 +3949,8 @@ def parse_judge_verdict(cli_stdout):
         "lever_sentence": str(verdict.get("lever_sentence") or ""),
         "timed_step": verdict.get("timed_step") is True,
         "timed_step_sentence": str(verdict.get("timed_step_sentence") or ""),
+        "duration": verdict.get("duration") is True,
+        "duration_sentence": str(verdict.get("duration_sentence") or ""),
     }
 
 
@@ -3881,7 +3984,7 @@ def _timed_step_fired(verdict, timed_step):
 
 
 def reply_lint_decision(last_assistant_text, stop_hook_active, verdict=None, next_step="", lever="", *,
-                        timed_step="", pinned_while_working=False, first_cause_open=False,
+                        timed_step="", duration="", pinned_while_working=False, first_cause_open=False,
                         later_deferral_open=False, stop_idle=False, stop_reason_answer=False):
     """Return the main session once when its final reply claims completion
     without an observation, or the judge ``verdict`` (``parse_judge_verdict``,
@@ -3892,7 +3995,10 @@ def reply_lint_decision(last_assistant_text, stop_hook_active, verdict=None, nex
     lever candidate (``lever``), the judge finds a lever listed with no consumer read; or, for a timed-step
     candidate (``timed_step`` = ``timed_step_sentence`` of a reply whose session holds no live clock,
     ``live_clocks``), the judge finds an own step at a time not yet arrived; or ``first_paragraph_cause`` finds a
-    cause in the first paragraph or a `Proven:` line without its form (``first-cause``, no judge). Rules add up.
+    cause in the first paragraph or a `Proven:` line without its form (``first-cause``, no judge); or
+    for a duration candidate (``duration`` = ``duration_candidate``), the judge finds a work duration in days or
+    weeks with no run basis (``duration_return``).
+    Rules add up.
     ``rules`` names every rule that fired. A hand-off does not fire when ``pinned_while_working``: the
     session has a non-empty open-question file and live work (``live_mechanisms`` or ``live_clocks``),
     so its question is already raised and pinned while work that does not wait on it runs (CASE-80).
@@ -3903,7 +4009,7 @@ def reply_lint_decision(last_assistant_text, stop_hook_active, verdict=None, nex
     family (``deferral`` / ``next-step``, ``timed-step``) while ``later_deferral_open`` (no later-stop deferral
     return yet this turn) and the verdict does not say ``handoff`` (work waiting on the owner is not a deferral),
     its reason led by ``LATER_DEFERRAL_MARKER``; and first-cause while ``first_cause_open`` (fewer than two
-    first-cause returns this turn). handoff, claim and lever are first-stop only; on a later stop that answers a
+    first-cause returns this turn). handoff, claim, lever and duration are first-stop only; on a later stop that answers a
     stop-reason return (``stop_reason_answer_open``) a handoff verdict does not switch the deferral family off. So
     reply-lint returns at most four times per turn: the first stop, two first-cause, one later deferral.
     Stop-reason (first stop only): when ``stop_idle`` (an interactive main stop with nothing of the session live)
@@ -3934,6 +4040,8 @@ def reply_lint_decision(last_assistant_text, stop_hook_active, verdict=None, nex
     if lever and verdict and verdict.get("lever"):
         fired.append(("lever", _LEVER_REASON))
     fired += _timed_step_fired(verdict, timed_step)
+    if duration_return(duration, verdict):
+        fired.append(("duration", _DURATION_REASON))
     fired += _first_cause_fired(cause_text, text)
     if stop_idle and not stop_reason_section(text)[1]:
         fired.append(("stop-reason", _STOP_REASON_REASON))

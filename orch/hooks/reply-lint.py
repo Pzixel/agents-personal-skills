@@ -18,7 +18,7 @@ turn's Stop-hook feedback in the transcript: the deferral family (deferral,
 next-step, timed-step; judged while no later-stop deferral return exists this
 turn, returned at most once, not when the verdict says handoff) and first-cause
 (at most twice per turn; a `Proven:` opening is returned first for its unread records unless a line holds only
-`Unread: none` / `нет` / `ничего`, then for its form); handoff, claim and lever stay first-stop only (a later
+`Unread: none` / `нет` / `ничего`, then for its form); handoff, claim, lever and duration stay first-stop only (a later
 stop answering a stop-reason return runs the deferral family even when the verdict says handoff). So a
 turn holds at most four returns, never a loop.
 Stop-reason (first stop only): an interactive main stop (`CLAUDE_CODE_ENTRYPOINT=cli`; any other value or none is
@@ -27,7 +27,10 @@ exempt, an unattended caller parses the final message) with nothing of the sessi
 section headed `Why work stopped` / `Почему работа остановлена` (gate_policy.stop_reason_section); a reply without
 it is returned once. A reply with the section goes to the judge, so its reason is checked by the other rules; the
 next-step and timed-step triggers read the whole reply and the reply without the section, first-cause reads the
-reply without the section. A judge error, timeout or
+reply without the section.
+Duration (first stop only): a reply naming days or weeks (gate_policy.duration_candidate, a broad trigger) goes to
+the judge, whose question F decides whether it gives a work duration with no run basis (gate_policy.duration_return,
+shared with ask-existing-gate); then it is returned with the re-derivation text. A judge error, timeout or
 unparsable verdict passes the reply (fail open) and is logged; every record
 names the rules that fired. Measurement and acceptance condition: ORIGINS.md.
 Not claims (2026-10-15): Russian not-verified disclosures, done words as
@@ -121,9 +124,9 @@ def stop_feedback(transcript):
         return []
 
 
-def judge(text, next_step="", lever="", timed_step=""):
+def judge(text, next_step="", lever="", timed_step="", duration=""):
     """(verdict or None, error or None) from the nested small-model judge."""
-    prompt = gate_policy.judge_prompt(text, next_step, lever, timed_step=timed_step)
+    prompt = gate_policy.judge_prompt(text, next_step, lever, timed_step=timed_step, duration=duration)
     return model_judge.run(JUDGE_ARGS, prompt, JUDGE_TIMEOUT_S, JUDGE_ENV, gate_policy.parse_judge_verdict)
 
 
@@ -184,7 +187,7 @@ def main():
     cause_open = gate_policy.first_cause_open(feedback)
     deferral_open = gate_policy.later_deferral_open(feedback)
     stop_reason_answer = gate_policy.stop_reason_answer_open(feedback)
-    next_step, lever, timed_step, scan_error, idle = "", "", "", None, None
+    next_step, lever, timed_step, duration, scan_error, idle = "", "", "", "", None, None
     # cheap facts first: a payload list or a present section settles the rule without a transcript parse
     if not (outside_terminal or stop_hook_active or section or gate_policy.payload_live(payload)):
         try:
@@ -196,12 +199,14 @@ def main():
         try:
             next_step, timed_step = candidates(text, transcript.facts)
             lever = "" if stop_hook_active else gate_policy.lever_candidate(text)
+            duration = "" if stop_hook_active else gate_policy.duration_candidate(text)
         except Exception as exc:  # the reply passes; the failure is logged
             scan_error = "%s: %s" % (type(exc).__name__, exc)
     run_judge = gate_policy.reply_lint_judge_needed(text, stop_hook_active, deferral_open, next_step, lever,
-                                                    timed_step, section=bool(section) and not outside_terminal)
+                                                    timed_step, section=bool(section) and not outside_terminal,
+                                                    duration=duration)
     started = time.monotonic()
-    verdict, judge_error = judge(text, next_step, lever, timed_step) if run_judge else (None, None)
+    verdict, judge_error = judge(text, next_step, lever, timed_step, duration) if run_judge else (None, None)
     judge_ms = int((time.monotonic() - started) * 1000) if run_judge else None
     pinned = False
     if verdict and verdict["handoff"] and not stop_hook_active:
@@ -210,7 +215,7 @@ def main():
         except Exception as exc:  # the hand-off rule stays in force; the failure is logged
             scan_error = "%s: %s" % (type(exc).__name__, exc)
     decision = gate_policy.reply_lint_decision(text, stop_hook_active, verdict, next_step, lever,
-                                            timed_step=timed_step, pinned_while_working=pinned,
+                                            timed_step=timed_step, duration=duration, pinned_while_working=pinned,
                                             first_cause_open=cause_open, later_deferral_open=deferral_open,
                                             stop_idle=bool(idle), stop_reason_answer=stop_reason_answer)
     if os.path.isfile(transcript_path):
@@ -223,6 +228,7 @@ def main():
                 "next_step_candidate": next_step,
                 "lever_candidate": lever,
                 "timed_step_candidate": timed_step,
+                "duration_candidate": duration,
                 "pinned_while_working": pinned,
                 "idle": idle,
                 "outside_terminal_client": outside_terminal,

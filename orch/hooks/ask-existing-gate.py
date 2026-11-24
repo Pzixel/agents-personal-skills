@@ -5,8 +5,9 @@ transcript passes; the scan of a 31.9 MB transcript took 0.18 s with imports). T
 the mtime of the session's pin file and its transcript read backwards to the pin (at most PIN_SCAN_BYTES; no
 pin or any read error passes). Then
 the rule, fail-open on a payload without a stem included, gate_policy.ask_existing_decision. A question that
-passes the spend prefilter (gate_policy.spend_candidate) is judged by the small model (model_judge, the
-session's own login); a judge error or timeout passes it (fail open). Every judged call is logged (judged /
+passes the spend prefilter (gate_policy.spend_candidate) or names days or weeks (gate_policy.ask_duration_candidate)
+is judged by the small model in one call (model_judge, the session's own login; the duration question is the
+reply-lint one, and its refusal carries the reply-lint `duration` text); a judge error or timeout passes it (fail open). Every judged call is logged (judged /
 fired / judge error) to LOG_PATH, so the unjudged share is readable. Input that is not a JSON object passes."""
 import datetime
 import json
@@ -77,7 +78,8 @@ def main():
         return 2
     tool_input = payload.get("tool_input")
     spend = None
-    judged = isinstance(tool_input, dict) and not os.environ.get(JUDGE_ENV) and gate_policy.spend_candidate(tool_input)
+    judged = isinstance(tool_input, dict) and not os.environ.get(JUDGE_ENV) and bool(
+        gate_policy.spend_candidate(tool_input) or gate_policy.ask_duration_candidate(tool_input))
     if judged:
         spend, error = model_judge.run(JUDGE_ARGS, gate_policy.spend_judge_prompt(tool_input), JUDGE_TIMEOUT_S,
                                        JUDGE_ENV, gate_policy.parse_spend_verdict)
@@ -85,7 +87,9 @@ def main():
     if judged:
         log({"session": payload.get("session_id"), "judged": spend is not None, "error": error,
              "spend": bool(spend and spend["spend"]), "sentence": (spend or {}).get("sentence", ""),
-             "fired": reason == gate_policy._ASK_SPEND_REASON})
+             "fired": reason == gate_policy._ASK_SPEND_REASON,
+             "duration_candidate": gate_policy.ask_duration_candidate(tool_input),
+             "duration": bool(spend and spend["duration"]), "duration_fired": reason == gate_policy._ASK_DURATION_REASON})
     if reason:
         print(reason, file=sys.stderr)
         return 2
