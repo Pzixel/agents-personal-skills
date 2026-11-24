@@ -85,7 +85,7 @@ is installed with `CLAUDE_CONFIG_DIR=~/.claude-accounts/<name> ./install.sh clau
     sources (`tools/dup_policy.py`; CLI `tools/dup-skills`), silent otherwise.
   - `memory-routing.py` — memory routing reminder; not wired in `hooks.json`.
 - `tools/` — `gate_policy.py` (pure gate decisions), `orchestrate-params.json` (thresholds,
-  spawn rights, build settings), `check-run`, `wait-for`, `rm-own` (removes an agent's own
+  spawn rights, build settings), `check-run`, `wait-for`, `pace` (measured minutes from the first builder event to the merge of each task's own PR for one repository, median per size tier; `--tasks` lists the tasks; rules in `pace_policy.py`), `rm-own` (removes an agent's own
   scratch paths after checking the real path; the destructive gate lets it through), `kill-own`
   (SIGTERMs the agent's own leftover local processes after the ancestry checks; same gate exemption), `secretctl` with `vault_policy.py`
   and `vault_files.py`, `scout.py`, `scout_policy.py`, `scout-mcp-empty.json`, `clamp.py`,
@@ -123,12 +123,15 @@ Hooks enforce the gates; an agent obeys a refusal's message and never works arou
   and not when the verdict finds a hand-off, plus the judge-free `first-cause` rule at most twice per turn (a `Proven:`
   opening is returned first for its unread records unless a line holds only `Unread: none` / `нет` / `ничего`, then for its form;
   backtest `orch/tools/backtest/first_cause_backtest.py`); hand-off,
-  completion claim and lever are first-stop only (a later stop answering a `stop-reason` return runs the
+  completion claim, lever and duration are first-stop only (a later stop answering a `stop-reason` return runs the
   deferral family even under a hand-off verdict), so a turn holds at most four reply-lint returns. Rule
   `stop-reason`: a main stop of the terminal client (`CLAUDE_CODE_ENTRYPOINT=cli`; every other value and an
   absent one exempt) with nothing of the session live must close with a section under a line holding only
   `Why work stopped` (`Почему работа остановлена` in a Russian chat); a reply without it is returned once
-  (details "Gates"). A judge error, timeout or unparsable verdict passes the reply (fail
+  (details "Gates"). Rule `duration`: a reply naming days or weeks goes to the judge (question F); a work
+  duration with no measured-run basis is returned with the re-derivation text, and the AskUserQuestion gate
+  refuses a question carrying one with the same text (backtest `replay.py duration`). A judge error,
+  timeout or unparsable verdict passes the reply (fail
   open) and is logged in `~/.claude/reply-lint-log.jsonl` as `judge_error`, next to
   `rules` (the rules that fired) and `verdict`; a standing failure (no login, rate limit,
   broken install) fails open on every stop, so a silent check is diagnosed from that field.
