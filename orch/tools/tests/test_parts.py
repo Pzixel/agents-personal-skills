@@ -63,10 +63,17 @@ class PartsLineTest(unittest.TestCase):
         prompt = BRIEF + "parts: 90 min; TICKET-12.api; ui_v2 after TICKET-12.api; mine: ui_v2"
         self.assertEqual(spawn(prompt)["decision"], "allow")
 
-    def test_handoff_line_after_the_brief_is_exempt_but_one_in_the_task_text_is_not(self):
-        self.assertEqual(spawn(BRIEF + "handoff: abc123, /n/review-verified.md")["decision"], "allow")
-        self.assertEqual(spawn("task: write the shift log\nhandoff: notes for the next shift\n" + BRIEF)["decision"],
-                         "deny")
+    def test_handoff_line_in_any_real_order_is_exempt(self):
+        handoff = "handoff: abc123, /n/review-verified.md\n"
+        task, workspace = "task: add a nightly report\n", "workspace: /r/.worktrees/report-engine\n"
+        rest = "files: a.py:10\nsize: 200 LOC\ncheck: make test\n"
+        for order in (task + handoff + workspace + rest, task + workspace + handoff + rest,
+                      handoff + task + workspace + rest):
+            with self.subTest(order=order):
+                self.assertEqual(spawn(order)["decision"], "allow")
+
+    def test_no_handoff_and_no_parts_line_is_refused(self):
+        self.assertEqual(spawn(BRIEF)["decision"], "deny")
 
     def test_parts_line_quoted_in_the_task_text_does_not_decide(self):
         prompt = "task: build it\nparts: engine and client\n" + BRIEF + SIX_PARTS.format(mine="engine")

@@ -4076,14 +4076,13 @@ _BRIEF_REASON = (
 WORKTREE_NAME = r"[A-Za-z0-9._-]+"  # a worktree basename; also a part name (worktree_policy reads it from here)
 _PART_NAME = WORKTREE_NAME
 _PARTS_LINE_RE = re.compile(r"^\s*parts:(.*)$", re.M)
-_CHECK_LINE_RE = re.compile(r"^\s*check:", re.M)
 _PARTS_MINUTES_RE = re.compile(r"(\d+)\s*min")
 _PARTS_PART_RE = re.compile(r"(%s)(?:\s+after\s+%s(?:\s*,\s*%s)*)?" % ((_PART_NAME,) * 3))
 _PARTS_MINE_RE = re.compile(r"mine:\s*(%s(?:\s*,\s*%s)*)" % (_PART_NAME, _PART_NAME))
 _HANDOFF_LINE_RE = re.compile(r"^\s*handoff:", re.M)
 _PARTS_GRAMMAR = (
     "`parts: <N> min; <name>[ after <name>, ...]; ...; mine: <name>[, <name>]`, on ONE line (continuation lines "
-    "are not read; the last line starting `parts:` counts, so the task text may quote one before it); N = the whole "
+    "are not read; the last line starting `parts:` counts, so the task text may quote one before it; a prompt with any line starting `handoff:` is a re-spawn and exempt); N = the whole "
     "task in minutes built one part after another, the same on every part's prompt; `mine:` names one part, several "
     "only when N is at or under `parallel.split_above_minutes` (such a task goes to one builder as before); a name "
     "holds only letters, digits, `.`, `_` and `-`; a task of one part writes `parts: <N> min; whole; mine: whole`"
@@ -4137,9 +4136,8 @@ def parts_decision(prompt, params=None):
     missing or unparsable, when ``mine:`` names an undeclared part, or when the whole-task estimate is over
     ``parallel.split_above_minutes`` and ``mine:`` names more than one part. Whether the parts are honest (one
     `whole`, a chain, a low estimate) is not decided here."""
-    checks = [m.start() for m in _CHECK_LINE_RE.finditer(prompt or "")]
-    if any(m.start() > (checks[-1] if checks else -1) for m in _HANDOFF_LINE_RE.finditer(prompt or "")):
-        return {"decision": "allow"}  # a re-spawn: the step 1 prompt plus a `handoff:` line after its `check:`
+    if _HANDOFF_LINE_RE.search(prompt or ""):
+        return {"decision": "allow"}  # a re-spawn; a `handoff:` line quoted in the task text exempts too (accepted)
     line = parts_line(prompt)
     if line is None:
         return {"decision": "deny", "reason": _PARTS_MISSING}
