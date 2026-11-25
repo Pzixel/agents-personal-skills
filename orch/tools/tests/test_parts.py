@@ -25,7 +25,7 @@ class PartsLineTest(unittest.TestCase):
     def test_missing_line_is_refused_with_the_one_line_grammar(self):
         decision = spawn(BRIEF)
         self.assertEqual(decision["decision"], "deny")
-        self.assertIn("`parts: <N> min; <name>[ after <name>, ...]; ...; mine: <name>`", decision["reason"])
+        self.assertIn("`parts: <N> min; <name>[ after <name>, ...]; ...; mine: <name>[, <name>]`", decision["reason"])
         self.assertIn("ONE line", decision["reason"])
         self.assertIn("letters, digits, `.`, `_` and `-`", decision["reason"])
 
@@ -63,9 +63,20 @@ class PartsLineTest(unittest.TestCase):
         prompt = BRIEF + "parts: 90 min; TICKET-12.api; ui_v2 after TICKET-12.api; mine: ui_v2"
         self.assertEqual(spawn(prompt)["decision"], "allow")
 
-    def test_handoff_line_is_exempt_but_handoff_in_prose_is_not(self):
+    def test_handoff_line_after_the_brief_is_exempt_but_one_in_the_task_text_is_not(self):
         self.assertEqual(spawn(BRIEF + "handoff: abc123, /n/review-verified.md")["decision"], "allow")
-        self.assertEqual(spawn(BRIEF + "note: no handoff: needed")["decision"], "deny")
+        self.assertEqual(spawn("task: write the shift log\nhandoff: notes for the next shift\n" + BRIEF)["decision"],
+                         "deny")
+
+    def test_parts_line_quoted_in_the_task_text_does_not_decide(self):
+        prompt = "task: build it\nparts: engine and client\n" + BRIEF + SIX_PARTS.format(mine="engine")
+        self.assertEqual(spawn(prompt)["decision"], "allow")
+
+    def test_missing_files_and_parts_are_named_in_one_refusal(self):
+        decision = spawn("task: t\ncheck: c")
+        self.assertEqual(decision["decision"], "deny")
+        self.assertIn("`files:`", decision["reason"])
+        self.assertIn("parsable `parts:` line", decision["reason"])
 
 
 class DeclaredCheckOrderTest(unittest.TestCase):

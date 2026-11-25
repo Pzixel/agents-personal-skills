@@ -4073,21 +4073,26 @@ _BRIEF_REASON = (
 )
 
 
-_PART_NAME = r"[A-Za-z0-9._-]+"  # the worktree name class (worktree_policy.WT_PATH)
+WORKTREE_NAME = r"[A-Za-z0-9._-]+"  # a worktree basename; also a part name (worktree_policy reads it from here)
+_PART_NAME = WORKTREE_NAME
 _PARTS_LINE_RE = re.compile(r"^\s*parts:(.*)$", re.M)
+_CHECK_LINE_RE = re.compile(r"^\s*check:", re.M)
 _PARTS_MINUTES_RE = re.compile(r"(\d+)\s*min")
-_PARTS_PART_RE = re.compile(r"(%s)(?:\s+after\s+(%s(?:\s*,\s*%s)*))?" % ((_PART_NAME,) * 3))
+_PARTS_PART_RE = re.compile(r"(%s)(?:\s+after\s+%s(?:\s*,\s*%s)*)?" % ((_PART_NAME,) * 3))
 _PARTS_MINE_RE = re.compile(r"mine:\s*(%s(?:\s*,\s*%s)*)" % (_PART_NAME, _PART_NAME))
 _HANDOFF_LINE_RE = re.compile(r"^\s*handoff:", re.M)
 _PARTS_GRAMMAR = (
-    "`parts: <N> min; <name>[ after <name>, ...]; ...; mine: <name>`, on ONE line (continuation lines are not "
-    "read); N = the whole task in minutes built one part after another, the same on every part's prompt; a name "
+    "`parts: <N> min; <name>[ after <name>, ...]; ...; mine: <name>[, <name>]`, on ONE line (continuation lines "
+    "are not read; the last line starting `parts:` counts, so the task text may quote one before it); N = the whole "
+    "task in minutes built one part after another, the same on every part's prompt; `mine:` names one part, several "
+    "only when N is at or under `parallel.split_above_minutes` (such a task goes to one builder as before); a name "
     "holds only letters, digits, `.`, `_` and `-`; a task of one part writes `parts: <N> min; whole; mine: whole`"
 )
-_PARTS_MISSING = (
-    "Refused by brief-gate: a builder prompt needs a parsable line " + _PARTS_GRAMMAR + ". The parts, what each "
-    "comes after and the estimate are written before the step 1 spawn (orchestrate SKILL.md, Parts)."
+_PARTS_HOW = (
+    "`parts:` = " + _PARTS_GRAMMAR + ". The parts, what each comes after and the estimate are written before the "
+    "step 1 spawn (orchestrate SKILL.md, Parts)."
 )
+_PARTS_MISSING = "Refused by brief-gate: a builder prompt needs a parsable `parts:` line. " + _PARTS_HOW
 _PARTS_UNDECLARED = (
     "Refused by brief-gate: `mine:` names {names}, not declared on the `parts:` line. Grammar: " + _PARTS_GRAMMAR
     + "."
@@ -4102,9 +4107,12 @@ _PARTS_ONE_OWNER = (
 
 
 def parts_line(prompt):
-    """The first ``parts:`` line of a prompt as ``(minutes, {part: [parts it comes after]}, [owned parts])``,
-    or None when there is no such line or it does not follow ``_PARTS_GRAMMAR``. Only that one line is read."""
-    found = _PARTS_LINE_RE.search(prompt or "")
+    """The last ``parts:`` line of a prompt (the template's own line follows the quoted task text) as
+    ``(minutes, {declared parts}, [owned parts])``, or None when there is no such line or it does not follow
+    ``_PARTS_GRAMMAR``. Only that one line is read."""
+    found = None
+    for found in _PARTS_LINE_RE.finditer(prompt or ""):
+        pass
     if not found:
         return None
     fields = [f.strip() for f in found.group(1).strip().rstrip(".").split(";")]
@@ -4115,12 +4123,12 @@ def parts_line(prompt):
     mine = _PARTS_MINE_RE.fullmatch(fields[-1])
     if not minutes or not mine:
         return None
-    parts = {}
+    parts = set()
     for field in fields[1:-1]:
         part = _PARTS_PART_RE.fullmatch(field)
         if not part:
             return None
-        parts[part.group(1)] = re.split(r"\s*,\s*", part.group(2)) if part.group(2) else []
+        parts.add(part.group(1))
     return int(minutes.group(1)), parts, re.split(r"\s*,\s*", mine.group(1))
 
 
@@ -4129,8 +4137,9 @@ def parts_decision(prompt, params=None):
     missing or unparsable, when ``mine:`` names an undeclared part, or when the whole-task estimate is over
     ``parallel.split_above_minutes`` and ``mine:`` names more than one part. Whether the parts are honest (one
     `whole`, a chain, a low estimate) is not decided here."""
-    if _HANDOFF_LINE_RE.search(prompt or ""):
-        return {"decision": "allow"}
+    checks = [m.start() for m in _CHECK_LINE_RE.finditer(prompt or "")]
+    if any(m.start() > (checks[-1] if checks else -1) for m in _HANDOFF_LINE_RE.finditer(prompt or "")):
+        return {"decision": "allow"}  # a re-spawn: the step 1 prompt plus a `handoff:` line after its `check:`
     line = parts_line(prompt)
     if line is None:
         return {"decision": "deny", "reason": _PARTS_MISSING}
@@ -4155,16 +4164,13 @@ def brief_decision(requested_type, prompt, params=None):
         return {"decision": "allow"}
     present = {m.group(1).lower() for m in re.finditer(r"^\s*([a-z]+:)", prompt or "", re.M)}
     missing = [line for line in needed if line not in present]
-    if missing:
-        return {
-            "decision": "deny",
-            "reason": _BRIEF_REASON.format(
-                requested=requested, missing=", ".join("`%s`" % m for m in missing)
-            ),
-        }
-    if requested == "builder":
-        return parts_decision(prompt, params)
-    return {"decision": "allow"}
+    parts = parts_decision(prompt, params) if requested == "builder" else {"decision": "allow"}
+    if not missing:
+        return parts
+    reason = _BRIEF_REASON.format(requested=requested, missing=", ".join("`%s`" % m for m in missing))
+    if parts.get("reason") == _PARTS_MISSING:
+        reason += " The prompt also lacks a parsable `parts:` line: " + _PARTS_HOW
+    return {"decision": "deny", "reason": reason}
 
 
 # -- secrets: masked at the Bash output boundary, never in a transcript --

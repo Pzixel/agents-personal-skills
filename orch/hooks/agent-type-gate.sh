@@ -6,7 +6,7 @@
 # itself is gate_policy.spawn_decision. A spawner also may not pick the spawned agent's
 # model (tool_input.model): that comes from the agent definition, exceptions are listed
 # per triple in `model_override_rights` (gate_policy.model_override_decision).
-# A builder prompt also needs `files:` and `check:` lines and a prod-probe prompt an
+# A builder prompt also needs `files:`, `check:` and `parts:` lines (gate_policy.parts_decision) and a prod-probe prompt an
 # `access:` line (gate_policy.brief_decision): discovery stays with the caller.
 # Escape hatch for all of these refusals, main session only: a prompt line
 # `AGENT_TYPE_OVERRIDE: <reason>` (gate_policy.override_marker), logged to

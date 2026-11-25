@@ -3,7 +3,7 @@
 Decision (2026-10-29): the orchestrate flow picks reviewer spawns and their model by the task's tier, set at step 1 from the `files:` and `size:` lines.
 
 - small: a change of no more than a value, a field or a config line, whatever file holds it; or every file is presentation (templates, styles, copy) or configuration holding no rule, threshold or route (`design: required`, the design review is one combined spawn on Opus). Code review A/B and the cross-check on `model: "opus"`. A small task whose builder reply carries a non-empty `risks[]` is promoted to medium; one sent back at step 2a keeps its tier.
-- large: over about 400 LOC or more than one subsystem; sliced as before, two Fable step-2 spawns, Fable A/B and cross-check.
+- large: over about 400 LOC or more than one subsystem; written as parts (orchestrate SKILL.md, Parts), two Fable step-2 spawns, Fable A/B and cross-check.
 - medium: anything else, including configs holding a rule, threshold or route, tests, docs, scripts, build files, migrations and policy prose. `design: required`; step 2 is one Fable `orch:reviewer` spawn whose prompt starts `/simplify lens pass ... on <notes>/DESIGN.md (full path)` and also asks the contract review. Code review A/B and the cross-check stay Fable.
 - At most 2 design-fix rounds per task; a BLOCKER surviving the second is ruled on by the main session before the go-ahead (technical: it decides; money, priority or client-visible: the owner).
 

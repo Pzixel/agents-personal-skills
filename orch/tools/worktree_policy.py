@@ -22,12 +22,12 @@ import os
 import re
 from dataclasses import dataclass
 
-from gate_policy import FILE_EDIT_TOOLS, bash_effects, scratch_path
+from gate_policy import FILE_EDIT_TOOLS, WORKTREE_NAME, bash_effects, scratch_path
 from transcript import background_watch_scan, blocks_of
 
 
-WT_PATH = re.compile(r"(/[^\s\"'`;|&<>()]+?)/\.worktrees/([A-Za-z0-9._-]+)")
-WT_REL = re.compile(r"(?<![\w/])(?:\./)?\.worktrees/([A-Za-z0-9._-]+)")
+WT_PATH = re.compile(r"(/[^\s\"'`;|&<>()]+?)/\.worktrees/(" + WORKTREE_NAME + ")")
+WT_REL = re.compile(r"(?<![\w/])(?:\./)?\.worktrees/(" + WORKTREE_NAME + ")")
 
 
 def written_worktrees(tool_name, tool_input, cwd=None):
