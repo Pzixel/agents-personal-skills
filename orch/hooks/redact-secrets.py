@@ -47,8 +47,8 @@ def main():
     response = payload.get("tool_response")
     if response is None:
         return 0
-    texts, _protected = vault_files.load_vault()
-    tokens = vault_policy.vault_tokens(texts)
+    texts, raw_values, _protected = vault_files.load_vault()
+    tokens = vault_policy.vault_tokens(texts, raw_values)
     updated = _redact(response, tokens)
     if updated == response:
         return 0

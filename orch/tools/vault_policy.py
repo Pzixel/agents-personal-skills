@@ -21,6 +21,12 @@ therefore need no special syntax. A label ending in ``:id`` marks an identifier
 (e.g. a cloud access key ID): its value line may be 20+ characters. Such short
 values are redacted only by exact known-value match, never by shape.
 
+A value this format cannot hold (it contains ``.`` or ``:``, or is short) is a
+raw file instead: ``NAME.raw`` holds one secret value of TOKEN_MIN+ chars and is
+a known value; ``NAME.public`` holds one value declared not secret (e.g. a JWT
+``kid``, or a value that also appears as a literal in a repository) and is never
+a known value. The keys-file parser never reads them.
+
 No I/O lives here. Functions take texts and facts as values and return
 decisions, texts, and summaries that never contain a value, only its length
 and a short digest.
@@ -36,7 +42,11 @@ VAULT_DIR_NAME = ".secrets"
 
 _VALUE_RE = re.compile(r"^[A-Za-z0-9+/=_-]{30,}$")
 IDENTIFIER_SUFFIX = ":id"
-_IDENTIFIER_VALUE_RE = re.compile(r"^[A-Za-z0-9+/=_-]{20,}$")
+# Shortest known value: an identifier's value, and a raw secret's.
+TOKEN_MIN = 20
+_IDENTIFIER_VALUE_RE = re.compile(r"^[A-Za-z0-9+/=_-]{%d,}$" % TOKEN_MIN)
+RAW_SUFFIX = ".raw"
+PUBLIC_SUFFIX = ".public"
 # A table row ends in its value; the label is everything before it.
 _TOKEN_RE = re.compile(r"^[A-Za-z0-9+/=_.:-]{16,}$")
 # Standalone standard-base64 token long enough to be an API key (a typical
@@ -113,6 +123,23 @@ def import_table(text):
     return "\n".join(lines) + ("\n" if lines else "")
 
 
+def raw_value(text, public):
+    """``(suffix, value)`` of the raw file that stores ``text`` (stripped), or
+    ValueError naming why it cannot be stored. A secret needs TOKEN_MIN+ chars so
+    it is a known value; a public value has no length bound."""
+    value = text.strip()
+    if not value:
+        raise ValueError("is empty")
+    if "\n" in value or "\r" in value:
+        raise ValueError("has several lines; a raw file holds one line")
+    if public:
+        return PUBLIC_SUFFIX, value
+    if len(value) < TOKEN_MIN:
+        raise ValueError("is %d chars; a secret needs %d+ to be redacted (pass --public "
+                         "only if it is not a secret)" % (len(value), TOKEN_MIN))
+    return RAW_SUFFIX, value
+
+
 def merge(base_text, updates_text, renames=None):
     """Replace base values by label with those from ``updates``; append labels
     the base lacks. ``renames`` maps a base label to the updates label that
@@ -159,10 +186,13 @@ def merge(base_text, updates_text, renames=None):
 # -- redaction ---------------------------------------------------------------------
 
 
-def vault_tokens(file_texts):
-    """Secret values held by vault files: the value of every parsed entry. Labels
-    are never tokens, so they stay readable and usable as command arguments."""
-    return {value for text in file_texts for _label, value in parse_entries(text)}
+def vault_tokens(file_texts, raw_values=()):
+    """Secret values held by vault files: the value of every parsed entry and every
+    raw secret of TOKEN_MIN+ chars (a shorter hand-made one would mask ordinary
+    text, so it is dropped). Labels are never tokens, so they stay readable and
+    usable as command arguments."""
+    tokens = {value for text in file_texts for _label, value in parse_entries(text)}
+    return tokens | {value for value in raw_values if len(value) >= TOKEN_MIN}
 
 
 def redact_known(text, tokens):

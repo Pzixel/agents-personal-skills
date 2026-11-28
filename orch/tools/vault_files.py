@@ -3,10 +3,14 @@
 The vault is `$SECRET_VAULT_DIR` or `~/.secrets` (mode 0700, files 0600).
 `.protected-paths` inside it lists in-pod mount paths (one per line, `#`
 comments) that no Bash command may name. Every other regular file up to
-MAX_FILE_BYTES is a vault file (see `vault_policy` for the format).
+MAX_FILE_BYTES is a vault file (see `vault_policy` for the format): a keys file,
+a `.raw` file (one secret value) or a `.public` file (one value that is not secret).
 """
 
 import os
+import tempfile
+
+from vault_policy import PUBLIC_SUFFIX, RAW_SUFFIX
 
 VAULT_DIR = os.environ.get("SECRET_VAULT_DIR") or os.path.expanduser("~/.secrets")
 PROTECTED_FILE = ".protected-paths"
@@ -14,13 +18,16 @@ MAX_FILE_BYTES = 262144
 
 
 def load_vault(vault_dir=None):
-    """``(texts, protected_paths)``: contents of every vault file and the protected paths."""
+    """``(texts, raw_values, protected_paths)``: contents of every keys file, the value
+    of every `.raw` file (`.public` files are not read) and the protected paths."""
     vault_dir = vault_dir or VAULT_DIR
-    texts, protected = [], []
+    texts, raw_values, protected = [], [], []
     if not os.path.isdir(vault_dir):
-        return texts, protected
+        return texts, raw_values, protected
     for root, _dirs, files in os.walk(vault_dir):
         for name in sorted(files):
+            if name.endswith(PUBLIC_SUFFIX):
+                continue
             path = os.path.join(root, name)
             try:
                 if os.path.getsize(path) > MAX_FILE_BYTES:
@@ -35,31 +42,67 @@ def load_vault(vault_dir=None):
                     for line in text.splitlines()
                     if line.strip() and not line.lstrip().startswith("#")
                 )
+            elif name.endswith(RAW_SUFFIX):
+                raw_values.append(text.strip())
             else:
                 texts.append(text)
-    return texts, protected
+    return texts, raw_values, protected
+
+
+def _checked_name(name):
+    if not name or name.startswith(("/", "~")) or ".." in name.split("/"):
+        raise ValueError("vault file names are relative paths without '..'")
+    return name
 
 
 def vault_file_path(vault_dir, name):
     """Absolute path of the vault file called ``name`` (``acme/service_keys``).
     Names are relative, without ``..``; the ``.txt`` suffix is implied."""
-    if not name or name.startswith(("/", "~")) or ".." in name.split("/"):
-        raise ValueError("vault file names are relative paths without '..'")
+    name = _checked_name(name)
     if not name.endswith(".txt"):
         name += ".txt"
     return os.path.join(vault_dir, name)
 
 
+def raw_file_paths(vault_dir, name):
+    """``{suffix: path}`` of the raw files ``name`` may have (`.raw`, `.public`)."""
+    base = os.path.join(vault_dir, _checked_name(name))
+    return {suffix: base + suffix for suffix in (RAW_SUFFIX, PUBLIC_SUFFIX)}
+
+
+def read_raw(vault_dir, name):
+    """``(suffix, value)`` of ``name``'s raw file, or None when it has none."""
+    for suffix, path in raw_file_paths(vault_dir, name).items():
+        if os.path.exists(path):
+            with open(path, encoding="utf-8") as handle:
+                return suffix, handle.read().strip()
+    return None
+
+
 def write_vault_file(path, text):
-    """Create or replace a vault file with owner-only permissions (dir 0700, file 0600)."""
+    """Create or replace a vault file with owner-only permissions (dir 0700, file 0600).
+    Atomic: the text goes to a temp file renamed over ``path``, so a killed write
+    leaves the old file or the new one, never a truncated one."""
     old_umask = os.umask(0o077)
     try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
-            handle.write(text)
+        directory = os.path.dirname(path)
+        os.makedirs(directory, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=directory, prefix=".tmp-")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
+                handle.write(text)
+            os.replace(tmp, path)
+        except BaseException:
+            os.unlink(tmp)
+            raise
     finally:
         os.umask(old_umask)
+
+
+def remove_vault_file(path):
+    """Remove a vault file when present."""
+    if os.path.exists(path):
+        os.remove(path)
 
 
 def read_vault_file(path):

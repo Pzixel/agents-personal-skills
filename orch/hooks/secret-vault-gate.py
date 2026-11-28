@@ -34,8 +34,8 @@ def main():
     tool = payload.get("tool_name") or ""
     tool_input = payload.get("tool_input") or {}
     cwd = payload.get("cwd") or os.getcwd()
-    texts, protected = vault_files.load_vault()
-    tokens = vault_policy.vault_tokens(texts)
+    texts, raw_values, protected = vault_files.load_vault()
+    tokens = vault_policy.vault_tokens(texts, raw_values)
     reason = vault_policy.secret_access_violation(
         tool, tool_input, cwd, vault_files.VAULT_DIR, tokens, protected
     )

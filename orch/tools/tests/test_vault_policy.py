@@ -202,5 +202,114 @@ class ApplyPatchCommandTest(unittest.TestCase):
         self.assertEqual(json.loads(body), {"data": {"SECRET_KEY": base64.b64encode(KEY_A.encode()).decode()}})
 
 
+SECRETCTL = os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "secretctl")
+# Shaped like a vendor API key with '.' and ':' (53 chars), not a real one.
+RAW_KEY = "acme_live.Q2hhbmdlTWU0VGVzdHM:Zm9yRXhhbXBsZU9ubHkwMDA"
+RAW_DSN = "api9.example.test:13111"
+KID = "kid-v01"
+
+
+class RawValueTest(unittest.TestCase):
+    def test_one_line_secret_with_dot_and_colon_is_stored_as_is(self):
+        self.assertEqual(vault_policy.raw_value(RAW_KEY + "\n", False), (".raw", RAW_KEY))
+
+    def test_secret_shorter_than_an_identifier_is_refused(self):
+        with self.assertRaises(ValueError):
+            vault_policy.raw_value("abcdef123456", False)
+
+    def test_public_value_of_any_length_is_stored_public(self):
+        self.assertEqual(vault_policy.raw_value(KID, True), (".public", KID))
+        self.assertEqual(vault_policy.raw_value("p" * 300, True), (".public", "p" * 300))
+
+    def test_empty_or_multi_line_value_is_refused(self):
+        for text in ("", " \n", "%s\n%s\n" % (RAW_KEY, RAW_KEY)):
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                vault_policy.raw_value(text, True)
+
+
+class RawTokensTest(unittest.TestCase):
+    def test_raw_secret_is_masked_and_gated(self):
+        tokens = vault_policy.vault_tokens([], [RAW_KEY])
+        self.assertEqual(gate_policy.redact_secrets("key %s end" % RAW_KEY, tokens),
+                         "key %s end" % vault_policy.mask(RAW_KEY))
+        self.assertIsNotNone(vault_policy.secret_access_violation(
+            "Bash", {"command": "curl -H 'X-API-KEY: %s' u" % RAW_KEY}, "/tmp", VAULT, tokens, []))
+
+    def test_empty_or_short_hand_made_raw_value_is_not_a_token(self):
+        self.assertEqual(vault_policy.vault_tokens(["Billing\n%s\n" % KEY_A], ["", "abcde", RAW_DSN]),
+                         {KEY_A, RAW_DSN})
+
+    def test_vault_paths_of_raw_files_are_refused(self):
+        for tool_input, tool in (({"command": "cat ~/.secrets/acme/dsn.raw"}, "Bash"),
+                                 ({"file_path": VAULT + "/acme/kid.public"}, "Read")):
+            with self.subTest(tool=tool):
+                self.assertIsNotNone(vault_policy.secret_access_violation(
+                    tool, tool_input, "/tmp", VAULT, set(), []))
+
+
+class LoadVaultTest(unittest.TestCase):
+    def test_raw_values_loaded_public_values_never_read(self):
+        with tempfile.TemporaryDirectory() as vault:
+            vault_files.write_vault_file(os.path.join(vault, "acme", "keys.txt"), "Billing\n%s\n" % KEY_A)
+            vault_files.write_vault_file(os.path.join(vault, "acme", "dsn.raw"), RAW_DSN + "\n")
+            vault_files.write_vault_file(os.path.join(vault, "acme", "kid.public"), KID + "\n")
+            self.assertEqual(vault_files.load_vault(vault), (["Billing\n%s\n" % KEY_A], [RAW_DSN], []))
+
+
+class RawCliTest(unittest.TestCase):
+    """secretctl pull-k8s --raw / run --raw / list against a fake kubectl and a temp vault."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.vault = os.path.join(self.tmp.name, "vault")
+        bin_dir = os.path.join(self.tmp.name, "bin")
+        os.mkdir(bin_dir)
+        kubectl = os.path.join(bin_dir, "kubectl")
+        with open(kubectl, "w") as handle:
+            handle.write("#!/bin/sh\nprintf '%s' \"$FAKE_SECRET_JSON\"\n")
+        os.chmod(kubectl, 0o755)
+        self.env = dict(os.environ, SECRET_VAULT_DIR=self.vault, PATH=bin_dir + os.pathsep + os.environ["PATH"])
+
+    def secretctl(self, *argv, data=None):
+        import subprocess
+        env = dict(self.env)
+        if data is not None:
+            env["FAKE_SECRET_JSON"] = json.dumps(
+                {"data": {"KEY": base64.b64encode(data.encode()).decode()}})
+        return subprocess.run([sys.executable, SECRETCTL] + list(argv), env=env,
+                              capture_output=True, text=True, check=False)
+
+    def pull(self, value, *flags):
+        return self.secretctl("pull-k8s", "acme/item", "-n", "ns", "secret", "KEY", "--raw", *flags, data=value)
+
+    def run_sees(self, value):
+        env_check = 'test "$SECRET_VALUE" = "$WANT" && test "$VENDOR_KEY" = "$WANT" && test "$SECRET_LABEL" = item'
+        self.env["WANT"] = value
+        return self.secretctl("run", "acme/item", "--raw", "--env", "VENDOR_KEY", "--", "sh", "-c", env_check).stdout
+
+    def test_secret_with_dot_and_colon_stores_and_runs(self):
+        stored = self.pull(RAW_KEY + "\n")
+        self.assertEqual(stored.returncode, 0, stored.stderr)
+        self.assertEqual(self.run_sees(RAW_KEY).splitlines()[-1], "exit=0")
+        self.assertEqual(self.secretctl("list", "acme/item").stdout,
+                         "  raw len=53 sha8=%s secret\n" % vault_policy.digest(RAW_KEY))
+
+    def test_short_value_without_public_is_refused_and_not_stored(self):
+        self.assertNotEqual(self.pull(KID).returncode, 0)
+        self.assertIsNone(vault_files.read_raw(self.vault, "acme/item"))
+
+    def test_short_public_value_runs_and_is_no_token(self):
+        self.assertEqual(self.pull(KID, "--public").returncode, 0)
+        self.assertEqual(self.run_sees(KID).splitlines()[-1], "exit=0")
+        self.assertEqual(vault_files.load_vault(self.vault), ([], [], []))
+
+    def test_force_to_public_drops_the_secret_file(self):
+        self.pull(RAW_DSN)
+        self.assertNotEqual(self.pull(RAW_DSN, "--public").returncode, 0)
+        self.assertEqual(self.pull(RAW_DSN, "--public", "--force").returncode, 0)
+        self.assertEqual(vault_files.load_vault(self.vault), ([], [], []))
+
+
 if __name__ == "__main__":
     unittest.main()

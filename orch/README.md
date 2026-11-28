@@ -177,7 +177,10 @@ Hooks enforce the gates; an agent obeys a refusal's message and never works arou
 - `secretctl` (secrets) manages the vault (`list` / `run` / `each` / `import`; `run` and `each` pass
   `$SECRET_VALUE` by reference). `secret-vault-gate` refuses direct reads of the vault,
   Secret payloads and known values in tool inputs; `redact-secrets` masks known values and
-  key-shaped tokens in Bash, Read, Grep, Glob and Agent results.
+  key-shaped tokens in Bash, Read, Grep, Glob and Agent results. A one-line value the keys-file
+  format cannot hold (`.`, `:`, short) is stored with `pull-k8s --raw` and used with `run NAME --raw`;
+  a secret needs 20+ chars, and a value that is not secret or also appears as a literal in a
+  repository is stored `--public` (never masked or gated).
 - A hook `ask` does not prompt in bypass-permissions mode.
 
 ## Tests and evals
