@@ -21,11 +21,8 @@ therefore need no special syntax. A label ending in ``:id`` marks an identifier
 (e.g. a cloud access key ID): its value line may be 20+ characters. Such short
 values are redacted only by exact known-value match, never by shape.
 
-A value this format cannot hold (it contains ``.`` or ``:``, or is short) is a
-raw file instead: ``NAME.raw`` holds one secret value of TOKEN_MIN+ chars and is
-a known value; ``NAME.public`` holds one value declared not secret (e.g. a JWT
-``kid``, or a value that also appears as a literal in a repository) and is never
-a known value. The keys-file parser never reads them.
+A value this format cannot hold is a raw file: ``NAME.raw`` holds one secret
+(a known value), ``NAME.public`` one value declared not secret (never known).
 
 No I/O lives here. Functions take texts and facts as values and return
 decisions, texts, and summaries that never contain a value, only its length
@@ -124,9 +121,8 @@ def import_table(text):
 
 
 def raw_value(text, public):
-    """``(suffix, value)`` of the raw file that stores ``text`` (stripped), or
-    ValueError naming why it cannot be stored. A secret needs TOKEN_MIN+ chars so
-    it is a known value; a public value has no length bound."""
+    """``(suffix, value)`` of the raw file storing ``text``, or ValueError: a secret
+    needs TOKEN_MIN+ chars to be a known value; a public value has no bound."""
     value = text.strip()
     if not value:
         raise ValueError("is empty")
@@ -187,10 +183,9 @@ def merge(base_text, updates_text, renames=None):
 
 
 def vault_tokens(file_texts, raw_values=()):
-    """Secret values held by vault files: the value of every parsed entry and every
-    raw secret of TOKEN_MIN+ chars (a shorter hand-made one would mask ordinary
-    text, so it is dropped). Labels are never tokens, so they stay readable and
-    usable as command arguments."""
+    """Secret values held by vault files: every parsed entry's value and every raw
+    secret of TOKEN_MIN+ chars (a shorter hand-made one would mask ordinary text).
+    Labels are never tokens, so they stay readable and usable as arguments."""
     tokens = {value for text in file_texts for _label, value in parse_entries(text)}
     return tokens | {value for value in raw_values if len(value) >= TOKEN_MIN}
 

@@ -49,33 +49,22 @@ def load_vault(vault_dir=None):
     return texts, raw_values, protected
 
 
-def _checked_name(name):
+def vault_file_path(vault_dir, name, suffix=".txt"):
+    """Absolute path of the vault file called ``name`` (``acme/service_keys``).
+    Names are relative, without ``..``; the ``suffix`` is implied."""
     if not name or name.startswith(("/", "~")) or ".." in name.split("/"):
         raise ValueError("vault file names are relative paths without '..'")
-    return name
-
-
-def vault_file_path(vault_dir, name):
-    """Absolute path of the vault file called ``name`` (``acme/service_keys``).
-    Names are relative, without ``..``; the ``.txt`` suffix is implied."""
-    name = _checked_name(name)
-    if not name.endswith(".txt"):
-        name += ".txt"
+    if not name.endswith(suffix):
+        name += suffix
     return os.path.join(vault_dir, name)
-
-
-def raw_file_paths(vault_dir, name):
-    """``{suffix: path}`` of the raw files ``name`` may have (`.raw`, `.public`)."""
-    base = os.path.join(vault_dir, _checked_name(name))
-    return {suffix: base + suffix for suffix in (RAW_SUFFIX, PUBLIC_SUFFIX)}
 
 
 def read_raw(vault_dir, name):
     """``(suffix, value)`` of ``name``'s raw file, or None when it has none."""
-    for suffix, path in raw_file_paths(vault_dir, name).items():
+    for suffix in (RAW_SUFFIX, PUBLIC_SUFFIX):
+        path = vault_file_path(vault_dir, name, suffix)
         if os.path.exists(path):
-            with open(path, encoding="utf-8") as handle:
-                return suffix, handle.read().strip()
+            return suffix, read_vault_file(path).strip()
     return None
 
 
@@ -97,12 +86,6 @@ def write_vault_file(path, text):
             raise
     finally:
         os.umask(old_umask)
-
-
-def remove_vault_file(path):
-    """Remove a vault file when present."""
-    if os.path.exists(path):
-        os.remove(path)
 
 
 def read_vault_file(path):

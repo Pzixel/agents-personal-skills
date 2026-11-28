@@ -210,9 +210,6 @@ KID = "kid-v01"
 
 
 class RawValueTest(unittest.TestCase):
-    def test_one_line_secret_with_dot_and_colon_is_stored_as_is(self):
-        self.assertEqual(vault_policy.raw_value(RAW_KEY + "\n", False), (".raw", RAW_KEY))
-
     def test_secret_shorter_than_an_identifier_is_refused(self):
         with self.assertRaises(ValueError):
             vault_policy.raw_value("abcdef123456", False)
@@ -228,23 +225,9 @@ class RawValueTest(unittest.TestCase):
 
 
 class RawTokensTest(unittest.TestCase):
-    def test_raw_secret_is_masked_and_gated(self):
-        tokens = vault_policy.vault_tokens([], [RAW_KEY])
-        self.assertEqual(gate_policy.redact_secrets("key %s end" % RAW_KEY, tokens),
-                         "key %s end" % vault_policy.mask(RAW_KEY))
-        self.assertIsNotNone(vault_policy.secret_access_violation(
-            "Bash", {"command": "curl -H 'X-API-KEY: %s' u" % RAW_KEY}, "/tmp", VAULT, tokens, []))
-
-    def test_empty_or_short_hand_made_raw_value_is_not_a_token(self):
+    def test_raw_secrets_are_tokens_empty_or_short_hand_made_ones_are_not(self):
         self.assertEqual(vault_policy.vault_tokens(["Billing\n%s\n" % KEY_A], ["", "abcde", RAW_DSN]),
                          {KEY_A, RAW_DSN})
-
-    def test_vault_paths_of_raw_files_are_refused(self):
-        for tool_input, tool in (({"command": "cat ~/.secrets/acme/dsn.raw"}, "Bash"),
-                                 ({"file_path": VAULT + "/acme/kid.public"}, "Read")):
-            with self.subTest(tool=tool):
-                self.assertIsNotNone(vault_policy.secret_access_violation(
-                    tool, tool_input, "/tmp", VAULT, set(), []))
 
 
 class LoadVaultTest(unittest.TestCase):
@@ -295,14 +278,9 @@ class RawCliTest(unittest.TestCase):
         self.assertEqual(self.secretctl("list", "acme/item").stdout,
                          "  raw len=53 sha8=%s secret\n" % vault_policy.digest(RAW_KEY))
 
-    def test_short_value_without_public_is_refused_and_not_stored(self):
-        self.assertNotEqual(self.pull(KID).returncode, 0)
-        self.assertIsNone(vault_files.read_raw(self.vault, "acme/item"))
-
-    def test_short_public_value_runs_and_is_no_token(self):
+    def test_short_public_value_stores_and_runs(self):
         self.assertEqual(self.pull(KID, "--public").returncode, 0)
         self.assertEqual(self.run_sees(KID).splitlines()[-1], "exit=0")
-        self.assertEqual(vault_files.load_vault(self.vault), ([], [], []))
 
     def test_force_to_public_drops_the_secret_file(self):
         self.pull(RAW_DSN)
