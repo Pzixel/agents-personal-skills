@@ -5,6 +5,8 @@ The vault is `$SECRET_VAULT_DIR` or `~/.secrets` (mode 0700, files 0600).
 comments) that no Bash command may name. Every other regular file up to
 MAX_FILE_BYTES is a vault file (see `vault_policy` for the format): a keys file,
 a `.raw` file (one secret value) or a `.public` file (one value that is not secret).
+Every vault file's text is parsed for entries whatever its name; a `.raw` file's
+value is a token on top of that.
 """
 
 import os
@@ -18,16 +20,14 @@ MAX_FILE_BYTES = 262144
 
 
 def load_vault(vault_dir=None):
-    """``(texts, raw_values, protected_paths)``: contents of every keys file, the value
-    of every `.raw` file (`.public` files are not read) and the protected paths."""
+    """``(texts, raw_values, protected_paths)``: contents of every vault file, the value
+    of every `.raw` file and the protected paths."""
     vault_dir = vault_dir or VAULT_DIR
     texts, raw_values, protected = [], [], []
     if not os.path.isdir(vault_dir):
         return texts, raw_values, protected
     for root, _dirs, files in os.walk(vault_dir):
         for name in sorted(files):
-            if name.endswith(PUBLIC_SUFFIX):
-                continue
             path = os.path.join(root, name)
             try:
                 if os.path.getsize(path) > MAX_FILE_BYTES:
@@ -42,10 +42,10 @@ def load_vault(vault_dir=None):
                     for line in text.splitlines()
                     if line.strip() and not line.lstrip().startswith("#")
                 )
-            elif name.endswith(RAW_SUFFIX):
-                raw_values.append(text.strip())
             else:
                 texts.append(text)
+                if name.endswith(RAW_SUFFIX):
+                    raw_values.append(text.strip())
     return texts, raw_values, protected
 
 

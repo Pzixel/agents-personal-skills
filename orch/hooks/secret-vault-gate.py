@@ -43,7 +43,7 @@ def main():
         print(
             "Refused by secret-vault gate: %s. Secret values never enter a transcript. "
             "Use `~/.claude/tools/secretctl` (list / run / each / import / pull-k8s / merge) to use them "
-            "without printing, and continue the task; a write to a live Secret (`apply-k8s` included) "
+            "without printing (`pull-k8s --raw` stores a one-line value as is), and continue the task; a write to a live Secret (`apply-k8s` included) "
             "goes through a destructive plan." % reason,
             file=sys.stderr,
         )

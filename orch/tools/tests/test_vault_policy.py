@@ -74,7 +74,7 @@ class MergeTest(unittest.TestCase):
 
 class RedactionTest(unittest.TestCase):
     def test_known_value_masked_everywhere_label_kept(self):
-        tokens = vault_policy.vault_tokens(["Support 1\n%s\n" % KEY_A])
+        tokens = vault_policy.vault_tokens(["Support 1\n%s\n" % KEY_A], [])
         out = gate_policy.redact_secrets("Support 1: %s and again %s" % (KEY_A, KEY_A), tokens)
         masked = vault_policy.mask(KEY_A)
         self.assertEqual(out, "Support 1: %s and again %s" % (masked, masked))
@@ -91,20 +91,20 @@ class RedactionTest(unittest.TestCase):
         self.assertEqual(out.splitlines()[1:], text.splitlines()[1:])
 
     def test_identifier_masked_by_exact_match_other_20_char_tokens_kept(self):
-        tokens = vault_policy.vault_tokens(["ACCESS_KEY_ID:id\nAKIAEXAMPLE000000000\n"])
+        tokens = vault_policy.vault_tokens(["ACCESS_KEY_ID:id\nAKIAEXAMPLE000000000\n"], [])
         out = gate_policy.redact_secrets("ACCESS_KEY_ID:id AKIAEXAMPLE000000000 other AKIAOTHERVALUE111111", tokens)
         self.assertEqual(
             out, "ACCESS_KEY_ID:id %s other AKIAOTHERVALUE111111" % vault_policy.mask("AKIAEXAMPLE000000000"))
 
     def test_all_digit_identifier_masked_by_exact_match(self):
         value = "12345678901234567890"
-        tokens = vault_policy.vault_tokens(["ACCOUNT:id\n%s\n" % value])
+        tokens = vault_policy.vault_tokens(["ACCOUNT:id\n%s\n" % value], [])
         self.assertEqual(gate_policy.redact_secrets("account %s" % value, tokens),
                          "account %s" % vault_policy.mask(value))
 
     def test_labels_are_not_known_values(self):
         text = "EXAMPLE_SERVICE_TOKEN\n%s\nACCESS_KEY_ID:id\nAKIAEXAMPLE000000000\n" % KEY_A
-        self.assertEqual(vault_policy.vault_tokens([text]), {KEY_A, "AKIAEXAMPLE000000000"})
+        self.assertEqual(vault_policy.vault_tokens([text], []), {KEY_A, "AKIAEXAMPLE000000000"})
 
     def test_tree_redaction_keeps_shape(self):
         tokens = {KEY_A}
@@ -127,6 +127,10 @@ class AccessGateTest(unittest.TestCase):
         self.assertIsNotNone(self.violation("Bash", {"command": "cat ~/.s*/acme/x.txt"}))
         self.assertIsNotNone(self.violation("Bash", {"command": "cat $HOME/.sec?ets/x"}))
 
+    def test_raw_and_public_vault_files_refused_like_keys_files(self):
+        self.assertIsNotNone(self.violation("Bash", {"command": "cat %s/acme/dsn.raw" % VAULT}))
+        self.assertIsNotNone(self.violation("Read", {"file_path": VAULT + "/acme/kid.public"}))
+
     def test_bash_printing_secret_payloads_refused_names_only_allowed(self):
         self.assertIsNotNone(self.violation("Bash", {"command": "kubectl -n ns get secret foo -o yaml"}))
         self.assertIsNotNone(self.violation("Bash", {"command": "kubectl get secrets -n ns foo -ojson | jq"}))
@@ -142,7 +146,7 @@ class AccessGateTest(unittest.TestCase):
     def test_secretctl_and_ordinary_commands_allowed(self):
         self.assertIsNone(self.violation(
             "Bash", {"command": "secretctl run acme EXAMPLE_SERVICE_TOKEN -- true"},
-            tokens=vault_policy.vault_tokens(["EXAMPLE_SERVICE_TOKEN\n%s\n" % KEY_A])))
+            tokens=vault_policy.vault_tokens(["EXAMPLE_SERVICE_TOKEN\n%s\n" % KEY_A], [])))
         self.assertIsNone(self.violation("Bash", {"command": "~/.claude/tools/secretctl list acme/service_keys"}))
         self.assertIsNone(self.violation("Bash", {"command": "rg -n secret src/ | head"}))
 
@@ -230,13 +234,33 @@ class RawTokensTest(unittest.TestCase):
                          {KEY_A, RAW_DSN})
 
 
+    def test_raw_secret_with_key_shaped_part_masked_whole_and_gated(self):
+        # A 46-char base64 run then a suffix: matched by shape first, the suffix would leak.
+        value = "Q2hhbmdlTWU0VGVzdHNGb3JFeGFtcGxlT25seTAwMDAwMA:tail42"
+        tokens = vault_policy.vault_tokens([], [value])
+        self.assertEqual(gate_policy.redact_secrets("token %s end" % value, tokens),
+                         "token %s end" % vault_policy.mask(value))
+        self.assertIsNotNone(vault_policy.secret_access_violation(
+            "Bash", {"command": "curl -H 'X-Key: %s' https://api.example.test" % value},
+            "/tmp", VAULT, tokens, []))
+
+
 class LoadVaultTest(unittest.TestCase):
-    def test_raw_values_loaded_public_values_never_read(self):
+    def test_every_file_parsed_for_entries_raw_values_added(self):
         with tempfile.TemporaryDirectory() as vault:
-            vault_files.write_vault_file(os.path.join(vault, "acme", "keys.txt"), "Billing\n%s\n" % KEY_A)
-            vault_files.write_vault_file(os.path.join(vault, "acme", "dsn.raw"), RAW_DSN + "\n")
-            vault_files.write_vault_file(os.path.join(vault, "acme", "kid.public"), KID + "\n")
-            self.assertEqual(vault_files.load_vault(vault), (["Billing\n%s\n" % KEY_A], [RAW_DSN], []))
+            keys = "Billing\n%s\nSupport\n%s\n" % (KEY_A, KEY_B)
+            # keys files whose names end in .raw / .public keep their entries as tokens
+            old = "Ops\n%s\nACCESS_KEY_ID:id\nAKIAEXAMPLE000000000\n" % KEY_C
+            files = {"acme/keys.txt": keys, "acme/dump.raw": keys, "acme/old.public": old,
+                     "acme/dsn.raw": RAW_DSN + "\n", "acme/kid.public": KID + "\n"}
+            for name, text in files.items():
+                vault_files.write_vault_file(os.path.join(vault, name), text)
+            texts, raw_values, protected = vault_files.load_vault(vault)
+            self.assertEqual(sorted(texts), sorted(files.values()))
+            self.assertEqual(sorted(raw_values), sorted([keys.strip(), RAW_DSN]))
+            self.assertEqual(protected, [])
+            self.assertEqual(vault_policy.vault_tokens(texts, raw_values),
+                             {KEY_A, KEY_B, KEY_C, "AKIAEXAMPLE000000000", keys.strip(), RAW_DSN})
 
 
 class RawCliTest(unittest.TestCase):
@@ -282,11 +306,24 @@ class RawCliTest(unittest.TestCase):
         self.assertEqual(self.pull(KID, "--public").returncode, 0)
         self.assertEqual(self.run_sees(KID).splitlines()[-1], "exit=0")
 
+    def test_raw_with_label_or_identifier_and_public_without_raw_refused(self):
+        for flags in (("--raw", "--label", "L"), ("--raw", "--identifier"),
+                      ("--raw", "--label", "L", "--identifier")):
+            with self.subTest(flags=flags):
+                result = self.secretctl("pull-k8s", "acme/item", "-n", "ns", "secret", "KEY", *flags, data=RAW_KEY)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("drop --label / --identifier", result.stderr)
+        result = self.secretctl("pull-k8s", "acme/item", "-n", "ns", "secret", "KEY", "--public", "--label", "L",
+                                data=KEY_A)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("--public needs --raw", result.stderr)
+        self.assertFalse(os.path.exists(self.vault))
+
     def test_force_to_public_drops_the_secret_file(self):
         self.pull(RAW_DSN)
         self.assertNotEqual(self.pull(RAW_DSN, "--public").returncode, 0)
         self.assertEqual(self.pull(RAW_DSN, "--public", "--force").returncode, 0)
-        self.assertEqual(vault_files.load_vault(self.vault), ([], [], []))
+        self.assertEqual(vault_files.load_vault(self.vault), ([RAW_DSN + "\n"], [], []))
 
 
 if __name__ == "__main__":

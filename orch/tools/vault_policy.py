@@ -182,7 +182,7 @@ def merge(base_text, updates_text, renames=None):
 # -- redaction ---------------------------------------------------------------------
 
 
-def vault_tokens(file_texts, raw_values=()):
+def vault_tokens(file_texts, raw_values):
     """Secret values held by vault files: every parsed entry's value and every raw
     secret of TOKEN_MIN+ chars (a shorter hand-made one would mask ordinary text).
     Labels are never tokens, so they stay readable and usable as arguments."""
